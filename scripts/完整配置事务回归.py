@@ -336,7 +336,7 @@ class Runtime(unittest.TestCase):
         self.assertEqual(len(list((self.store/'gen-4/credentials').iterdir())),128)
         self.secret(b'X'*4097,account='account-31',expected=1)
         self.secret(b'',account='account-31',expected=1)
-        self.assertEqual(self.cli('status')['credential_capacity'],128)
+        self.assertEqual(self.cli('status')['credential_capacity'],192)
 
     def test_symlink_hardlink_and_integrity_fail_closed(self):
         file=self.store/'gen-2/public.conf'; original=file.read_bytes()

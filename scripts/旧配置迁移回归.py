@@ -52,6 +52,10 @@ class Codec(unittest.TestCase):
         self.assertNotIn("option enabled '1'",public)
         self.assertIn("option host 'www.example.test'",public)
         self.assertIn("option certificate_managed '1'",public)
+        changed=LEGACY.replace("host 'www'", "host ' WWW.EXAMPLE.TEST. '")
+        changed=changed.replace("provider 'cloudflare'", "provider ' CLOUDFLARE '")
+        changed=changed.replace("zone 'example.test'", "zone ' EXAMPLE.TEST. '")
+        self.assertEqual(self.migrate(changed), (public,slots))
 
     def test_four_providers_empty_slots_and_exact_quote_preservation(self):
         for provider in ('aliyun','cloudflare','dnspod','huaweicloud'):

@@ -292,6 +292,16 @@ local function serialize(doc)
     end
     return table.concat(out,"\n").."\n"
 end
+-- Canonical public bytes used by the isolated transaction store as well as
+-- LuCI. Reparse the generated document so expansion cannot bypass file limits.
+function M.canonical(body)
+    local doc,err=M.parse(body)
+    if not doc then return nil,err end
+    local result=serialize(doc)
+    local checked,limit_error=M.parse(result)
+    if not checked then return nil,limit_error end
+    return result
+end
 -- Project existing state through the same whitelist before any public diff.
 -- Malformed public values are replaced rather than exposing unvalidated data.
 local function snapshot(cur)

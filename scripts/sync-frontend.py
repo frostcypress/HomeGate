@@ -6,7 +6,11 @@ ROOT=Path(__file__).resolve().parent.parent
 source=ROOT/'project/luci/lua/luasrc/controller/homegate.lua'
 target=ROOT/'project/core/src/internal/frontend'
 target.mkdir(parents=True,exist_ok=True)
-(target/'controller.lua').write_bytes(source.read_bytes())
+# Bundle the pure Lua codec without adding a Go implementation or filesystem
+# module loader to the reference bridge. Native Lua LuCI loads its normal file.
+codec=(ROOT/'project/luci/lua/luasrc/model/homegate/backup.lua').read_text(encoding='utf-8')
+bundle='package.preload["luci.model.homegate.backup"] = function()\n'+codec+'\nend\n'+source.read_text(encoding='utf-8')
+(target/'controller.lua').write_text(bundle,encoding='utf-8',newline='\n')
 routes={}
 for path,kind,handler in re.findall(r'entry\(\{([^}]+)\},\s*(call|post)\("([^"]+)"\)',source.read_text(encoding='utf-8')):
     fields=re.findall(r'"([^"]+)"',path)

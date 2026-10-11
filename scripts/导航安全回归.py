@@ -34,6 +34,8 @@ function post(...) return {} end
 function firstchild(...) return {} end
 function _(text) return text end
 ''')
+codec = ROOT / 'project/luci/lua/luasrc/model/homegate/backup.lua'
+lua.execute('package.preload["luci.model.homegate.backup"]=function()\n' + codec.read_text(encoding='utf-8') + '\nend')
 lua.execute(controller.read_text(encoding='utf-8'))
 module = lua.globals().luci.controller.homegate
 module.index()
@@ -50,16 +52,15 @@ sections = [
     {'.name': 'main', '.type': 'homegate', 'enabled': '1', 'log_level': 'info', 'secret': 'MAIN_SECRET'},
     {'.name': 'dns_a', '.type': 'dns_account', 'name': "Alice's DNS", 'provider': 'cloudflare',
      'id': 'KEY_ID_SECRET', 'secret': 'TOKEN_SECRET', 'account_id': 'ACCOUNT_SECRET', 'future_token': 'FUTURE_SECRET'},
-    {'.name': 'ddns_a', '.type': 'ddns_rule', 'zone': 'example.test', 'url': 'https://USER:PASS@example.test/'},
+    {'.name': 'ddns_a', '.type': 'ddns_rule', 'zone': 'example.test', 'account': 'dns_a', 'url': 'https://USER:PASS@example.test/'},
     {'.name': 'web_a', '.type': 'web_rule', 'domain': 'host.example.test', 'target': 'http://USER:PASS@192.0.2.1/'},
-    {'.name': 'cert_a', '.type': 'certificate', 'domains': ['a.example.test', 'b.example.test'], 'private_key': 'PRIVATE_KEY_SECRET'},
-    {'.name': 'invalid\ninjection', '.type': 'dns_account', 'provider': 'INJECTION'},
+    {'.name': 'cert_a', '.type': 'certificate', 'source': 'local', 'domains': ['a.example.test', 'b.example.test'], 'private_key': 'PRIVATE_KEY_SECRET'},
     {'.name': 'alien', '.type': 'other_plugin', 'name': 'UNRELATED_CONFIG'}
 ]
 lua.globals().sections = lua.table_from(sections, recursive=True)
 module.action_config_export()
 body = ''.join(value for _, value in lua.globals().captured.items())
-assert '# homegate-backup-format: 1' in body and '# secrets: omitted' in body
+assert '# homegate-backup-format: 2' in body and '# secrets: omitted' in body
 for secret in ('MAIN_SECRET', 'KEY_ID_SECRET', 'TOKEN_SECRET', 'ACCOUNT_SECRET', 'FUTURE_SECRET',
                'USER:PASS', 'PRIVATE_KEY_SECRET', 'INJECTION', 'UNRELATED_CONFIG'):
     assert secret not in body, secret

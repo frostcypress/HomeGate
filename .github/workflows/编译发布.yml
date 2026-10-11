@@ -97,6 +97,8 @@ jobs:
           build/verify-venv/bin/python scripts/配置事务原型回归.py --runtime
           build/verify-venv/bin/python scripts/完整配置事务回归.py
           build/verify-venv/bin/python scripts/完整配置事务回归.py --runtime
+          build/verify-venv/bin/python scripts/旧配置迁移回归.py
+          build/verify-venv/bin/python scripts/旧配置迁移回归.py --runtime
       - name: 验证安全导出、导航与页面行为
         run: |
           build/verify-venv/bin/python scripts/导航安全回归.py

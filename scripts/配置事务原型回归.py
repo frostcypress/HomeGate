@@ -299,6 +299,24 @@ class Runtime(unittest.TestCase):
         self.cli('preview', payload=self.default, expected=1)
         self.cli('commit', original)
 
+    def test_preview_baseline_io_failure_returns_one_error_and_preserves_pending(self):
+        self.preview()
+        old_plan = (self.store / 'pending').read_bytes()
+        head = self.bin / 'head'
+        head.unlink()
+        # Simulate a baseline disappearing after initial validation, before diff.
+        head.write_text('#!' + sys.executable + '\nimport os,subprocess,sys\n'
+                        'if sys.argv[-1]!="/dev/urandom":\n'
+                        '    result=subprocess.run([' + repr(self.busybox) + ',"head",*sys.argv[1:]],'
+                        'input=sys.stdin.buffer.read(),capture_output=True,check=True)\n'
+                        '    os.unlink(' + repr(str(self.store / 'gen-1/public.conf')) + ')\n'
+                        '    sys.stdout.buffer.write(result.stdout); sys.exit(0)\n'
+                        'os.execv(' + repr(self.busybox) + ',["head",*sys.argv[1:]])\n')
+        head.chmod(0o700)
+        result = self.cli('preview', payload=self.default, expected=1)
+        self.assertEqual(result['error'], 'Unable to read preview baseline')
+        self.assertEqual((self.store / 'pending').read_bytes(), old_plan)
+
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)

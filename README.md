@@ -51,4 +51,4 @@ Python 3.12+，Lua 回归另需 lupa==2.8；浏览器回归需 playwright==1.63.
 
 1.3.0-r14 本地通过 17 项 Lua 配置检查、12 组预览几何和 9 项行为合同；Linux 源码 CI 已通过 [本轮运行](https://github.com/frostcypress/HomeGate/actions/runs/38144574657)。仅预览不是完整配置事务，完整 SDK/实机验收仍未完成。
 
-1.3.0-r15 将同一六类公共 UCI schema 接入隔离配置/凭据代次存储，增加基线/启动/有效期绑定及检查 fsync 返回值的发布流程。生产维护页仍只预览；[完整配置事务说明](docs/完整配置事务.md)解释隔离范围和同步失败语义。本轮 Linux 回归待执行。
+1.3.0-r15 将同一六类公共 UCI schema 接入隔离配置/凭据代次存储，增加基线/启动/有效期绑定及检查 fsync 返回值的发布流程。生产维护页仍只预览；[完整配置事务说明](docs/完整配置事务.md)解释隔离范围和同步失败语义。本轮 Linux 源码回归已通过：[运行记录](https://github.com/frostcypress/HomeGate/actions/runs/38146374894)；新模式 20 项真实执行、4 项适配器检查及官方 UCI 读取检查通过。

@@ -16,8 +16,8 @@
       "production_install": false,
       "static_checks": "passed",
       "runtime_checks": "passed-linux-busybox-1.33.2",
-      "runtime_run": "https://github.com/frostcypress/HomeGate/actions/runs/38144574657",
-      "tested_revision": "1.3.0-r14"
+      "runtime_run": "https://github.com/frostcypress/HomeGate/actions/runs/38146374894",
+      "tested_revision": "1.3.0-r15"
     },
     "configuration_prototype": {
       "source": "project/core/prototype/homegate-config-prototype.sh",
@@ -28,20 +28,22 @@
       "runtime_checks": "passed-linux-busybox-1.33.2",
       "uci_migration": false,
       "power_loss_durability": "not-verified-no-fsync",
-      "runtime_run": "https://github.com/frostcypress/HomeGate/actions/runs/38144574657",
-      "tested_revision": "1.3.0-r14",
+      "runtime_run": "https://github.com/frostcypress/HomeGate/actions/runs/38146374894",
+      "tested_revision": "1.3.0-r15",
       "runtime_case_count": 14,
       "full_schema": {
         "switch": "--public-uci",
         "schema": "public-uci-v1",
         "local_codec_checks": "passed-4",
-        "runtime_checks": "pending",
+        "runtime_checks": "passed-linux-busybox-1.33.2-lua51-20",
         "runtime_case_count": 20,
         "production_install": false,
         "confirmation": "baseline-bound-boot-bound-300-second-single-use",
         "publication": "checked-file-and-directory-fsync-barriers",
         "device_power_loss_durability": "not-verified",
-        "tested_revision": "1.3.0-r15"
+        "tested_revision": "1.3.0-r15",
+        "runtime_run": "https://github.com/frostcypress/HomeGate/actions/runs/38146374894",
+        "official_uci_parser": "passed-host-2019-pinned-source"
       }
     }
   },
@@ -76,7 +78,7 @@
     "local_lua_checks": "passed-lua51-17",
     "browser_checks": "passed-local-edge-12-geometry-9-behavior",
     "linux_ci": "passed",
-    "tested_revision": "1.3.0-r14",
-    "runtime_run": "https://github.com/frostcypress/HomeGate/actions/runs/38144574657"
+    "tested_revision": "1.3.0-r15",
+    "runtime_run": "https://github.com/frostcypress/HomeGate/actions/runs/38146374894"
   }
 }

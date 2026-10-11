@@ -233,6 +233,33 @@ new_token() {
     case "$token" in *[!0-9a-f]*) fail 'Invalid confirmation randomness';; esac
 }
 plan_write() {
+    # All values below are bounded, validated decimal numbers or fixed enums.
+    # No account names, opaque credentials, secret hashes or paths are exposed.
+    # Build the whole response before publishing the plan or printing success.
+    # A baseline read failure must emit one failure object, never half a JSON.
+    before_public=$(cat "$store/gen-$head_revision/public.conf" 2>/dev/null) || fail 'Unable to read preview baseline'
+    before_public=$(public_parse <<EOF
+$before_public
+EOF
+    ) || fail 'Invalid preview baseline'
+    before_rest=$before_public
+    newline='
+'
+    changes=
+    line_number=0
+    while IFS= read -r after_line; do
+        case "$before_rest" in
+            *"$newline"*) before_line=${before_rest%%"$newline"*}; before_rest=${before_rest#*"$newline"};;
+            *) before_line=$before_rest; before_rest=;;
+        esac
+        line_number=$((line_number + 1))
+        [ "$line_number" -gt 3 ] || continue
+        [ "$before_line" != "$after_line" ] || continue
+        change_row=$(printf '{"field":"%s","before":"%s","after":"%s"}' "${after_line%%=*}" "${before_line#*=}" "${after_line#*=}")
+        changes="${changes:+$changes,}$change_row"
+    done <<EOF
+$plan_public
+EOF
     new_token
     allocate_scratch
     {
@@ -241,25 +268,7 @@ plan_write() {
     } > "$scratch" || fail 'Unable to write preview'
     mv -f "$scratch" "$store/pending" || fail 'Unable to publish preview'
     scratch=
-    # All values below are bounded, validated decimal numbers or fixed enums.
-    # No account names, opaque credentials, secret hashes or paths are exposed.
-    printf '{"api_version":1,"prototype":true,"ok":true,"confirmation":"%s","base_revision":%s,"operation":"%s","service_enabled":false,"credentials_omitted":true,"scope":"main-public-v1","changes":[' "$token" "$head_revision" "$plan_kind"
-    exec 8<"$store/gen-$head_revision/public.conf" || fail 'Unable to read preview baseline'
-    first=true
-    line_number=0
-    while IFS= read -r after_line; do
-        IFS= read -r before_line <&8 || fail 'Invalid preview baseline'
-        line_number=$((line_number + 1))
-        [ "$line_number" -gt 3 ] || continue
-        [ "$before_line" != "$after_line" ] || continue
-        [ "$first" = true ] || printf ','
-        first=false
-        printf '{"field":"%s","before":"%s","after":"%s"}' "${after_line%%=*}" "${before_line#*=}" "${after_line#*=}"
-    done <<EOF
-$plan_public
-EOF
-    exec 8<&-
-    printf ']}\n'
+    printf '{"api_version":1,"prototype":true,"ok":true,"confirmation":"%s","base_revision":%s,"operation":"%s","service_enabled":false,"credentials_omitted":true,"scope":"main-public-v1","changes":[%s]}\n' "$token" "$head_revision" "$plan_kind" "$changes"
 }
 plan_read() {
     private_file "$store/pending" || fail 'Missing safe preview' 5

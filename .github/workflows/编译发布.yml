@@ -1,0 +1,126 @@
+name: HomeGate 规范检查与目标构建
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      target_manifest:
+        description: 已核实目标清单路径
+        type: string
+        default: targets/pending.json
+        required: true
+      luci:
+        description: 已核实 LuCI 类型，与包格式独立选择
+        type: choice
+        options: [lua, js]
+        required: true
+      package_format:
+        description: 按目标 SDK 校验包格式
+        type: choice
+        options: [auto, ipk, apk]
+        required: true
+      mode:
+        description: 草稿仅允许源码检查；目标与核心核实后才能构建
+        type: choice
+        options: [仅检查源码, 仅构建, 测试预发布, 正式发布]
+        default: 仅检查源码
+        required: true
+permissions:
+  contents: read
+jobs:
+  source:
+    name: 源码规范与回归检查
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: 检出源码
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: 核实版本、路径和发布门禁
+        run: |
+          python3 scripts/project.py --check
+          python3 scripts/重构回归.py
+      - name: 检查 Shell 语法
+        run: |
+          find scripts project/core/files project/core/prototype -type f -name '*.sh' -print0 | xargs -0 -r -n1 sh -n
+          sh -n project/core/files/etc/init.d/homegate
+          sh -n project/core/files/etc/hotplug.d/iface/95-homegate
+          sh -n project/core/files/usr/sbin/homegate-purge
+      - name: 生成前端并核实没有过期副本
+        run: |
+          python3 scripts/sync-frontend.py
+          python3 scripts/build-js-views.py
+          git diff --exit-code -- project/core/src/internal/frontend project/luci/js/htdocs
+          python3 scripts/frontend-source-regressions.py
+      - name: 安装 BusyBox、语法解析与页面回归依赖
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y busybox
+          python3 -m venv build/verify-venv
+          build/verify-venv/bin/python -m pip install 'lupa==2.8' 'playwright==1.63.0' 'tree-sitter==0.25.2' 'tree-sitter-bash==0.25.1'
+          build/verify-venv/bin/python -m playwright install --with-deps chromium
+      - name: 验证 Shell 原型语法与真实 BusyBox 执行
+        run: |
+          build/verify-venv/bin/python scripts/Shell原型回归.py --static
+          build/verify-venv/bin/python scripts/Shell原型回归.py --runtime
+      - name: 验证安全导出、导航与页面行为
+        run: |
+          build/verify-venv/bin/python scripts/导航安全回归.py
+          build/verify-venv/bin/python scripts/native-ui-regressions.py
+          build/verify-venv/bin/python scripts/legacy-footer-regressions.py
+          build/verify-venv/bin/python scripts/luci-loader-regressions.py
+      - name: 生成可接续源码草稿
+        run: python3 scripts/生成接续包.py --target pending --stage CI源码检查 --draft
+      - name: 上传草稿与回归记录
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: HomeGate-源码草稿-${{ github.run_id }}
+          path: |
+            dist/*.zip
+            build/native-ui-regressions/
+            build/legacy-footer-regressions/
+            build/official-footer-regressions/
+          if-no-files-found: error
+  build:
+    name: 已核实 SDK 三包构建
+    needs: source
+    if: github.event_name == 'workflow_dispatch' && inputs.mode != '仅检查源码'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - name: 检出源码
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: 校验设备、核心迁移与包格式
+        env:
+          TARGET_MANIFEST: ${{ inputs.target_manifest }}
+          LUCI: ${{ inputs.luci }}
+          PACKAGE_FORMAT: ${{ inputs.package_format }}
+        run: python3 scripts/检查发布条件.py --target "$TARGET_MANIFEST" --luci "$LUCI" --format "$PACKAGE_FORMAT"
+      - name: 使用目标 SDK 构建并验证真实三包
+        env:
+          TARGET_MANIFEST: ${{ inputs.target_manifest }}
+          LUCI: ${{ inputs.luci }}
+          PACKAGE_FORMAT: ${{ inputs.package_format }}
+        run: python3 scripts/目标SDK构建.py --target "$TARGET_MANIFEST" --luci "$LUCI" --format "$PACKAGE_FORMAT"
+      - name: 上传当前目标三包及来源信息
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: HomeGate-目标三包-${{ github.run_id }}
+          path: dist/target/
+          if-no-files-found: error
+  release:
+    name: 受保护的发布审批
+    needs: build
+    if: github.event_name == 'workflow_dispatch' && (inputs.mode == '测试预发布' || inputs.mode == '正式发布')
+    runs-on: ubuntu-24.04
+    environment: 发布审批
+    permissions:
+      contents: read
+    steps:
+      - name: 核心迁移完成前禁止自动发布
+        run: |
+          echo '发布适配和实机验收尚未完成，当前阶段不执行 GitHub Release。' >&2
+          exit 1

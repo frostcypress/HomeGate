@@ -8,7 +8,7 @@
 
 project/core 保存核心配方、安装文件和完整对照实现；project/luci/lua、js、common 分离两套前端与公共翻译。scripts 保存校验与生成程序；targets 保存逐台设备证据；.github/workflows 是当前流程，.github/reference 的历史 Go 流程不会自动运行。
 
-先读接续.md、核实查漏修复.md、docs/重构设计.md。完整历史合同见 docs/历史接续_1.3.0-10.md，其中的旧测试结果不能作为本版验收。
+本轮完整接续文档与详细验证记录仅随本地接续包保存；仓库根目录的接续/校验文档保留上一阶段记录。当前实现范围见本文与原型说明。完整历史合同见 docs/历史接续_1.3.0-10.md，其中的旧测试结果不能作为本版验收。
 
 ## 本地检查
 
@@ -47,4 +47,4 @@ Python 3.12+，Lua 回归另需 lupa==2.8；浏览器回归需 playwright==1.63.
 
 上一阶段 1.3.0-r12 Linux 回归证据：[源码检查运行](https://github.com/frostcypress/HomeGate/actions/runs/38127877469)；实机业务/SDK 构建仍未执行。
 
-1.3.0-r13 增加隔离配置事务原型 `homegate-config-prototype.sh`：严格的公共字段预览、128 位随机确认句柄、失效/重放拒绝、整代配置和私有凭据原子发布、祖先代次回滚。仅覆盖 `main-public-v1`，没有接入生产 UCI 或 LuCI 导入按钮；真实 Linux 执行待本轮 CI 验证。见 [配置事务原型说明](project/core/prototype/配置事务说明.md)。
+1.3.0-r13 增加隔离配置事务原型 `homegate-config-prototype.sh`：严格的公共字段预览、128 位随机确认句柄、失效/重放拒绝、整代配置和私有凭据原子发布、祖先代次回滚。仅覆盖 `main-public-v1`，没有接入生产 UCI 或 LuCI 导入按钮；14 项真实 Linux 事务回归已通过 [本轮运行](https://github.com/frostcypress/HomeGate/actions/runs/38138863941)。见 [配置事务原型说明](project/core/prototype/配置事务说明.md)。

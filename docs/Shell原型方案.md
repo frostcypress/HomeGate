@@ -26,4 +26,6 @@
 4. 用目标命令和已核实组件测 M21 空闲/负载/并发，冻结 A/B 与依赖；选择 SDK 时查实际 ELF 的 interpreter/NEEDED/符号，不以 CPU 相同宣称动态库兼容。
 5. 完整迁移后再接入生产路径和三包配方。凭据迁移、配置导入预览/回滚、改包名、独立设置页、升级与卸载合同必须同时完成，不能只实现状态/WOL 就发布。
 
-当前已实现 `project/core/prototype/homegate-prototype.sh`：公共配置检查、8 项有界去重 FIFO、私有权限/锁/原子状态文件、任务 token 与代次拒绝。详见同目录 README。3 项静态检查通过；10 项真实 BusyBox 执行回归已接入工作流，尚未运行。没有新生产 Shell 核心、C 构建、代理/ACME 组件安装、网络业务测试或性能测量。SDK 21.02/24.10 仍是用户允许的候选。当前正式构建门禁继续阻止 Go 对照实现及未核实 SDK。
+当前已实现 `project/core/prototype/homegate-prototype.sh`：公共配置检查、8 项有界去重 FIFO、私有权限/锁/原子状态文件、任务 token 与代次拒绝。详见同目录 README。3 项静态检查通过；10 项真实 BusyBox 执行回归已在工作流通过。没有新生产 Shell 核心、C 构建、代理/ACME 组件安装、网络业务测试或性能测量。SDK 21.02/24.10 仍是用户允许的候选。当前正式构建门禁继续阻止 Go 对照实现及未核实 SDK。
+
+Linux 回归证据：https://github.com/frostcypress/HomeGate/actions/runs/38127877469；实机业务/SDK 构建仍未执行。

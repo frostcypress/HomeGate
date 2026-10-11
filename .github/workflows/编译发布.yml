@@ -97,7 +97,9 @@ jobs:
       - name: 验证安全导出、导航与页面行为
         run: |
           build/verify-venv/bin/python scripts/导航安全回归.py
+          build/verify-venv/bin/python scripts/配置预览回归.py
           build/verify-venv/bin/python scripts/native-ui-regressions.py
+          build/verify-venv/bin/python scripts/配置预览页面回归.py
           build/verify-venv/bin/python scripts/legacy-footer-regressions.py
           build/verify-venv/bin/python scripts/luci-loader-regressions.py
       - name: 生成可接续源码草稿

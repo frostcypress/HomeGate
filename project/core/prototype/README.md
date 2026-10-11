@@ -37,4 +37,6 @@ python3 scripts/Shell原型回归.py --runtime
 
 静态模式需要固定版本 tree-sitter 解析库，检查语法树、隔离边界和事件名称。执行模式必须在 Linux 上使用真实 BusyBox ash，覆盖配置、队列、重放、代次、权限、损坏状态、真实锁冲突和 18 次并发提交；只模拟 UCI 外部接口，不模拟 Shell 或文件系统。
 
-本机 Windows 已通过 3 项静态检查；10 项执行回归已接入中文 GitHub Actions，尚未获得运行结果。实际 UCI 解析、目标 BusyBox 构建选项、服务生命周期和资源峰值另需验证。
+本机 Windows 已通过 3 项静态检查；10 项执行回归已在中文 GitHub Actions 通过。实际 UCI 解析、目标 BusyBox 构建选项、服务生命周期和资源峰值另需验证。
+
+Linux 回归证据：https://github.com/frostcypress/HomeGate/actions/runs/38127877469；实机业务/SDK 构建仍未执行。

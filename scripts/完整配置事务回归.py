@@ -72,7 +72,8 @@ class Codec(unittest.TestCase):
 
     def test_adapter_account_bindings_and_no_secret_reflection(self):
         slots = self.run_adapter(['allowed','before'], {'before':BODY}).splitlines()
-        self.assertEqual(slots, [f'cloudflare.dns_a.{slot}' for slot in ('key_id','secret','account_id','endpoint')])
+        self.assertEqual(slots, [f'cloudflare.dns_a.{slot}' for slot in ('key_id','secret','account_id','endpoint')]
+                         +['ddns.ddns_a.url','web.web_a.target'])
         with self.assertRaises(Exception):
             self.run_adapter(['normalize'], {}, BODY + " option secret 'SECRET_SENTINEL'\n")
         self.assertNotIn('SECRET_SENTINEL', self.lua.globals().diagnostics)

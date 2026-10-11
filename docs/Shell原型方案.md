@@ -1,6 +1,6 @@
 # Shell 核心可行性原型方案
 
-日期：2026-10-11。以 1.3.0-10 为功能基线；用户作废 1.3.1-1，不要求路由器立即降级。目标为 Zyxel NBG7815 的 QWRT R26.3.8，Lua + IPK。本文记录原型实现边界，不代表 A/B 已冻结或已通过真实 Shell 执行验收。
+日期：2026-10-11。以 1.3.0-10 为功能基线；用户作废 1.3.1-1，不要求路由器立即降级。目标为 Zyxel NBG7815 的 QWRT R26.3.8，Lua + IPK。本文记录原型实现边界，不代表 A/B 已冻结或完整业务/实机验收已通过。
 
 ## 已有组件与实现边界
 
@@ -29,3 +29,5 @@
 当前已实现 `project/core/prototype/homegate-prototype.sh`：公共配置检查、8 项有界去重 FIFO、私有权限/锁/原子状态文件、任务 token 与代次拒绝。详见同目录 README。3 项静态检查通过；10 项真实 BusyBox 执行回归已在工作流通过。没有新生产 Shell 核心、C 构建、代理/ACME 组件安装、网络业务测试或性能测量。SDK 21.02/24.10 仍是用户允许的候选。当前正式构建门禁继续阻止 Go 对照实现及未核实 SDK。
 
 Linux 回归证据：[源码检查运行](https://github.com/frostcypress/HomeGate/actions/runs/38127877469)；实机业务/SDK 构建仍未执行。
+
+1.3.0-r13 增加 `homegate-config-prototype.sh`，实现标准输入受限凭据、严格 main 公共 schema、公共差异预览、一次性确认、同代配置/凭据原子指针发布和祖先回滚。14 项真实 Linux 事务用例已在 [本轮运行](https://github.com/frostcypress/HomeGate/actions/runs/38138863941) 通过。只有隔离存储实验；没有完整 UCI/业务 schema、LuCI 确认界面或断电持久性。详见 project/core/prototype/配置事务说明.md，目标还需核实 head -c 等 applet；没有据此冻结资源预算或生产技术选型。

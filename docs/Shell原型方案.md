@@ -28,4 +28,4 @@
 
 当前已实现 `project/core/prototype/homegate-prototype.sh`：公共配置检查、8 项有界去重 FIFO、私有权限/锁/原子状态文件、任务 token 与代次拒绝。详见同目录 README。3 项静态检查通过；10 项真实 BusyBox 执行回归已在工作流通过。没有新生产 Shell 核心、C 构建、代理/ACME 组件安装、网络业务测试或性能测量。SDK 21.02/24.10 仍是用户允许的候选。当前正式构建门禁继续阻止 Go 对照实现及未核实 SDK。
 
-Linux 回归证据：https://github.com/frostcypress/HomeGate/actions/runs/38127877469；实机业务/SDK 构建仍未执行。
+Linux 回归证据：[源码检查运行](https://github.com/frostcypress/HomeGate/actions/runs/38127877469)；实机业务/SDK 构建仍未执行。

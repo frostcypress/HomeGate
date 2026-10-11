@@ -1,12 +1,20 @@
 #!/bin/sh
 # Isolated transaction experiment; NOT an installer or production UCI importer.
-# Public schema covers main switches/limits/ports only. No business activation.
+# Default legacy main schema; --public-uci uses the shared six-type Lua codec.
+# Neither mode activates production services or modifies /etc/config.
 set -u
 umask 077
 export LC_ALL=C
 scratch=
 generation_dir=
 published=false
+public_mode=false
+public_limit=1024
+credential_limit=16
+if [ "${1:-}" = --public-uci ]; then
+    public_mode=true; public_limit=262144; credential_limit=128; shift
+fi
+codec=$(dirname "$0")/config-codec.lua
 fail() {
     printf '{"api_version":1,"prototype":true,"ok":false,"phase":"config-transaction","error":"%s"}\n' "$1"
     exit "${2:-1}"
@@ -85,7 +93,7 @@ open_store() {
     for existing in "$store/.work."*; do
         [ -e "$existing" ] || [ -L "$existing" ] || continue
         private_file "$existing" || fail 'Unsafe abandoned private file'
-        number "$(stat -c %s "$existing")" 0 4097 || fail 'Oversized abandoned private file'
+        number "$(stat -c %s "$existing")" 0 "$((public_limit + 512))" || fail 'Oversized abandoned private file'
         abandoned_count=$((abandoned_count + 1))
         [ "$abandoned_count" -lt 32 ] || fail 'Prototype temporary capacity reached' 4
     done
@@ -109,12 +117,21 @@ open_store() {
 }
 slot_valid() {
     case "$1" in aliyun|cloudflare|dnspod|huaweicloud) ;; *) return 1;; esac
-    case "$2" in ''|*[!a-zA-Z0-9_]*) return 1;; esac
-    [ "${#2}" -le 32 ] || return 1
+    if [ "$public_mode" = true ]; then
+        case "$2" in ''|*[!a-zA-Z0-9_-]*) return 1;; esac
+        [ "${#2}" -le 64 ] || return 1
+    else
+        case "$2" in ''|*[!a-zA-Z0-9_]*) return 1;; esac
+        [ "${#2}" -le 32 ] || return 1
+    fi
     case "$3" in key_id|secret|account_id|endpoint) ;; *) return 1;; esac
 }
 vault_valid() {
     private_dir "$1" || fail 'Unsafe credential directory'
+    allowed_slots=
+    if [ "$public_mode" = true ]; then
+        allowed_slots=$(lua "$codec" allowed "$1/../public.conf" 2>/dev/null) || fail 'Invalid credential binding'
+    fi
     credential_count=0
     for item in "$1/"*; do
         [ -e "$item" ] || [ -L "$item" ] || continue
@@ -124,14 +141,25 @@ vault_valid() {
         account=${remainder%%.*}
         slot=${remainder#*.}
         slot_valid "$provider" "$account" "$slot" || fail 'Invalid credential slot'
+        if [ "$public_mode" = true ]; then
+            case "
+$allowed_slots
+" in *"
+$name
+"*) ;; *) fail 'Credential account binding mismatch';; esac
+        fi
         private_file "$item" || fail 'Unsafe credential file'
         size=$(stat -c %s "$item") || fail 'Unable to inspect credentials'
         number "$size" 1 4096 || fail 'Credential size outside limit'
         credential_count=$((credential_count + 1))
-        [ "$credential_count" -le 16 ] || fail 'Too many credential slots'
+        [ "$credential_count" -le "$credential_limit" ] || fail 'Too many credential slots'
     done
 }
 public_parse() {
+    if [ "$public_mode" = true ]; then
+        lua "$codec" normalize 2>/dev/null || fail 'Invalid public UCI configuration'
+        return
+    fi
     # Strict framed prototype format, not a parser for arbitrary UCI/JSON.
     # Never source or eval input. Unknown, reordered, duplicate or binary lines fail.
     IFS= read -r line && [ "$line" = 'homegate-prototype-config:1' ] || fail 'Invalid backup format'
@@ -159,7 +187,7 @@ public_parse() {
 }
 public_valid() {
     private_file "$1" || fail 'Unsafe public config file'
-    number "$(stat -c %s "$1")" 1 1024 || fail 'Public configuration size outside limit'
+    number "$(stat -c %s "$1")" 1 "$public_limit" || fail 'Public configuration size outside limit'
     # Check exact canonical bytes; NULs that ash read would discard are detected.
     canonical=$(public_parse < "$1") || fail 'Invalid public configuration'
     [ "$(stat -c %s "$1")" -eq "$((${#canonical} + 1))" ] || fail 'Noncanonical public framing'
@@ -188,7 +216,8 @@ validate_generation() {
     validated_parent=$value
     vault_valid "$checked_dir/credentials"
     private_file "$checked_dir/manifest" || fail 'Unsafe integrity manifest'
-    [ "$(stat -c %s "$checked_dir/manifest")" -le 4096 ] || fail 'Oversized integrity manifest'
+    manifest_limit=4096; [ "$public_mode" = false ] || manifest_limit=32768
+    [ "$(stat -c %s "$checked_dir/manifest")" -le "$manifest_limit" ] || fail 'Oversized integrity manifest'
     expected_manifest=$(generation_manifest "$checked_dir") || fail 'Unable to hash generation'
     [ "$(cat "$checked_dir/manifest")" = "$expected_manifest" ] || fail 'Generation integrity mismatch'
     [ "$(stat -c %s "$checked_dir/manifest")" -eq "$((${#expected_manifest} + 1))" ] || fail 'Invalid integrity framing'
@@ -205,8 +234,19 @@ begin_generation() {
 copy_vault() {
     [ "$1" -ne 0 ] || return 0
     vault_valid "$store/gen-$1/credentials"
+    if [ "$public_mode" = true ]; then
+        allowed_slots=$(lua "$codec" allowed "$generation_dir/public.conf" 2>/dev/null) || fail 'Invalid candidate credential binding'
+    fi
     for item in "$store/gen-$1/credentials/"*; do
-        [ ! -e "$item" ] || cp "$item" "$generation_dir/credentials/" || fail 'Unable to copy credentials'
+        [ -e "$item" ] || continue
+        if [ "$public_mode" = true ]; then
+            case "
+$allowed_slots
+" in *"
+${item##*/}
+"*) ;; *) continue;; esac
+        fi
+        cp "$item" "$generation_dir/credentials/" || fail 'Unable to copy credentials'
     done
 }
 publish_generation() {
@@ -214,12 +254,28 @@ publish_generation() {
     vault_valid "$generation_dir/credentials"
     generation_manifest "$generation_dir" > "$generation_dir/manifest" || fail 'Unable to seal generation'
     validate_generation "$new_revision"
+    if [ "$public_mode" = true ]; then
+        # BusyBox 1.33.2 sync -f ignores syncfs errors. Use checked fsync.
+        fsync "$generation_dir/public.conf" "$generation_dir/parent" "$generation_dir/manifest" 2>/dev/null || fail 'Unable to synchronize candidate files'
+        for item in "$generation_dir/credentials/"*; do
+            [ ! -e "$item" ] || fsync "$item" 2>/dev/null || fail 'Unable to synchronize credential file'
+        done
+        fsync "$generation_dir/credentials" "$generation_dir" 2>/dev/null || fail 'Unable to synchronize candidate directories'
+    fi
     allocate_scratch
     printf '%s\n' "$new_revision" > "$scratch" || fail 'Unable to write current pointer'
+    if [ "$public_mode" = true ]; then
+        fsync "$scratch" 2>/dev/null || fail 'Unable to synchronize candidate pointer'
+    fi
     mv -f "$scratch" "$store/current" || fail 'Unable to publish generation'
     scratch=
     published=true
-    printf '{"api_version":1,"prototype":true,"ok":true,"revision":%s,"service_enabled":false,"durability":"rename-only-not-fsync"}\n' "$new_revision"
+    durability=rename-only-not-fsync
+    if [ "$public_mode" = true ]; then
+        fsync "$store" 2>/dev/null || fail 'Published pointer durability is uncertain' 6
+        durability=fsync-barriers-not-device-verified
+    fi
+    printf '{"api_version":1,"prototype":true,"ok":true,"revision":%s,"service_enabled":false,"durability":"%s"}\n' "$new_revision" "$durability"
 }
 need_initialized() { [ "$head_revision" -ne 0 ] || fail 'Initialize prototype store first' 2; }
 new_token() {
@@ -232,7 +288,46 @@ new_token() {
     [ "${#token}" -eq 32 ] || fail 'Invalid confirmation randomness'
     case "$token" in *[!0-9a-f]*) fail 'Invalid confirmation randomness';; esac
 }
+clock_now() {
+    clock_line=$(cat /proc/uptime 2>/dev/null) || fail 'Unable to read monotonic clock'
+    uptime=${clock_line%% *}
+    uptime=${uptime%%.*}
+    number "$uptime" 0 999999999 || fail 'Invalid monotonic clock'
+    now=$value
+    boot=$(cat /proc/sys/kernel/random/boot_id 2>/dev/null) || fail 'Unable to read boot identity'
+    [ "${#boot}" -eq 36 ] || fail 'Invalid boot identity'
+    case "$boot" in *[!0-9a-f-]*) fail 'Invalid boot identity';; esac
+}
+digest_file() {
+    digest=$(sha256sum "$1") || fail 'Unable to hash transaction data'
+    digest=${digest%% *}
+    [ "${#digest}" -eq 64 ] || fail 'Invalid transaction digest'
+    case "$digest" in *[!0-9a-f]*) fail 'Invalid transaction digest';; esac
+}
+baseline_fingerprint() {
+    manifest_body=$(cat "$store/gen-$head_revision/manifest" 2>/dev/null) || fail 'Unable to read transaction baseline'
+    fingerprint=$(printf '%s\n%s\n' "$store" "$manifest_body" | sha256sum) || fail 'Unable to bind transaction baseline'
+    fingerprint=${fingerprint%% *}
+    [ "${#fingerprint}" -eq 64 ] || fail 'Invalid baseline fingerprint'
+}
+full_plan_write() {
+    clock_now; created=$now; deadline=$((created + 300)); plan_boot=$boot
+    number "$deadline" 0 999999999 || fail 'Monotonic clock outside supported lifetime'
+    baseline_fingerprint; plan_baseline=$fingerprint
+    allocate_scratch
+    printf '%s\n' "$plan_public" > "$scratch" || fail 'Unable to prepare public diff'
+    digest_file "$scratch"; plan_digest=$digest
+    diff=$(lua "$codec" diff "$store/gen-$head_revision/public.conf" "$scratch" 2>/dev/null) || fail 'Unable to compute public diff'
+    drop_scratch
+    new_token
+    allocate_scratch
+    printf '%s\n' "$head_revision" "$token" "$plan_kind" "$plan_source" "$created" "$deadline" "$plan_boot" "$plan_baseline" "$plan_digest" "$plan_public" > "$scratch" || fail 'Unable to write public UCI plan'
+    mv -f "$scratch" "$store/pending" || fail 'Unable to publish preview'
+    scratch=
+    printf '{"api_version":1,"prototype":true,"ok":true,"confirmation":"%s","base_revision":%s,"operation":"%s","expires_in":300,"can_commit":true,"service_enabled":false,"credentials_omitted":true,"credential_policy":"retain-same-provider-and-section","scope":"public-uci-v1","changes":%s}\n' "$token" "$head_revision" "$plan_kind" "$diff"
+}
 plan_write() {
+    if [ "$public_mode" = true ]; then full_plan_write; return; fi
     # All values below are bounded, validated decimal numbers or fixed enums.
     # No account names, opaque credentials, secret hashes or paths are exposed.
     # Build the whole response before publishing the plan or printing success.
@@ -272,7 +367,7 @@ EOF
 }
 plan_read() {
     private_file "$store/pending" || fail 'Missing safe preview' 5
-    number "$(stat -c %s "$store/pending")" 1 1200 || fail 'Invalid preview size'
+    number "$(stat -c %s "$store/pending")" 1 "$((public_limit + 512))" || fail 'Invalid preview size'
     {
         IFS= read -r plan_base && IFS= read -r plan_token && IFS= read -r plan_kind && IFS= read -r plan_source || fail 'Invalid preview header'
         number "$plan_base" 1 32 && [ "$plan_base" = "$value" ] || fail 'Invalid preview base'
@@ -280,10 +375,27 @@ plan_read() {
         case "$plan_kind" in import) [ "$plan_source" = 0 ] || fail 'Invalid import preview';;
             rollback) number "$plan_source" 1 32 && [ "$plan_source" = "$value" ] || fail 'Invalid rollback preview';;
             *) fail 'Invalid preview operation';; esac
+        if [ "$public_mode" = true ]; then
+            IFS= read -r created && IFS= read -r deadline && IFS= read -r plan_boot && IFS= read -r plan_baseline && IFS= read -r plan_digest || fail 'Incomplete public UCI plan'
+            number "$created" 0 999999999 && [ "$created" = "$value" ] || fail 'Invalid preview timestamp'
+            number "$deadline" 0 999999999 && [ "$deadline" = "$value" ] && [ "$deadline" -eq "$((created + 300))" ] || fail 'Invalid preview deadline'
+            clock_now
+            [ "$boot" = "$plan_boot" ] && [ "$now" -ge "$created" ] && [ "$now" -lt "$deadline" ] || fail 'Expired confirmation' 5
+            baseline_fingerprint
+            [ "$fingerprint" = "$plan_baseline" ] || fail 'Preview baseline changed' 5
+        fi
         plan_public=$(public_parse) || fail 'Invalid preview configuration'
     } < "$store/pending"
     # Compare complete framing, including bytes read could discard.
-    framed=$(printf '%s\n%s\n%s\n%s\n%s' "$plan_base" "$plan_token" "$plan_kind" "$plan_source" "$plan_public")
+    if [ "$public_mode" = true ]; then
+        allocate_scratch
+        printf '%s\n' "$plan_public" > "$scratch" || fail 'Unable to inspect preview candidate'
+        digest_file "$scratch"; drop_scratch
+        [ "$digest" = "$plan_digest" ] || fail 'Preview candidate changed' 5
+        framed=$(printf '%s\n' "$plan_base" "$plan_token" "$plan_kind" "$plan_source" "$created" "$deadline" "$plan_boot" "$plan_baseline" "$plan_digest" "$plan_public")
+    else
+        framed=$(printf '%s\n%s\n%s\n%s\n%s' "$plan_base" "$plan_token" "$plan_kind" "$plan_source" "$plan_public")
+    fi
     [ "$(stat -c %s "$store/pending")" -eq "$((${#framed} + 1))" ] && [ "$(cat "$store/pending")" = "$framed" ] || fail 'Invalid preview framing'
 }
 ancestor() {
@@ -324,17 +436,22 @@ case "$command" in
     init)
         [ "$head_revision" -eq 0 ] || fail 'Store already initialized' 4
         begin_generation
-        printf '%s\n' 'homegate-prototype-config:1' 'slug=homegate' 'schema=main-public-v1' \
-            'enabled=0' 'access_enabled=0' 'auto_firewall=1' 'log_level=info' 'log_max_lines=1024' \
-            'ddns_interval=300' 'renew_days=30' 'https_port=443' 'http_port=0' \
-            'proxy_https_port=10443' 'proxy_http_port=10080' > "$generation_dir/public.conf" || fail 'Unable to write defaults'
+        if [ "$public_mode" = true ]; then
+            printf '%s\n' '# homegate-backup-format: 2' '# plugin: homegate' '# schema: public-uci-v1' '# secrets: omitted' "config homegate 'main'" | public_parse > "$generation_dir/public.conf" || fail 'Unable to write UCI defaults'
+        else
+            printf '%s\n' 'homegate-prototype-config:1' 'slug=homegate' 'schema=main-public-v1' \
+                'enabled=0' 'access_enabled=0' 'auto_firewall=1' 'log_level=info' 'log_max_lines=1024' \
+                'ddns_interval=300' 'renew_days=30' 'https_port=443' 'http_port=0' \
+                'proxy_https_port=10443' 'proxy_http_port=10080' > "$generation_dir/public.conf" || fail 'Unable to write defaults'
+        fi
         publish_generation
         ;;
     status)
         need_initialized
         preview=false
         [ ! -e "$store/pending" ] || preview=true
-        printf '{"api_version":1,"prototype":true,"ok":true,"revision":%s,"preview_present":%s,"service_enabled":false,"history_capacity":32,"credential_capacity":16,"scope":"main-public-v1"}\n' "$head_revision" "$preview"
+        scope=main-public-v1; [ "$public_mode" = false ] || scope=public-uci-v1
+        printf '{"api_version":1,"prototype":true,"ok":true,"revision":%s,"preview_present":%s,"service_enabled":false,"history_capacity":32,"credential_capacity":%s,"scope":"%s"}\n' "$head_revision" "$preview" "$credential_limit" "$scope"
         ;;
     export)
         need_initialized
@@ -343,8 +460,8 @@ case "$command" in
     preview)
         need_initialized
         allocate_scratch
-        head -c 1025 > "$scratch" || fail 'Unable to read bounded backup'
-        [ "$(stat -c %s "$scratch")" -le 1024 ] || fail 'Backup exceeds limit'
+        head -c "$((public_limit + 1))" > "$scratch" || fail 'Unable to read bounded backup'
+        [ "$(stat -c %s "$scratch")" -le "$public_limit" ] || fail 'Backup exceeds limit'
         plan_public=$(public_parse < "$scratch") || fail 'Backup validation failed'
         # Require exact framing; canonical numeric normalization remains allowed.
         original=$(cat "$scratch") || fail 'Unable to read backup'

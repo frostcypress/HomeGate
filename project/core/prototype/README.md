@@ -39,4 +39,4 @@ python3 scripts/Shell原型回归.py --runtime
 
 本机 Windows 已通过 3 项静态检查；10 项执行回归已在中文 GitHub Actions 通过。实际 UCI 解析、目标 BusyBox 构建选项、服务生命周期和资源峰值另需验证。
 
-Linux 回归证据：https://github.com/frostcypress/HomeGate/actions/runs/38127877469；实机业务/SDK 构建仍未执行。
+Linux 回归证据：[源码检查运行](https://github.com/frostcypress/HomeGate/actions/runs/38127877469)；实机业务/SDK 构建仍未执行。

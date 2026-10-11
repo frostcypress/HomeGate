@@ -1635,3 +1635,36 @@ msgstr "当前版本"
 
 msgid "Quick Access"
 msgstr "快捷操作"
+
+msgid "Import Preview"
+msgstr "导入预览"
+
+msgid "Configuration Field"
+msgstr "配置字段"
+
+msgid "Current Value"
+msgstr "当前内容"
+
+msgid "Restore Candidate"
+msgstr "恢复候选"
+
+msgid "Close Preview"
+msgstr "关闭预览"
+
+msgid "Preview only. Configuration remains unchanged."
+msgstr "当前仅预览，配置尚未更改。"
+
+msgid "Validating configuration..."
+msgstr "正在校验配置……"
+
+msgid "No public configuration changes."
+msgstr "公共配置没有变化。"
+
+msgid "Unable to preview configuration."
+msgstr "无法预览配置。"
+
+msgid "Services and access control are disabled in the restore candidate."
+msgstr "恢复候选中的服务和访问控制均已关闭。"
+
+msgid "Credentials, source URLs, upstream URLs and certificate files must be restored separately."
+msgstr "凭据、来源地址、上游地址及证书文件需要单独恢复。"

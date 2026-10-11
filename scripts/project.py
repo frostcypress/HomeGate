@@ -13,6 +13,10 @@ COMMON = ROOT / 'project/luci/common'
 
 
 def identity(root=ROOT):
+    for name in ('PROJECT_ID', 'VERSION', 'RELEASE'):
+        raw = (root / name).read_bytes()
+        if b'\r' in raw or not raw.endswith(b'\n') or raw.count(b'\n') != 1:
+            raise ValueError(name + ' must use one LF-terminated line')
     slug = (root / 'PROJECT_ID').read_text(encoding='utf-8').strip()
     version = (root / 'VERSION').read_text(encoding='utf-8').strip()
     release = (root / 'RELEASE').read_text(encoding='utf-8').strip()

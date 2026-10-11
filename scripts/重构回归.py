@@ -59,9 +59,20 @@ class Migration(unittest.TestCase):
             for name in ('VERSION', 'RELEASE', 'PROJECT_ID', 'scripts/install.sh', 'scripts/offline-verify.sh'):
                 (root / name).write_bytes((ROOT / name).read_bytes())
             (root / 'homegate-version.mk').write_text(generated_version(root), encoding='utf-8')
-            (root / 'RELEASE').write_text(str(int(identity(root)['release']) + 1) + '\n')
+            (root / 'RELEASE').write_text(str(int(identity(root)['release']) + 1) + '\n', newline='\n')
             with self.assertRaisesRegex(ValueError, 'drift'):
                 verify_generated(root)
+
+    def test_version_framing_cannot_hide_crlf_or_extra_lines(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for name in ('PROJECT_ID', 'VERSION', 'RELEASE'):
+                (root / name).write_bytes((ROOT / name).read_bytes())
+            original = (root / 'RELEASE').read_bytes()
+            for body in (original.replace(b'\n', b'\r\n'), original.rstrip(b'\n'), original + b'\n'):
+                (root / 'RELEASE').write_bytes(body)
+                with self.assertRaisesRegex(ValueError, 'LF-terminated'):
+                    identity(root)
 
     def test_metadata_not_filename(self):
         for ar in (False, True):

@@ -7,7 +7,7 @@ local FIELDS = {
     dns_account = {"name", "provider"},
     ddns_rule = {"enabled", "name", "account", "zone", "host", "type", "source", "interface", "ttl"},
     certificate = {"enabled", "name", "source", "account", "zone", "domains", "email", "renew_days", "ca", "environment"},
-    web_rule = {"enabled", "domain", "https", "certificate"},
+    web_rule = {"enabled", "domain", "https", "certificate", "certificate_mode", "certificate_managed"},
     wol_host = {"name", "mac"}
 }
 local DIRECTORY = "https://acme-v02.api.letsencrypt.org/directory"
@@ -17,7 +17,7 @@ local DEFAULTS = {
     dns_account = {name=""},
     ddns_rule = {enabled="0", name="", account="", zone="", host="@", type="AAAA", source="auto", interface="", ttl="600"},
     certificate = {enabled="0", name="", source="acme", account="", zone="", email="", renew_days="30", ca="letsencrypt", environment="production"},
-    web_rule = {enabled="0", domain="", https="1", certificate=""},
+    web_rule = {enabled="0", domain="", https="1", certificate="", certificate_mode="auto", certificate_managed="0"},
     wol_host = {name="", mac=""}
 }
 local KEYS = {}
@@ -103,7 +103,8 @@ local function enum(v, values)
 end
 local function scalar(kind, key, v)
     if type(v)~="string" or #v>4096 or not utf8(v) then return nil end
-    if key=="enabled" or key=="access_enabled" or key=="auto_firewall" or key=="https" then return enum(v,{"0","1"}) end
+    if key=="enabled" or key=="access_enabled" or key=="auto_firewall" or key=="https" or key=="certificate_managed" then return enum(v,{"0","1"}) end
+    if key=="certificate_mode" then return enum(v,{"auto","local"}) end
     if key=="log_level" then return enum(v,{"debug","info","warn","error"}) end
     if key=="log_max_lines" then return integer(v,64,20000) end
     if key=="ddns_interval" then return integer(v,60,999999999) end
@@ -223,34 +224,47 @@ local function normalize(doc)
     end
     return doc
 end
-function M.parse(body)
+local PRIVATE = {dns_account={id="key_id",secret="secret",account_id="account_id",endpoint="endpoint"},
+    ddns_rule={url="url"},web_rule={target="target"}}
+local function parse(body, legacy)
     if type(body)~="string" or #body==0 then return nil,"Select a HomeGate configuration file" end
     if #body>262144 then return nil,"Configuration file is too large" end
     body=body:gsub("\r\n","\n")
     if body:find("[%z\1-\8\11-\31\127]") then return nil,"Invalid configuration framing" end
     local doc,names,meta={}, {}, {}
+    local private, package_seen={},false
     local current,line_number=nil,0
     for line in (body.."\n"):gmatch("(.-)\n") do
         line_number=line_number+1
         if line_number>8192 or #line>4096 then return nil,"Configuration line limit exceeded" end
         local key,value=line:match("^# ([a-z0-9%-]+): (.-)$")
         if key and (key=="homegate-backup-format" or key=="plugin" or key=="schema" or key=="secrets") then
+            if legacy then return nil,"Backup metadata is not a legacy configuration" end
             if current or meta[key] then return nil,"Duplicate or misplaced backup metadata" end
             meta[key]=value
         else
             local t=tokens(line)
             if not t then return nil,"Invalid configuration syntax" end
             if #t>0 then
-                if #t~=3 then return nil,"Named sections and three-token directives are required" end
-                if t[1]=="config" then
+                if legacy and t[1]=="package" then
+                    if #t~=2 or t[2]~="homegate" or current or package_seen then return nil,"Invalid legacy package" end
+                    package_seen=true
+                elseif #t~=3 then return nil,"Named sections and three-token directives are required"
+                elseif t[1]=="config" then
                     if not FIELDS[t[2]] or not id(t[3]) or names[t[3]] or (t[2]=="homegate" and t[3]~="main") then return nil,"Invalid or duplicate configuration section" end
                     if #doc>=128 then return nil,"Too many configuration sections" end
                     current={kind=t[2],name=t[3],values={}}; doc[#doc+1]=current; names[t[3]]=true
                 elseif t[1]=="option" or t[1]=="list" then
                     if not current then return nil,"Option has no configuration section" end
                     local field=t[2]
-                    if not KEYS[current.kind][field] then return nil,"Unknown or private configuration field" end
-                    if t[1]=="list" then
+                    if legacy and current.kind=="certificate" and field=="domain" then field="domains" end
+                    local slot=legacy and PRIVATE[current.kind] and PRIVATE[current.kind][field]
+                    if slot then
+                        if t[1]~="option" or current.values[field]~=nil or private[current.name..":"..slot]~=nil then return nil,"Duplicate or invalid private field" end
+                        if #t[3]>4096 or not utf8(t[3]) then return nil,"Invalid private field" end
+                        private[current.name..":"..slot]={section=current,slot=slot,value=t[3]}
+                    elseif not KEYS[current.kind][field] then return nil,"Unknown or private configuration field"
+                    elseif t[1]=="list" then
                         if current.kind~="certificate" or field~="domains" or (current.values[field] and type(current.values[field])~="table") then return nil,"Invalid configuration list" end
                         current.values[field]=current.values[field] or {}
                         if #current.values[field]>=32 then return nil,"Too many certificate domains" end
@@ -263,13 +277,33 @@ function M.parse(body)
             end
         end
     end
-    if meta["homegate-backup-format"]=="2" then
+    if legacy then
+        for _,s in ipairs(doc) do
+            if s.kind=="ddns_rule" then
+                local zone,host=s.values.zone,s.values.host
+                if host=="" then s.values.host="@"; host="@" end
+                if zone and host and host~="" and host~="@" and host~=zone and host:sub(-(#zone+1))~="."..zone then s.values.host=host.."."..zone end
+            end
+        end
+        local normalized,err=normalize(doc)
+        if not normalized then return nil,err end
+        local slots={}
+        for _,p in pairs(private) do
+            if p.value~="" then
+                local s=p.section
+                local namespace=s.kind=="dns_account" and s.values.provider or (s.kind=="ddns_rule" and "ddns" or "web")
+                slots[namespace.."."..s.name.."."..p.slot]=p.value
+            end
+        end
+        return normalized,slots
+    elseif meta["homegate-backup-format"]=="2" then
         if meta.plugin~="homegate" or meta.schema~="public-uci-v1" or meta.secrets~="omitted" then return nil,"Wrong plugin or unsupported backup schema" end
     elseif meta["homegate-backup-format"]=="1" then
         if meta.secrets~="omitted" or meta.plugin or meta.schema then return nil,"Invalid legacy public backup metadata" end
     else return nil,"Unsupported HomeGate backup format" end
     return normalize(doc)
 end
+function M.parse(body) return parse(body,false) end
 local function quote(v) return "'"..v:gsub("'","'\\''").."'" end
 local function ordered(doc)
     local out={}
@@ -301,6 +335,15 @@ function M.canonical(body)
     local checked,limit_error=M.parse(result)
     if not checked then return nil,limit_error end
     return result
+end
+-- Internal migration preparation only. Never called by a Web route or public
+-- backup importer. Private values stay in the caller's restricted file store.
+function M.migration(body)
+    local doc,slots=parse(body,true)
+    if not doc then return nil,"Legacy configuration cannot be migrated safely" end
+    local result=serialize(doc)
+    if not M.parse(result) then return nil,"Legacy configuration exceeds public limits" end
+    return result,slots
 end
 -- Project existing state through the same whitelist before any public diff.
 -- Malformed public values are replaced rather than exposing unvalidated data.

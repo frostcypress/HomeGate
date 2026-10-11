@@ -31,7 +31,7 @@ Python 3.12+，Lua 回归另需 lupa==2.8；浏览器回归需 playwright==1.63.
 
 新工作流默认仅检查源码。Lua/JS 与 IPK/APK 分开选择，目标/核心/包名迁移未完成时构建失败。目标SDK构建.py 使用匹配 SDK；检查三包.py 读取控制元数据并要求准确版本、架构和 Core 依赖。APK3 解码需要支持 adbdump --format json 的官方 apk-tools，具体目标工具尚待验证。
 
-用户指定仓库 https://github.com/frostcypress/HomeGate，完整源码已展开提交，Linux 源码回归已通过。一次性导入工作流完成后已移除；常规工作流所有作业均只有 contents:read。实际运行记录见 docs/验证/GitHub首次导入.json。
+用户指定仓库 [frostcypress/HomeGate](https://github.com/frostcypress/HomeGate)，完整源码已展开提交，Linux 源码回归已通过。一次性导入工作流完成后已移除；常规工作流所有作业均只有 contents:read。详细验证记录随本地接续包保存。
 
 历史 build-release.py 和 build-apk.py 只能显式设置 HOMEGATE_ALLOW_LEGACY_GO=1 后用于迁移对照，其结果不能通过新三包检查。包名仍为旧 homegate，改名升级与 FULL PURGE 生命周期未完成前保留原业务合同。正式 GitHub Release 当前禁止。
 
@@ -45,4 +45,4 @@ Python 3.12+，Lua 回归另需 lupa==2.8；浏览器回归需 playwright==1.63.
 
 草稿仅含完整源码、许可、工作流、历史合同和三份接续文档，不附旧包。完整快照必须在迁移完成且具备真实三包后生成。
 
-Linux 回归证据：https://github.com/frostcypress/HomeGate/actions/runs/38127877469；实机业务/SDK 构建仍未执行。
+Linux 回归证据：[源码检查运行](https://github.com/frostcypress/HomeGate/actions/runs/38127877469)；实机业务/SDK 构建仍未执行。

@@ -32,8 +32,24 @@ elseif arg[1]=="allowed" and arg[2] and not arg[3] then
             for _,slot in ipairs({"key_id","secret","account_id","endpoint"}) do
                 io.write(s.values.provider,".",s.name,".",slot,"\n")
             end
+        elseif s.kind=="ddns_rule" then io.write("ddns.",s.name,".url\n")
+        elseif s.kind=="web_rule" then io.write("web.",s.name,".target\n")
         end
     end
+elseif arg[1]=="migrate" and arg[2] and arg[3] and not arg[4] then
+    local body,slots=codec.migration(read(arg[2]))
+    if not body then fail() end
+    local function write(path,value)
+        local f=io.open(path,"wb")
+        if not f then fail() end
+        local written=f:write(value)
+        local closed=f:close()
+        if not written or not closed then fail() end
+    end
+    -- The Shell caller holds the store lock and allocated an empty 0700
+    -- generation. These are generated slot names, never caller-supplied paths.
+    write(arg[3].."/public.conf",body)
+    for slot,value in pairs(slots) do write(arg[3].."/credentials/"..slot,value) end
 elseif arg[1]=="diff" and arg[2] and arg[3] and not arg[4] then
     local before=parsed(arg[2])
     local cursor={foreach=function(self,pkg,kind,cb)

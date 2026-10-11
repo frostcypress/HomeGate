@@ -12,7 +12,7 @@ public_mode=false
 public_limit=1024
 credential_limit=16
 if [ "${1:-}" = --public-uci ]; then
-    public_mode=true; public_limit=262144; credential_limit=128; shift
+    public_mode=true; public_limit=262144; credential_limit=192; shift
 fi
 codec=$(dirname "$0")/config-codec.lua
 fail() {
@@ -26,7 +26,7 @@ cleanup() {
         for item in "$generation_dir/credentials/"*; do
             [ ! -e "$item" ] || rm -f "$item"
         done
-        rm -f "$generation_dir/public.conf" "$generation_dir/parent" "$generation_dir/manifest"
+        rm -f "$generation_dir/public.conf" "$generation_dir/parent" "$generation_dir/manifest" "$generation_dir/legacy.conf"
         rmdir "$generation_dir/credentials" "$generation_dir" 2>/dev/null || :
     fi
 }
@@ -116,7 +116,8 @@ open_store() {
     fi
 }
 slot_valid() {
-    case "$1" in aliyun|cloudflare|dnspod|huaweicloud) ;; *) return 1;; esac
+    case "$1" in aliyun|cloudflare|dnspod|huaweicloud) ;;
+        ddns|web) [ "$public_mode" = true ] || return 1;; *) return 1;; esac
     if [ "$public_mode" = true ]; then
         case "$2" in ''|*[!a-zA-Z0-9_-]*) return 1;; esac
         [ "${#2}" -le 64 ] || return 1
@@ -124,7 +125,8 @@ slot_valid() {
         case "$2" in ''|*[!a-zA-Z0-9_]*) return 1;; esac
         [ "${#2}" -le 32 ] || return 1
     fi
-    case "$3" in key_id|secret|account_id|endpoint) ;; *) return 1;; esac
+    case "$1:$3" in ddns:url|web:target) ;; ddns:*|web:*) return 1;;
+        *:key_id|*:secret|*:account_id|*:endpoint) ;; *) return 1;; esac
 }
 vault_valid() {
     private_dir "$1" || fail 'Unsafe credential directory'
@@ -199,6 +201,7 @@ generation_manifest() {
     (
         cd "$1" || exit 1
         sha256sum public.conf parent || exit 1
+        [ ! -e legacy.conf ] || sha256sum legacy.conf || exit 1
         for item in credentials/*; do
             [ ! -e "$item" ] || sha256sum "$item" || exit 1
         done
@@ -208,7 +211,10 @@ validate_generation() {
     checked_dir="$store/gen-$1"
     private_dir "$checked_dir" || fail 'Missing private generation'
     for item in "$checked_dir/"*; do
-        case "${item##*/}" in public.conf|parent|manifest|credentials) ;; *) fail 'Unexpected generation entry';; esac
+        case "${item##*/}" in public.conf|parent|manifest|credentials) ;;
+            legacy.conf) [ "$public_mode" = true ] || fail 'Unexpected legacy backup'
+                private_file "$item" && number "$(stat -c %s "$item")" 1 "$public_limit" || fail 'Unsafe legacy backup';;
+            *) fail 'Unexpected generation entry';; esac
     done
     public_valid "$checked_dir/public.conf"
     read_one "$checked_dir/parent" 3
@@ -216,7 +222,7 @@ validate_generation() {
     validated_parent=$value
     vault_valid "$checked_dir/credentials"
     private_file "$checked_dir/manifest" || fail 'Unsafe integrity manifest'
-    manifest_limit=4096; [ "$public_mode" = false ] || manifest_limit=32768
+    manifest_limit=4096; [ "$public_mode" = false ] || manifest_limit=65536
     [ "$(stat -c %s "$checked_dir/manifest")" -le "$manifest_limit" ] || fail 'Oversized integrity manifest'
     expected_manifest=$(generation_manifest "$checked_dir") || fail 'Unable to hash generation'
     [ "$(cat "$checked_dir/manifest")" = "$expected_manifest" ] || fail 'Generation integrity mismatch'
@@ -249,14 +255,18 @@ ${item##*/}
         cp "$item" "$generation_dir/credentials/" || fail 'Unable to copy credentials'
     done
 }
-publish_generation() {
+seal_generation() {
     public_valid "$generation_dir/public.conf"
     vault_valid "$generation_dir/credentials"
     generation_manifest "$generation_dir" > "$generation_dir/manifest" || fail 'Unable to seal generation'
     validate_generation "$new_revision"
+}
+publish_generation() {
+    seal_generation
     if [ "$public_mode" = true ]; then
         # BusyBox 1.33.2 sync -f ignores syncfs errors. Use checked fsync.
         fsync "$generation_dir/public.conf" "$generation_dir/parent" "$generation_dir/manifest" 2>/dev/null || fail 'Unable to synchronize candidate files'
+        [ ! -e "$generation_dir/legacy.conf" ] || fsync "$generation_dir/legacy.conf" 2>/dev/null || fail 'Unable to synchronize legacy backup'
         for item in "$generation_dir/credentials/"*; do
             [ ! -e "$item" ] || fsync "$item" 2>/dev/null || fail 'Unable to synchronize credential file'
         done
@@ -319,12 +329,17 @@ full_plan_write() {
     digest_file "$scratch"; plan_digest=$digest
     diff=$(lua "$codec" diff "$store/gen-$head_revision/public.conf" "$scratch" 2>/dev/null) || fail 'Unable to compute public diff'
     drop_scratch
+    credential_policy=retain-matching-resource
+    if [ "$plan_kind" = migration ]; then
+        digest_file "$store/gen-$plan_source/manifest"; plan_digest=$digest
+        credential_policy=migrate-legacy-private-fields
+    fi
     new_token
     allocate_scratch
     printf '%s\n' "$head_revision" "$token" "$plan_kind" "$plan_source" "$created" "$deadline" "$plan_boot" "$plan_baseline" "$plan_digest" "$plan_public" > "$scratch" || fail 'Unable to write public UCI plan'
     mv -f "$scratch" "$store/pending" || fail 'Unable to publish preview'
     scratch=
-    printf '{"api_version":1,"prototype":true,"ok":true,"confirmation":"%s","base_revision":%s,"operation":"%s","expires_in":300,"can_commit":true,"service_enabled":false,"credentials_omitted":true,"credential_policy":"retain-same-provider-and-section","scope":"public-uci-v1","changes":%s}\n' "$token" "$head_revision" "$plan_kind" "$diff"
+    printf '{"api_version":1,"prototype":true,"ok":true,"confirmation":"%s","base_revision":%s,"operation":"%s","expires_in":300,"can_commit":true,"service_enabled":false,"credentials_omitted":true,"credential_policy":"%s","scope":"public-uci-v1","changes":%s}\n' "$token" "$head_revision" "$plan_kind" "$credential_policy" "$diff"
 }
 plan_write() {
     if [ "$public_mode" = true ]; then full_plan_write; return; fi
@@ -374,6 +389,7 @@ plan_read() {
         [ "$plan_base" = "$head_revision" ] && [ "$plan_token" = "$confirmation" ] || fail 'Expired confirmation' 5
         case "$plan_kind" in import) [ "$plan_source" = 0 ] || fail 'Invalid import preview';;
             rollback) number "$plan_source" 1 32 && [ "$plan_source" = "$value" ] || fail 'Invalid rollback preview';;
+            migration) [ "$public_mode" = true ] && [ "$head_revision" = 1 ] && number "$plan_source" 2 32 && [ "$plan_source" = "$value" ] || fail 'Invalid migration preview';;
             *) fail 'Invalid preview operation';; esac
         if [ "$public_mode" = true ]; then
             IFS= read -r created && IFS= read -r deadline && IFS= read -r plan_boot && IFS= read -r plan_baseline && IFS= read -r plan_digest || fail 'Incomplete public UCI plan'
@@ -391,6 +407,12 @@ plan_read() {
         allocate_scratch
         printf '%s\n' "$plan_public" > "$scratch" || fail 'Unable to inspect preview candidate'
         digest_file "$scratch"; drop_scratch
+        if [ "$plan_kind" = migration ]; then
+            validate_generation "$plan_source"
+            [ "$validated_parent" = "$head_revision" ] && [ -e "$store/gen-$plan_source/legacy.conf" ] || fail 'Invalid migration candidate'
+            [ "$(cat "$store/gen-$plan_source/public.conf")" = "$plan_public" ] || fail 'Migration public candidate changed' 5
+            digest_file "$store/gen-$plan_source/manifest"
+        fi
         [ "$digest" = "$plan_digest" ] || fail 'Preview candidate changed' 5
         framed=$(printf '%s\n' "$plan_base" "$plan_token" "$plan_kind" "$plan_source" "$created" "$deadline" "$plan_boot" "$plan_baseline" "$plan_digest" "$plan_public")
     else
@@ -423,6 +445,7 @@ if [ "$command" = version ]; then
 fi
 case "$command" in
     init|status|export|preview|cancel) [ "$#" -eq 0 ] || fail 'Unexpected arguments' 2;;
+    migration-preview) [ "$#" -eq 0 ] && [ "$public_mode" = true ] || fail 'Migration requires full schema' 2;;
     rollback-preview) [ "$#" -eq 1 ] && number "$1" 1 32 && [ "$1" = "$value" ] || fail 'Expected generation number' 2;;
     commit) [ "$#" -eq 1 ] && [ "${#1}" -eq 32 ] || fail 'Expected confirmation handle' 2
         case "$1" in *[!0-9a-f]*) fail 'Invalid confirmation handle' 2;; esac
@@ -470,6 +493,25 @@ case "$command" in
         plan_kind=import; plan_source=0
         plan_write
         ;;
+    migration-preview)
+        need_initialized
+        [ "$head_revision" = 1 ] || fail 'Migration requires untouched initial store' 4
+        for item in "$store/gen-1/credentials/"*; do
+            [ ! -e "$item" ] || fail 'Migration requires empty initial vault' 4
+        done
+        defaults=$(printf '%s\n' '# homegate-backup-format: 2' '# plugin: homegate' '# schema: public-uci-v1' '# secrets: omitted' "config homegate 'main'" | public_parse) || fail 'Unable to check migration baseline'
+        [ "$(cat "$store/gen-1/public.conf")" = "$defaults" ] || fail 'Migration baseline is not default configuration' 4
+        begin_generation
+        head -c "$((public_limit + 1))" > "$generation_dir/legacy.conf" || fail 'Unable to read bounded legacy config'
+        number "$(stat -c %s "$generation_dir/legacy.conf")" 1 "$public_limit" || fail 'Legacy configuration size outside limit'
+        lua "$codec" migrate "$generation_dir/legacy.conf" "$generation_dir" 2>/dev/null || fail 'Legacy migration validation failed'
+        seal_generation
+        plan_public=$(cat "$generation_dir/public.conf") || fail 'Unable to read migration candidate'
+        plan_kind=migration; plan_source=$new_revision
+        plan_write
+        # Retain sealed unpublished staging for confirmation; not an ancestor.
+        generation_dir=
+        ;;
     rollback-preview)
         need_initialized
         [ "$1" != "$head_revision" ] && ancestor "$1" || fail 'Rollback target is not prior committed ancestry' 5
@@ -486,10 +528,14 @@ case "$command" in
             validate_generation "$plan_source"
             [ "$(cat "$store/gen-$plan_source/public.conf")" = "$plan_public" ] || fail 'Rollback config changed'
             copy_source=$plan_source
+        elif [ "$plan_kind" = migration ]; then copy_source=$plan_source
         else copy_source=$head_revision; fi
         begin_generation
         printf '%s\n' "$plan_public" > "$generation_dir/public.conf" || fail 'Unable to write candidate config'
         copy_vault "$copy_source"
+        if [ "$plan_kind" = migration ]; then
+            cp "$store/gen-$plan_source/legacy.conf" "$generation_dir/legacy.conf" || fail 'Unable to retain private migration backup'
+        fi
         publish_generation
         # A crash before removing preview cannot replay it: base revision changed.
         rm -f "$store/pending" 2>/dev/null || :

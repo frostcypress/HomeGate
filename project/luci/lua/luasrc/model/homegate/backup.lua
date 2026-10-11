@@ -279,8 +279,20 @@ local function parse(body, legacy)
     end
     if legacy then
         for _,s in ipairs(doc) do
+            for _,field in ipairs({"provider","source","ca","environment"}) do
+                if s.values[field] then s.values[field]=s.values[field]:match("^%s*(.-)%s*$"):lower() end
+            end
+            for _,field in ipairs({"zone","domain"}) do
+                if s.values[field] then s.values[field]=s.values[field]:match("^%s*(.-)%s*$"):lower():gsub("%.$","") end
+            end
+            if type(s.values.domains)=="table" then
+                for n,d in ipairs(s.values.domains) do s.values.domains[n]=d:match("^%s*(.-)%s*$") end
+            end
             if s.kind=="ddns_rule" then
                 local zone,host=s.values.zone,s.values.host
+                if zone then zone=zone:match("^%s*(.-)%s*$"):lower():gsub("%.$",""); s.values.zone=zone end
+                if host then host=host:match("^%s*(.-)%s*$"):lower():gsub("%.$",""); s.values.host=host end
+                if s.values.type then s.values.type=s.values.type:match("^%s*(.-)%s*$"):upper() end
                 if host=="" then s.values.host="@"; host="@" end
                 if zone and host and host~="" and host~="@" and host~=zone and host:sub(-(#zone+1))~="."..zone then s.values.host=host.."."..zone end
             end

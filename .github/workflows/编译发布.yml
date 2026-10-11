@@ -70,7 +70,7 @@ jobs:
           import re
           file = Path('build/busybox-runtime/busybox-1.33.2/.config')
           body = file.read_text()
-          required = ['ASH', 'ASH_OPTIMIZE_FOR_SIZE', 'ASH_PRINTF', 'ASH_TEST',
+          required = ['BUSYBOX', 'ASH', 'ASH_OPTIMIZE_FOR_SIZE', 'ASH_PRINTF', 'ASH_TEST',
                       'FEATURE_SH_MATH', 'EXPR', 'STAT', 'FEATURE_STAT_FORMAT', 'FLOCK',
                       'TR', 'MKDIR', 'MV', 'RM', 'ID', 'DIRNAME']
           for name in required:
@@ -82,6 +82,7 @@ jobs:
           PY
           make -C build/busybox-runtime/busybox-1.33.2 oldconfig < /dev/null
           make -C build/busybox-runtime/busybox-1.33.2 -j2
+          build/busybox-runtime/busybox-1.33.2/busybox --list
           echo "$PWD/build/busybox-runtime/busybox-1.33.2" >> "$GITHUB_PATH"
           python3 -m venv build/verify-venv
           build/verify-venv/bin/python -m pip install 'lupa==2.8' 'playwright==1.63.0' 'tree-sitter==0.25.2' 'tree-sitter-bash==0.25.1'

@@ -2317,120 +2317,25 @@ local function attachment(name, content_type)
     h.prepare_content(content_type or "application/octet-stream")
 end
 
--- Fail closed: export only known non-secret UCI options. New options stay private.
-local EXPORT_FIELDS = {
-    homegate = {"log_level", "log_max_lines", "access_enabled", "access_allow", "access_deny", "access_region", "wol_interface", "last_wol_host", "ddns_interval", "https_port", "http_port", "proxy_https_port", "proxy_http_port", "auto_firewall", "acme_email", "acme_directory", "renew_days", "version"},
-    dns_account = {"name", "provider"},
-    ddns_rule = {"enabled", "name", "account", "zone", "host", "type", "source", "interface", "ttl"},
-    certificate = {"enabled", "name", "source", "account", "zone", "domains", "email", "renew_days", "ca", "environment"},
-    web_rule = {"enabled", "domain", "https", "certificate"},
-    wol_host = {"name", "mac"}
-}
-
-local function export_quote(value)
-    return "'" .. tostring(value):gsub("'", "'\\''") .. "'"
+-- Only the public backup codec can consume uploaded bytes. It cannot write UCI.
+local function backup_codec()
+    return require "luci.model.homegate.backup"
 end
 
 function action_config_export()
-    local cur = uci_cursor()
-    local lines = {"# homegate-backup-format: 1", "# secrets: omitted", "# Service starts disabled; restore credentials and upstream URLs before enabling."}
-    for _, kind in ipairs({"homegate", "dns_account", "ddns_rule", "certificate", "web_rule", "wol_host"}) do
-        cur:foreach("homegate", kind, function(section)
-            local name = section[".name"]
-            if type(name) ~= "string" or not name:match("^[%w_]+$") then return end
-            lines[#lines + 1] = ""
-            lines[#lines + 1] = "config " .. kind .. " " .. export_quote(name)
-            if kind == "homegate" then lines[#lines + 1] = "\toption enabled '0'" end
-            for _, key in ipairs(EXPORT_FIELDS[kind]) do
-                local value = section[key]
-                if type(value) == "table" then
-                    for _, item in ipairs(value) do
-                        lines[#lines + 1] = "\tlist " .. key .. " " .. export_quote(item)
-                    end
-                elseif value ~= nil then
-                    lines[#lines + 1] = "\toption " .. key .. " " .. export_quote(value)
-                end
-            end
-        end)
-    end
+    local body, err = backup_codec().export(uci_cursor())
+    if not body then return redirect_page("maintenance", nil, err) end
     attachment("homegate-config-backup.conf", "text/plain; charset=UTF-8")
-    http().write(table.concat(lines, "\n") .. "\n")
+    http().write(body)
 end
 
 function action_config_import()
-    local h = http()
-    -- Keep this as a normal URL-encoded LuCI form POST instead of multipart.
-    -- The browser reads the selected local file into config_payload before
-    -- submit.  This avoids old QWRT/LuCI multipart file-handler ordering
-    -- differences while retaining the normal POST + LuCI token path.
-    local body = h.formvalue("config_payload") or ""
-    if type(body) ~= "string" or #body == 0 then return redirect_page("maintenance", nil, "Select a HomeGate configuration file") end
-    if #body > 262144 then return redirect_page("maintenance", nil, "Configuration file is too large") end
-    if not body:match("config%s+homegate%s+['\"]?main") then
-        return redirect_page("maintenance", nil, "The selected file is not a HomeGate configuration backup")
-    end
-
-    local suffix = tostring(os.time()) .. tostring(math.random(1000, 9999))
-    local dir = "/tmp/homegate-import-" .. suffix
-    local path = dir .. "/homegate"
-    if sys().call("mkdir -m 700 " .. dir .. " >/dev/null 2>&1") ~= 0 then
-        return redirect_page("maintenance", nil, "Unable to prepare configuration import")
-    end
-    local f = io.open(path, "w")
-    if not f then sys().call("rm -rf " .. dir); return redirect_page("maintenance", nil, "Unable to prepare configuration import") end
-    f:write(body)
-    f:close()
-    sys().call("chmod 600 " .. path .. " >/dev/null 2>&1")
-    if sys().call("uci -c " .. dir .. " -q show homegate >/dev/null 2>&1") ~= 0 then
-        sys().call("rm -rf " .. dir)
-        return redirect_page("maintenance", nil, "HomeGate configuration syntax is invalid")
-    end
-
-    local backup = "/tmp/homegate-before-import-" .. suffix
-    local had_original = sys().call("test -f /etc/config/homegate") == 0
-    if had_original and sys().call("cp /etc/config/homegate " .. backup .. " >/dev/null 2>&1") ~= 0 then
-        sys().call("rm -rf " .. dir)
-        return redirect_page("maintenance", nil, "Unable to prepare configuration import")
-    end
-    local rc = sys().call("cp " .. path .. " /etc/config/.homegate.importing && chmod 600 /etc/config/.homegate.importing && mv /etc/config/.homegate.importing /etc/config/homegate")
-    sys().call("rm -rf " .. dir)
-    if rc ~= 0 then
-        sys().call("rm -f /etc/config/.homegate.importing " .. backup)
-        return redirect_page("maintenance", nil, "Unable to install imported configuration")
-    end
-
-    local imported_access_enabled = trim(sys().exec("uci -q get homegate.main.access_enabled 2>/dev/null") or "") == "1"
-    local imported_access_region = trim(sys().exec("uci -q get homegate.main.access_region 2>/dev/null") or ""):upper()
-    if imported_access_region:match("^CN%-") then
-        local imported_cur = uci_cursor()
-        imported_cur:set("homegate", "main", "access_region", "")
-        imported_cur:commit("homegate")
-        imported_access_region = ""
-    end
-    if imported_access_enabled and imported_access_region ~= "" then
-        if not access_region_supported(imported_access_region) or not action_core("access-update " .. imported_access_region) then
-            if had_original and sys().call("test -f " .. backup) == 0 then
-                sys().call("cp " .. backup .. " /etc/config/homegate && chmod 600 /etc/config/homegate")
-            else
-                sys().call("rm -f /etc/config/homegate")
-            end
-            sys().call("rm -f " .. backup)
-            return redirect_page("maintenance", nil, "Unable to update access region data")
-        end
-    end
-
-    if apply_homegate() == false then
-        if had_original and sys().call("test -f " .. backup) == 0 then
-            sys().call("cp " .. backup .. " /etc/config/homegate && chmod 600 /etc/config/homegate")
-            apply_homegate()
-        else
-            sys().call("rm -f /etc/config/homegate")
-        end
-        sys().call("rm -f " .. backup)
-        return redirect_page("maintenance", nil, "Imported configuration could not be applied; previous configuration was restored")
-    end
-    sys().call("rm -f " .. backup)
-    return redirect_page("maintenance", "Configuration imported and applied")
+    -- The legacy POST route now validates and previews only. Neither a crafted
+    -- mode nor a browser confirmation can reach the old direct overwrite path.
+    local codec = backup_codec()
+    local result, err = codec.preview(uci_cursor(), http().formvalue("config_payload"))
+    http().prepare_content("application/json")
+    http().write(codec.json(result or {api_version=1,ok=false,phase="config-preview",error=err}) .. "\n")
 end
 
 local function reset_homegate_config(cur)

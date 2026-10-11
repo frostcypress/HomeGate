@@ -130,7 +130,7 @@ bool_option() {
     get_option "$1" "$2"
     option=${option#"${option%%[![:space:]]*}"}
     option=${option%"${option##*[![:space:]]}"}
-    option=$(printf '%s' "$option" | tr '[:upper:]' '[:lower:]')
+    option=$(printf '%s' "$option" | tr 'A-Z' 'a-z')
     case "$option" in 1|true|yes|on|enabled) option=true;; *) option=false;; esac
 }
 numeric_option() {
@@ -149,7 +149,7 @@ config_check() {
     bool_option access_enabled 0; access_enabled=$option
     bool_option auto_firewall 1; auto_firewall=$option
     get_option log_level info
-    level=$(printf '%s' "$option" | tr '[:upper:]' '[:lower:]')
+    level=$(printf '%s' "$option" | tr 'A-Z' 'a-z')
     case "$level" in debug|info|warn|error) ;; *) fail 'Invalid log level';; esac
     numeric_option log_max_lines 1024 64 20000 'Invalid log limit'; log_limit=$option
     numeric_option ddns_interval 300 -999999999 999999999 'Invalid DDNS interval'; interval=$option

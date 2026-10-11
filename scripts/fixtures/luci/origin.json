@@ -1,0 +1,46 @@
+{
+  "files": {
+    "LICENSE": {
+      "url": "https://raw.githubusercontent.com/openwrt/luci/a450f0d67c6d9d854ba19e57a1361da8cedd8d98/LICENSE",
+      "sha256": "43070e2d4e532684de521b885f385d0841030efa2b1a20bafb76133a5e1379c1"
+    },
+    "NOTICE": {
+      "url": "https://raw.githubusercontent.com/openwrt/luci/a450f0d67c6d9d854ba19e57a1361da8cedd8d98/NOTICE",
+      "sha256": "0f815375cd41a2cd9f297bcd640eb174af287ba2f3ae0262382f4b0c3ee5c9f2"
+    },
+    "luci.js": {
+      "url": "https://raw.githubusercontent.com/openwrt/luci/a450f0d67c6d9d854ba19e57a1361da8cedd8d98/modules/luci-base/htdocs/luci-static/resources/luci.js",
+      "sha256": "a8fd2e9100249f54e64def80bf96d43a03b5af6a3f86a9f151d898994a1e1966"
+    },
+    "dispatcher.uc": {
+      "url": "https://raw.githubusercontent.com/openwrt/luci/a450f0d67c6d9d854ba19e57a1361da8cedd8d98/modules/luci-base/ucode/dispatcher.uc",
+      "sha256": "4f9923cf569aeebb956343d208bcc38f40d8a26d2f46f12c5539a9582fa4f037"
+    },
+    "cbi.js": {
+      "url": "https://raw.githubusercontent.com/openwrt/luci/a450f0d67c6d9d854ba19e57a1361da8cedd8d98/modules/luci-base/htdocs/luci-static/resources/cbi.js",
+      "sha256": "8366d9648e55e403de77bdec3de96088afa795f192f8972f3861e35c1a8df154"
+    },
+    "bootstrap.css": {
+      "url": "https://raw.githubusercontent.com/openwrt/luci/a450f0d67c6d9d854ba19e57a1361da8cedd8d98/themes/luci-theme-bootstrap/htdocs/luci-static/bootstrap/cascade.css",
+      "sha256": "504480ba19479c3ba83fffd3309c4e46cd82c9f9c6ef3e8b54c0961390dd587c"
+    },
+    "ui.js": {
+      "url": "https://raw.githubusercontent.com/openwrt/luci/a450f0d67c6d9d854ba19e57a1361da8cedd8d98/modules/luci-base/htdocs/luci-static/resources/ui.js",
+      "sha256": "b3e8886bfe94a58a81d12d89355db0f453aee56741f515690ae5c7442bc9517d"
+    },
+    "validation.js": {
+      "url": "https://raw.githubusercontent.com/openwrt/luci/a450f0d67c6d9d854ba19e57a1361da8cedd8d98/modules/luci-base/htdocs/luci-static/resources/validation.js",
+      "sha256": "27440380ee0fdfd21c354d68549c532a331461c0bb9084815303ce99c537933f"
+    },
+    "uci.js": {
+      "url": "https://raw.githubusercontent.com/openwrt/luci/a450f0d67c6d9d854ba19e57a1361da8cedd8d98/modules/luci-base/htdocs/luci-static/resources/uci.js",
+      "sha256": "c14a05d8bd458d57e855513f1397132f73ce8af82ab3d1be8e102df1d22e29f3"
+    },
+    "fs.js": {
+      "url": "https://raw.githubusercontent.com/openwrt/luci/a450f0d67c6d9d854ba19e57a1361da8cedd8d98/modules/luci-base/htdocs/luci-static/resources/fs.js",
+      "sha256": "f2eda3d529b3053318d034a7f792e6b63e3800ffb27fa34b486592594ffd4e00"
+    }
+  },
+  "purpose": "Official loader test fixtures, never installed on router",
+  "commit": "a450f0d67c6d9d854ba19e57a1361da8cedd8d98"
+}

@@ -1,0 +1,1637 @@
+msgid ""
+msgstr ""
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Language: zh_CN\n"
+
+msgid "HomeGate"
+msgstr "家庭公网服务"
+
+msgid "Home public access, dynamic DNS, HTTPS reverse proxy and Wake-on-LAN service."
+msgstr "家庭公网访问、动态域名、HTTPS 反向代理与网络唤醒服务。"
+
+msgid "Basic Settings"
+msgstr "基础设置"
+
+msgid "Service Settings"
+msgstr "服务设置"
+
+msgid "Language Pack Version"
+msgstr "语言包版本"
+
+msgid "System Architecture"
+msgstr "系统架构"
+
+msgid "Process ID"
+msgstr "进程 ID"
+
+msgid "Public IPv6"
+msgstr "公网 IPv6"
+
+msgid "Auto-configure IPv6 Firewall"
+msgstr "自动配置 IPv6 防火墙"
+
+msgid "DDNS Interval (s)"
+msgstr "DDNS 间隔（秒）"
+
+msgid "Domains & Certificates"
+msgstr "域名与证书"
+
+msgid "Web Services"
+msgstr "Web 服务"
+
+msgid "Wake-on-LAN"
+msgstr "网络唤醒"
+
+msgid "Runtime Status"
+msgstr "运行状态"
+
+msgid "Loading..."
+msgstr "加载中..."
+
+msgid "Version"
+msgstr "版本"
+
+msgid "Current Public IPv6"
+msgstr "当前公网 IPv6"
+
+msgid "WAN Device"
+msgstr "WAN 设备"
+
+msgid "Dynamic DNS"
+msgstr "动态域名"
+
+msgid "Certificates"
+msgstr "证书"
+
+msgid "Enable HomeGate"
+msgstr "启用 HomeGate"
+
+msgid "DDNS Interval"
+msgstr "DDNS 间隔"
+
+msgid "seconds"
+msgstr "秒"
+
+msgid "Public HTTPS Port"
+msgstr "公网 HTTPS 端口"
+
+msgid "Internal HTTPS Port"
+msgstr "内部 HTTPS 端口"
+
+msgid "Automatically Open IPv6 Firewall"
+msgstr "自动开放 IPv6 防火墙"
+
+msgid "ACME Contact Email"
+msgstr "ACME 联系邮箱"
+
+msgid "ACME Directory"
+msgstr "ACME Directory"
+
+msgid "Production"
+msgstr "Production（正式）"
+
+msgid "Staging"
+msgstr "Staging（测试）"
+
+msgid "Renewal Threshold"
+msgstr "续期阈值"
+
+msgid "days"
+msgstr "天"
+
+msgid "Log Settings"
+msgstr "日志设置"
+
+msgid "Log Level"
+msgstr "日志级别"
+
+msgid "Debug"
+msgstr "调试"
+
+msgid "Info"
+msgstr "信息"
+
+msgid "Warning"
+msgstr "警告"
+
+msgid "Error"
+msgstr "错误"
+
+msgid "Maximum Log Lines"
+msgstr "日志最大条数"
+
+msgid "Capture Error Logs"
+msgstr "捕获异常日志"
+
+msgid "Runtime Log"
+msgstr "运行日志"
+
+msgid "Refresh Log"
+msgstr "刷新日志"
+
+msgid "Clear Log"
+msgstr "清空日志"
+
+msgid "Save & Apply"
+msgstr "保存&应用"
+
+msgid "Save"
+msgstr "保存"
+
+msgid "Reset"
+msgstr "复位"
+
+msgid "Running"
+msgstr "运行中"
+
+msgid "Stopped"
+msgstr "已停止"
+
+msgid "Healthy"
+msgstr "运行正常"
+
+msgid "Unhealthy"
+msgstr "运行异常"
+
+msgid "Dynamic DNS Rules"
+msgstr "动态域名规则"
+
+msgid "Enable"
+msgstr "启用"
+
+msgid "Enabled"
+msgstr "启用"
+
+msgid "DNS Provider"
+msgstr "DNS 服务商"
+
+msgid "Aliyun DNS"
+msgstr "阿里云 DNS"
+
+msgid "AccessKey ID"
+msgstr "AccessKey ID"
+
+msgid "AccessKey Secret"
+msgstr "AccessKey Secret"
+
+msgid "Leave blank to keep the saved secret"
+msgstr "留空保留已保存的 Secret"
+
+msgid "Zone"
+msgstr "主域名"
+
+msgid "Host Record"
+msgstr "主机记录"
+
+msgid "Record Type"
+msgstr "记录类型"
+
+msgid "Address Source"
+msgstr "地址来源"
+
+msgid "Automatic Detection"
+msgstr "自动检测"
+
+msgid "TTL"
+msgstr "TTL"
+
+msgid "Editing"
+msgstr "正在编辑"
+
+msgid "SSL/TLS Certificates"
+msgstr "SSL/TLS 证书"
+
+msgid "Name"
+msgstr "名称"
+
+msgid "DNS Account"
+msgstr "DNS 账户"
+
+msgid "Use the DDNS account saved above"
+msgstr "复用上方本次保存的 DDNS 凭据"
+
+msgid "Certificate Domains"
+msgstr "证书域名"
+
+msgid "Contact Email"
+msgstr "联系邮箱"
+
+msgid "Leave blank to inherit Basic Settings"
+msgstr "可留空，继承基础设置"
+
+msgid "Domain"
+msgstr "域名"
+
+msgid "Access Address"
+msgstr "访问地址"
+
+msgid "Provider"
+msgstr "服务商"
+
+msgid "Type"
+msgstr "类型"
+
+msgid "Current Address / Status"
+msgstr "当前地址/状态"
+
+msgid "Actions"
+msgstr "操作"
+
+msgid "No dynamic DNS rules configured."
+msgstr "暂无动态域名规则。"
+
+msgid "Yes"
+msgstr "是"
+
+msgid "No"
+msgstr "否"
+
+msgid "Edit"
+msgstr "编辑"
+
+msgid "Sync Now"
+msgstr "立即同步"
+
+msgid "Disable"
+msgstr "停用"
+
+msgid "Delete"
+msgstr "删除"
+
+msgid "Delete this rule?"
+msgstr "确认删除此规则？"
+
+msgid "Domains"
+msgstr "域名"
+
+msgid "Exists"
+msgstr "存在"
+
+msgid "Expires"
+msgstr "到期时间"
+
+msgid "Days"
+msgstr "剩余天数"
+
+msgid "Renew"
+msgstr "需要续期"
+
+msgid "No certificates configured."
+msgstr "暂无证书配置。"
+
+msgid "Renew Now"
+msgstr "立即续期"
+
+msgid "Delete this certificate configuration?"
+msgstr "确认删除此证书配置？"
+
+msgid "Proxy / Firewall Status"
+msgstr "代理 / 防火墙状态"
+
+msgid "Configured Rules"
+msgstr "已配置规则"
+
+msgid "Enabled Rules"
+msgstr "已启用规则"
+
+msgid "HTTPS Listener"
+msgstr "HTTPS 监听"
+
+msgid "Firewall"
+msgstr "防火墙"
+
+msgid "Add / Edit Web Service"
+msgstr "添加 / 编辑 Web 服务"
+
+msgid "Add Web Service"
+msgstr "添加 Web 服务"
+
+msgid "Edit Web Service"
+msgstr "编辑 Web 服务"
+
+msgid "LAN Target"
+msgstr "内网目标"
+
+msgid "HTTPS"
+msgstr "HTTPS"
+
+msgid "Certificate"
+msgstr "证书"
+
+msgid "Automatic Match"
+msgstr "自动匹配"
+
+msgid "Web Service Rules"
+msgstr "Web 服务规则"
+
+msgid "Status"
+msgstr "状态"
+
+msgid "No Web service rules configured."
+msgstr "暂无 Web 服务规则。"
+
+msgid "Configured"
+msgstr "已配置"
+
+msgid "Disabled"
+msgstr "停用"
+
+msgid "Delete this Web service rule?"
+msgstr "确认删除此 Web 服务规则？"
+
+msgid "Active"
+msgstr "运行中"
+
+msgid "Inactive"
+msgstr "未运行"
+
+msgid "Wake Host"
+msgstr "唤醒主机"
+
+msgid "Selected Host"
+msgstr "选择主机"
+
+msgid "Last Send Result"
+msgstr "最近发送状态"
+
+msgid "Wake-on-LAN Settings"
+msgstr "网络唤醒设置"
+
+msgid "Network Interface"
+msgstr "网络接口"
+
+msgid "None"
+msgstr "无"
+
+msgid "Add / Edit Saved Host"
+msgstr "添加 / 编辑主机"
+
+msgid "MAC Address"
+msgstr "MAC 地址"
+
+msgid "Saved Hosts"
+msgstr "已保存主机"
+
+msgid "No saved WOL hosts."
+msgstr "暂无已保存主机。"
+
+msgid "Wake"
+msgstr "唤醒"
+
+msgid "Delete this saved host?"
+msgstr "确认删除此常用主机？"
+
+msgid "hosts"
+msgstr "个主机"
+
+msgid "Saved and applied"
+msgstr "已保存并应用"
+
+msgid "Saved"
+msgstr "已保存"
+
+msgid "DDNS sync completed"
+msgstr "DDNS 同步完成"
+
+msgid "Certificate renewal completed"
+msgstr "证书续期完成"
+
+msgid "Action applied"
+msgstr "操作已应用"
+
+msgid "Wake packet sent"
+msgstr "唤醒包已发送"
+
+msgid "Host deleted"
+msgstr "主机已删除"
+
+msgid "Log cleared"
+msgstr "日志已清空"
+
+msgid "Invalid numeric value"
+msgstr "数字参数无效"
+
+msgid "UCI section type mismatch"
+msgstr "UCI 配置段类型不匹配"
+
+msgid "Unable to create UCI section"
+msgstr "无法创建 UCI 配置段"
+
+msgid "UCI commit failed"
+msgstr "UCI 配置提交失败"
+
+msgid "HomeGate reload failed"
+msgstr "HomeGate 重新加载失败"
+
+msgid "DDNS zone is required"
+msgstr "请填写 DDNS 主域名"
+
+msgid "DDNS domain contains invalid characters"
+msgstr "DDNS 域名包含无效字符"
+
+msgid "AccessKey ID is required"
+msgstr "请填写 AccessKey ID"
+
+msgid "AccessKey Secret is required for a new DNS account"
+msgstr "新 DNS 凭据必须填写 AccessKey Secret"
+
+msgid "Certificate zone is required"
+msgstr "请填写证书主域名"
+
+msgid "At least one certificate domain is required"
+msgstr "至少填写一个证书域名"
+
+msgid "Select a saved DNS account for the certificate"
+msgstr "请选择证书使用的已保存 DNS 凭据"
+
+msgid "Invalid item ID"
+msgstr "项目 ID 无效"
+
+msgid "DDNS sync failed; check HomeGate logs"
+msgstr "DDNS 同步失败，请检查 HomeGate 日志"
+
+msgid "DDNS rule not found"
+msgstr "未找到 DDNS 规则"
+
+msgid "Certificate renewal failed; check HomeGate logs"
+msgstr "证书续期失败，请检查 HomeGate 日志"
+
+msgid "Certificate not found"
+msgstr "未找到证书配置"
+
+msgid "Unsupported action"
+msgstr "不支持的操作"
+
+msgid "Valid Web domain is required"
+msgstr "请填写有效的 Web 域名"
+
+msgid "Target must start with http:// or https://"
+msgstr "内网目标必须以 http:// 或 https:// 开头"
+
+msgid "Selected certificate was not found"
+msgstr "未找到所选证书"
+
+msgid "Web rule not found"
+msgstr "未找到 Web 服务规则"
+
+msgid "Invalid WOL interface"
+msgstr "网络唤醒接口无效"
+
+msgid "Valid MAC address is required"
+msgstr "请填写有效的 MAC 地址"
+
+msgid "WOL host not found"
+msgstr "未找到网络唤醒主机"
+
+msgid "Wake-on-LAN failed; check HomeGate logs"
+msgstr "网络唤醒失败，请检查 HomeGate 日志"
+
+msgid "Unable to clear HomeGate log"
+msgstr "无法清空 HomeGate 日志"
+
+msgid "WOL Status"
+msgstr "网络唤醒状态"
+
+msgid "Wake Interface"
+msgstr "发送接口"
+
+msgid "Add Host"
+msgstr "添加主机"
+
+msgid "Edit Host"
+msgstr "编辑主机"
+
+msgid "Send Settings"
+msgstr "发送设置"
+
+msgid "Hosts"
+msgstr "主机列表"
+
+msgid "Add"
+msgstr "添加"
+
+msgid "No hosts."
+msgstr "暂无主机。"
+
+msgid "Cancel"
+msgstr "取消"
+
+msgid "LAN Bridge"
+msgstr "LAN 桥接"
+
+msgid "The saved interface is not a LAN bridge and cannot be used for WOL."
+msgstr "当前保存的接口不是 LAN 桥接，无法用于网络唤醒。"
+
+msgid "WOL interface must be a LAN bridge"
+msgstr "网络唤醒接口必须是 LAN 桥接"
+
+msgid "Host added"
+msgstr "主机已添加"
+
+msgid "Host updated"
+msgstr "主机已更新"
+
+msgid "Close"
+msgstr "关闭"
+
+msgid "Wake Settings"
+msgstr "唤醒设置"
+
+msgid "Select a connected device"
+msgstr "选择在线设备"
+
+msgid "Custom..."
+msgstr "自定义..."
+
+msgid "WOL interface must belong to the LAN"
+msgstr "网络接口必须属于 LAN"
+
+msgid "LAN"
+msgstr "LAN"
+
+msgid "Ethernet"
+msgstr "有线"
+
+msgid "Wi-Fi"
+msgstr "无线"
+
+msgid "Bridge"
+msgstr "桥接"
+
+msgid "Confirm"
+msgstr "确定"
+
+msgid "Changes are not saved yet."
+msgstr "更改尚未保存。"
+
+msgid "Invalid Web rule list"
+msgstr "Web 服务规则列表无效"
+
+msgid "Duplicate Web rule"
+msgstr "Web 服务规则重复"
+
+msgid "Duplicate Web domain"
+msgstr "Web 服务域名重复"
+
+msgid "Invalid WOL host list"
+msgstr "网络唤醒主机列表无效"
+
+msgid "Duplicate WOL host"
+msgstr "网络唤醒主机重复"
+
+msgid "Duplicate MAC address"
+msgstr "MAC 地址重复"
+
+msgid "Public Services"
+msgstr "公网服务"
+
+msgid "System Maintenance"
+msgstr "系统维护"
+
+msgid "Core Version"
+msgstr "Core 版本"
+
+msgid "LuCI Version"
+msgstr "LuCI 版本"
+
+msgid "Chinese Language Pack"
+msgstr "中文语言包"
+
+msgid "Architecture"
+msgstr "架构"
+
+msgid "Process"
+msgstr "进程"
+
+msgid "Wake Hosts"
+msgstr "唤醒主机"
+
+msgid "View Log"
+msgstr "查看日志"
+
+msgid "No public services configured."
+msgstr "暂无公网服务。"
+
+msgid "Sync"
+msgstr "同步"
+
+msgid "Renew Certificate"
+msgstr "续期"
+
+msgid "Add Public Service"
+msgstr "添加公网服务"
+
+msgid "Edit Public Service"
+msgstr "编辑公网服务"
+
+msgid "Service Domain"
+msgstr "服务域名"
+
+msgid "Automatic Management"
+msgstr "自动管理"
+
+msgid "Leave AccessKey Secret blank when editing to keep the saved secret."
+msgstr "编辑时 AccessKey Secret 留空即可保留已保存的 Secret。"
+
+msgid "Delete this public service?"
+msgstr "确认删除此公网服务？"
+
+msgid "DNS OK"
+msgstr "DNS正常"
+
+msgid "DNS Error"
+msgstr "DNS异常"
+
+msgid "TLS %d days"
+msgstr "TLS %d天"
+
+msgid "TLS Pending"
+msgstr "TLS待签发"
+
+msgid "HTTP"
+msgstr "HTTP"
+
+msgid "Web Running"
+msgstr "运行"
+
+msgid "Web Not Running"
+msgstr "未运行"
+
+msgid "Valid primary domain and host record are required"
+msgstr "请填写有效的主域名和主机记录"
+
+msgid "Log Diagnostics"
+msgstr "日志诊断"
+
+msgid "Diagnostic Actions"
+msgstr "诊断操作"
+
+msgid "Clear the HomeGate runtime log?"
+msgstr "确认清空 HomeGate 运行日志？"
+
+msgid "Download Diagnostic"
+msgstr "下载诊断"
+
+msgid "Configuration Management"
+msgstr "配置管理"
+
+msgid "Export Configuration"
+msgstr "导出配置"
+
+msgid "Export"
+msgstr "导出"
+
+msgid "The exported configuration contains DNS credentials. Keep the backup file private."
+msgstr "导出的配置包含 DNS 凭据，请妥善保管备份文件。"
+
+msgid "Import Configuration"
+msgstr "导入配置"
+
+msgid "Import"
+msgstr "导入"
+
+msgid "Import this configuration and apply it now?"
+msgstr "确认导入此配置并立即应用？"
+
+msgid "Restore Defaults"
+msgstr "恢复默认"
+
+msgid "Restore Default Configuration"
+msgstr "恢复默认配置"
+
+msgid "Restore HomeGate default configuration? Current settings and service rules will be removed."
+msgstr "确认恢复 HomeGate 默认配置？当前设置和服务规则将被清除。"
+
+msgid "This resets HomeGate settings and rules but keeps existing certificate files, ACME account data and logs."
+msgstr "此操作会重置 HomeGate 设置和规则，但保留现有证书文件、ACME 账户数据和日志。"
+
+msgid "Invalid public service list"
+msgstr "公网服务列表无效"
+
+msgid "Only Aliyun DNS is supported by the current Core"
+msgstr "当前 Core 仅支持阿里云 DNS"
+
+msgid "Invalid DDNS TTL"
+msgstr "DDNS TTL 无效"
+
+msgid "Public service domain contains invalid characters"
+msgstr "公网服务域名包含无效字符"
+
+msgid "Valid public service domain is required"
+msgstr "请填写有效的公网服务域名"
+
+msgid "Duplicate public service domain"
+msgstr "公网服务域名重复"
+
+msgid "DNS configuration is required for automatic HTTPS certificate"
+msgstr "自动 HTTPS 证书需要完整的 DNS 配置"
+
+msgid "Automatic certificate conflicts with an existing local certificate"
+msgstr "自动证书与现有本地证书的域名范围冲突"
+
+msgid "LAN target is required for an existing Web service"
+msgstr "现有 Web 服务必须保留内网目标"
+
+msgid "Unable to read HomeGate configuration"
+msgstr "无法读取 HomeGate 配置"
+
+msgid "Select a HomeGate configuration file"
+msgstr "请选择 HomeGate 配置文件"
+
+msgid "Configuration file is too large"
+msgstr "配置文件过大"
+
+msgid "The selected file is not a HomeGate configuration backup"
+msgstr "所选文件不是 HomeGate 配置备份"
+
+msgid "Unable to prepare configuration import"
+msgstr "无法准备配置导入"
+
+msgid "HomeGate configuration syntax is invalid"
+msgstr "HomeGate 配置语法无效"
+
+msgid "Unable to install imported configuration"
+msgstr "无法写入导入的配置"
+
+msgid "Imported configuration could not be applied; previous configuration was restored"
+msgstr "导入配置无法应用，已恢复原配置"
+
+msgid "Configuration imported and applied"
+msgstr "配置已导入并应用"
+
+msgid "Unable to restore default configuration"
+msgstr "无法恢复默认配置"
+
+msgid "Default configuration restored"
+msgstr "已恢复默认配置"
+
+msgid "Import validates the selected HomeGate configuration before replacing the current settings."
+msgstr "导入前会验证所选 HomeGate 配置，验证通过后才替换当前设置。"
+
+msgid "Unable to read the selected configuration file."
+msgstr "无法读取所选配置文件。"
+
+msgid "Configuration file is too large."
+msgstr "配置文件过大。"
+
+msgid "Certificate Contact Email"
+msgstr "证书联系邮箱"
+
+msgid "Certificate Environment"
+msgstr "证书环境"
+
+msgid "Production Environment"
+msgstr "正式环境"
+
+msgid "Staging Environment"
+msgstr "测试环境"
+
+msgid "Certificate Management"
+msgstr "证书管理"
+
+msgid "Use Existing Certificate"
+msgstr "使用已有证书"
+
+msgid "Existing Certificate"
+msgstr "已有证书"
+
+msgid "Select Certificate"
+msgstr "选择证书"
+
+msgid "Renew In Advance"
+msgstr "提前续期"
+
+msgid "HomeGate automatically renews the certificate when its remaining validity is below this value."
+msgstr "证书剩余不足此天数时，HomeGate 将自动续期。"
+
+msgid "Renewal Policy"
+msgstr "续期策略"
+
+msgid "Automatic Renewal"
+msgstr "自动续期"
+
+msgid "No certificate covers this domain."
+msgstr "没有可覆盖此域名的已有证书。"
+
+msgid "Renews %d days before expiry · automatic renewal"
+msgstr "到期前 %d 天续期 · 自动续期"
+
+msgid "A reusable certificate is available; its existing renewal policy will be kept."
+msgstr "将复用已有证书，并保留该证书现有的续期策略。"
+
+msgid "Renewal days must be between 1 and 3650"
+msgstr "续期阈值必须在 1 到 3650 天之间"
+
+msgid "Select an existing certificate"
+msgstr "请选择已有证书"
+
+msgid "Invalid certificate renewal threshold"
+msgstr "证书续期阈值无效"
+
+msgid "Selected certificate does not cover this domain"
+msgstr "所选证书不能覆盖此域名"
+
+msgid "Plugin Maintenance"
+msgstr "插件维护"
+
+msgid "New DNS Account..."
+msgstr "新建 DNS 账户..."
+
+msgid "Saved DNS accounts can be reused by multiple public services without re-entering credentials."
+msgstr "已保存的 DNS 账户可供多个公网服务复用，无需重复输入凭据。"
+
+msgid "Renew In Advance (days)"
+msgstr "提前续期（天）"
+
+msgid "DDNS Interval (seconds)"
+msgstr "DDNS 间隔（秒）"
+
+msgid "Service List"
+msgstr "服务列表"
+
+msgid "Notice"
+msgstr "提示"
+
+msgid "Certificate %d days"
+msgstr "证书剩余 %d 天"
+
+msgid "Renewal Failed · %d days"
+msgstr "续期失败 · %d 天"
+
+msgid "Certificate Error"
+msgstr "证书异常"
+
+msgid "Proxy Error"
+msgstr "代理异常"
+
+msgid "Delete DNS account?"
+msgstr "删除 DNS 账户？"
+
+msgid "Delete certificate?"
+msgstr "删除证书？"
+
+msgid "Only this DNS account will be deleted. Certificates are not deleted."
+msgstr "仅删除此 DNS 账户，不会删除证书。"
+
+msgid "Only this certificate will be deleted. DNS accounts are not deleted."
+msgstr "仅删除此证书，不会删除 DNS 账户。"
+
+msgid "This DNS account is still in use and cannot be deleted."
+msgstr "此 DNS 账户仍在使用，无法删除。"
+
+msgid "This certificate is still in use and cannot be deleted."
+msgstr "此证书仍在使用，无法删除。"
+
+msgid "Save or reset the current unsaved changes before deleting a saved resource."
+msgstr "请先保存或复位当前未保存的更改，再删除已保存资源。"
+
+msgid "DNS account not found"
+msgstr "DNS 账户不存在"
+
+msgid "DNS account is still in use"
+msgstr "DNS 账户仍在使用"
+
+msgid "DNS account deleted"
+msgstr "DNS 账户已删除"
+
+msgid "Unable to delete DNS account"
+msgstr "无法删除 DNS 账户"
+
+msgid "Certificate is still in use"
+msgstr "证书仍在使用"
+
+msgid "Certificate deleted"
+msgstr "证书已删除"
+
+msgid "Unable to delete certificate"
+msgstr "无法删除证书"
+
+msgid "Certificate Mode"
+msgstr "证书方式"
+
+msgid "Automatic Issue"
+msgstr "自动申请"
+
+msgid "Certificate Authority"
+msgstr "证书颁发机构"
+
+msgid "This setting applies to all automatically issued certificates."
+msgstr "此设置对所有自动申请的证书生效。"
+
+msgid "Applies to automatically managed certificates."
+msgstr "适用于自动管理的证书。"
+
+msgid "Renewal Threshold (days)"
+msgstr "续期阈值（天）"
+
+msgid "Only Let's Encrypt is supported by the current Core"
+msgstr "当前 Core 仅支持 Let's Encrypt"
+
+msgid "Invalid certificate environment"
+msgstr "证书环境无效"
+
+msgid "Access Restriction"
+msgstr "访问限制"
+
+msgid "Enable Access Restriction"
+msgstr "启用访问限制"
+
+msgid "Allowed IP / Networks"
+msgstr "允许 IP / 网段"
+
+msgid "Allowed Region"
+msgstr "允许地区"
+
+msgid "No Region Restriction"
+msgstr "不限制地区"
+
+msgid "Access Management"
+msgstr "访问管理"
+
+msgid "Recent Access"
+msgstr "最近访问"
+
+msgid "View"
+msgstr "查看"
+
+msgid "IP Address"
+msgstr "IP 地址"
+
+msgid "Result"
+msgstr "结果"
+
+msgid "Time"
+msgstr "时间"
+
+msgid "No recent access."
+msgstr "暂无访问记录。"
+
+msgid "Unable to read recent access."
+msgstr "无法读取最近访问。"
+
+msgid "Allowed"
+msgstr "允许"
+
+msgid "Denied"
+msgstr "拒绝"
+
+msgid "Allow"
+msgstr "允许"
+
+msgid "Remove"
+msgstr "移除"
+
+msgid "Already Allowed"
+msgstr "已允许"
+
+msgid "Invalid allowed IP or network"
+msgstr "允许 IP 或网段无效"
+
+msgid "Unsupported allowed region"
+msgstr "不支持的允许地区"
+
+msgid "Access restriction requires an allowed IP/network or region"
+msgstr "启用访问限制后需填写允许 IP/网段或选择允许地区"
+
+msgid "Unable to update access region data"
+msgstr "无法更新访问地区数据"
+
+msgid "China / Mainland"
+msgstr "中国地区"
+
+msgid "China / Anhui"
+msgstr "中国 / 安徽省"
+
+msgid "China / Beijing"
+msgstr "中国 / 北京市"
+
+msgid "China / Chongqing"
+msgstr "中国 / 重庆市"
+
+msgid "China / Fujian"
+msgstr "中国 / 福建省"
+
+msgid "China / Guangdong"
+msgstr "中国 / 广东省"
+
+msgid "China / Guangxi"
+msgstr "中国 / 广西壮族自治区"
+
+msgid "China / Guizhou"
+msgstr "中国 / 贵州省"
+
+msgid "China / Hainan"
+msgstr "中国 / 海南省"
+
+msgid "China / Hebei"
+msgstr "中国 / 河北省"
+
+msgid "China / Heilongjiang"
+msgstr "中国 / 黑龙江省"
+
+msgid "China / Henan"
+msgstr "中国 / 河南省"
+
+msgid "China / Hubei"
+msgstr "中国 / 湖北省"
+
+msgid "China / Hunan"
+msgstr "中国 / 湖南省"
+
+msgid "China / Jiangsu"
+msgstr "中国 / 江苏省"
+
+msgid "China / Jiangxi"
+msgstr "中国 / 江西省"
+
+msgid "China / Jilin"
+msgstr "中国 / 吉林省"
+
+msgid "China / Liaoning"
+msgstr "中国 / 辽宁省"
+
+msgid "China / Inner Mongolia"
+msgstr "中国 / 内蒙古自治区"
+
+msgid "China / Ningxia"
+msgstr "中国 / 宁夏回族自治区"
+
+msgid "China / Qinghai"
+msgstr "中国 / 青海省"
+
+msgid "China / Shandong"
+msgstr "中国 / 山东省"
+
+msgid "China / Shanghai"
+msgstr "中国 / 上海市"
+
+msgid "China / Sichuan"
+msgstr "中国 / 四川省"
+
+msgid "China / Tianjin"
+msgstr "中国 / 天津市"
+
+msgid "China / Xinjiang"
+msgstr "中国 / 新疆维吾尔自治区"
+
+msgid "China / Tibet"
+msgstr "中国 / 西藏自治区"
+
+msgid "China / Yunnan"
+msgstr "中国 / 云南省"
+
+msgid "China / Zhejiang"
+msgstr "中国 / 浙江省"
+
+msgid "Version Information"
+msgstr "版本信息"
+
+msgid "Language"
+msgstr "语言"
+
+msgid "Access Scope"
+msgstr "访问范围"
+
+msgid "No Restriction"
+msgstr "不限地区"
+
+msgid "Specified IP / Networks Only"
+msgstr "仅允许指定 IP / 网段"
+
+msgid "Region Data"
+msgstr "地区数据"
+
+msgid "Update"
+msgstr "更新"
+
+msgid "Not Downloaded"
+msgstr "尚未下载"
+
+msgid "Clear Denied"
+msgstr "清空拒绝"
+
+msgid "Clear denied entries from recent access?"
+msgstr "清空最近访问中的拒绝记录？"
+
+msgid "Access region data updated"
+msgstr "地区数据已更新"
+
+msgid "Denied recent access cleared"
+msgstr "已清空拒绝的最近访问记录"
+
+msgid "Unable to clear denied recent access"
+msgstr "无法清空拒绝的最近访问记录"
+
+msgid "Allow List"
+msgstr "允许名单"
+
+msgid "Add Rule"
+msgstr "添加规则"
+
+msgid "Normally add exact addresses from Recent Access. Add Rule is only needed for a known IP or CIDR network."
+msgstr "通常直接从“最近访问”加入精确地址；只有已知 IP 或 CIDR 网段时才需要“添加规则”。"
+
+msgid "Clear All Records"
+msgstr "清除所有记录"
+
+msgid "Region"
+msgstr "地区"
+
+msgid "Recent Result"
+msgstr "最近结果"
+
+msgid "No allow rules."
+msgstr "暂无允许规则。"
+
+msgid "Allowed (Allow List)"
+msgstr "允许（允许名单）"
+
+msgid "Allowed (Region Rule)"
+msgstr "允许（地区规则）"
+
+msgid "Allowed (No Restriction)"
+msgstr "允许（未限制）"
+
+msgid "Denied (Allow List Only)"
+msgstr "拒绝（仅允许名单）"
+
+msgid "Denied (Region Rule)"
+msgstr "拒绝（地区规则）"
+
+msgid "Add to Allow List"
+msgstr "加入允许名单"
+
+msgid "Remove from Allow List"
+msgstr "移出允许名单"
+
+msgid "Domestic"
+msgstr "国内"
+
+msgid "Abroad"
+msgstr "国外"
+
+msgid "Unknown"
+msgstr "未知"
+
+msgid "Clear all recent access records? This does not change the allow list or access policy."
+msgstr "清除所有最近访问记录？此操作不会修改允许名单或访问策略。"
+
+msgid "Allow List Only"
+msgstr "仅限名单"
+
+msgid "Recent access cleared"
+msgstr "已清除所有访问记录"
+
+msgid "Unable to clear recent access"
+msgstr "无法清除访问记录"
+
+msgid "Source"
+msgstr "来源"
+
+msgid "Clear All"
+msgstr "清除全部"
+
+msgid "Manual Rule"
+msgstr "手工规则"
+
+msgid "Allowed (Manual Rule)"
+msgstr "允许（手工规则）"
+
+msgid "Denied (Manual Rule)"
+msgstr "拒绝（手工规则）"
+
+msgid "Add Source Rule"
+msgstr "加入规则"
+
+msgid "Remove Source Rule"
+msgstr "移出规则"
+
+msgid "Clear all access records and manual rules? The access scope will not change."
+msgstr "清空所有访问记录和手工规则？访问范围保持不变。"
+
+msgid "Access records and manual rules cleared"
+msgstr "已清空访问记录和手工规则"
+
+msgid "Unable to clear access records"
+msgstr "无法清空访问记录"
+
+msgid "Allow list is empty; all external access will be denied."
+msgstr "允许名单为空，当前公网服务将拒绝所有外部访问"
+
+msgid "Access Status"
+msgstr "访问状态"
+
+msgid "Allowed (Manual Allow)"
+msgstr "允许（手动放行）"
+
+msgid "Denied (Manual Deny)"
+msgstr "拒绝（手动拒绝）"
+
+msgid "Denied (Allow List Restriction)"
+msgstr "拒绝（名单限制）"
+
+msgid "Allow Access"
+msgstr "允许访问"
+
+msgid "Deny Access"
+msgstr "拒绝访问"
+
+msgid "Clear Record"
+msgstr "清除记录"
+
+msgid "Delete Rule"
+msgstr "删除规则"
+
+msgid "Deny"
+msgstr "拒绝"
+
+msgid "Clear all access records? Manual allow and deny rules will be kept."
+msgstr "清除全部访问记录？手动放行和手动拒绝规则将保留。"
+
+msgid "Access records cleared"
+msgstr "已清除全部访问记录"
+
+msgid "Access record cleared"
+msgstr "已清除访问记录"
+
+msgid "Invalid access record"
+msgstr "访问记录无效"
+
+msgid "Unable to clear access record"
+msgstr "无法清除访问记录"
+
+msgid "Invalid denied IP or network"
+msgstr "拒绝 IP 或网段无效"
+
+msgid "Usage"
+msgstr "使用数"
+
+msgid "Add Certificate"
+msgstr "添加证书"
+
+msgid "Edit Certificate"
+msgstr "编辑证书"
+
+msgid "Not Issued"
+msgstr "未签发"
+
+msgid "Identity Invalid"
+msgstr "证书域名不匹配"
+
+msgid "Valid"
+msgstr "有效"
+
+msgid "Use comma-separated DNS identities. Wildcards are supported only as the left-most *. label."
+msgstr "多个 DNS 域名请用逗号分隔；泛域名仅支持最左侧的 *. 标签。"
+
+msgid "Saving creates or updates the certificate resource. Use Renew Certificate to issue or renew its key and certificate pair."
+msgstr "保存会创建或更新证书资源；使用“续期证书”签发或更新其私钥与证书。"
+
+msgid "Certificate Scope"
+msgstr "证书范围"
+
+msgid "No active certificates."
+msgstr "暂无生效证书。"
+
+msgid "Certificate Source"
+msgstr "证书来源"
+
+msgid "Local Upload"
+msgstr "本地上传"
+
+msgid "Certificate File"
+msgstr "证书文件"
+
+msgid "Private Key File"
+msgstr "私钥文件"
+
+msgid "Leave both local files empty to reuse a matching uploaded certificate when available."
+msgstr "如已有匹配的本地证书，可不重新上传。"
+
+msgid "Detecting Primary Domains..."
+msgstr "正在识别主域名..."
+
+msgid "Primary domains are detected from the selected DNS account."
+msgstr "主域名由所选 DNS 账户自动识别。"
+
+msgid "No managed primary domains were detected."
+msgstr "未检测到可管理的主域名。"
+
+msgid "Save the DNS account first to detect primary domains."
+msgstr "请先保存 DNS 账户以识别主域名。"
+
+msgid "Save Account"
+msgstr "保存账户"
+
+msgid "Certificate and private key files must be uploaded together."
+msgstr "证书文件和私钥文件必须同时上传。"
+
+msgid "Certificate or private key file is too large."
+msgstr "证书文件或私钥文件过大。"
+
+msgid "Unable to read the selected local certificate file."
+msgstr "无法读取所选本地证书文件。"
+
+msgid "DNS account saved; primary domains can now be detected"
+msgstr "DNS 账户已保存，现在可以自动识别主域名"
+
+msgid "Upload a local certificate and private key for this service"
+msgstr "请为此服务上传本地证书和私钥"
+
+msgid "Uploaded certificate does not cover this service domain"
+msgstr "上传的证书不覆盖当前服务域名"
+
+msgid "Local certificates are not automatically renewed"
+msgstr "本地证书不执行自动续期"
+
+msgid "Choose File"
+msgstr "选择文件"
+
+msgid "No file selected"
+msgstr "未选择文件"
+
+msgid "Delete All"
+msgstr "删除全部"
+
+msgid "Delete all access entries and manual rules? The access scope will remain unchanged."
+msgstr "删除全部访问记录和手动规则？访问范围保持不变。"
+
+msgid "This is the last service using its certificate or primary-domain resources. Delete the service, its public DNS record, and all now-unused local DNS/certificate resources?"
+msgstr "这是当前证书或主域名资源的最后一个服务。确认后将删除该服务、公网 DNS 记录，并清理所有已无引用的本地 DNS/证书资源。是否彻底删除？"
+
+msgid "Public service deleted"
+msgstr "公网服务已删除"
+
+msgid "Public service deletion requires confirmation"
+msgstr "删除该公网服务需要二次确认"
+
+msgid "Unable to delete public DNS record"
+msgstr "无法删除公网 DNS 记录"
+
+msgid "Unable to delete public service"
+msgstr "无法删除公网服务"
+
+msgid "Access entry deleted"
+msgstr "访问条目已删除"
+
+msgid "Access rule deleted"
+msgstr "访问规则已删除"
+
+msgid "All access entries deleted"
+msgstr "全部访问条目已删除"
+
+msgid "Unable to delete access entry"
+msgstr "无法删除访问条目"
+
+msgid "Unable to delete access rule"
+msgstr "无法删除访问规则"
+
+msgid "Unable to delete all access entries"
+msgstr "无法删除全部访问条目"
+
+msgid "Invalid access rule"
+msgstr "访问规则无效"
+
+msgid "Public service is disabled; DDNS sync was not performed"
+msgstr "服务未启用，未执行 DDNS 同步"
+
+msgid "Account ID"
+msgstr "账户 ID"
+
+msgid "DNS API Endpoint"
+msgstr "DNS API 地址"
+
+msgid "Unsupported DNS provider"
+msgstr "不支持的 DNS 服务商"
+
+msgid "Unsupported certificate authority"
+msgstr "不支持的证书颁发机构"
+
+msgid "is required"
+msgstr "为必填项"
+
+msgid "All"
+msgstr "全部"
+
+msgid "Important"
+msgstr "重要"
+
+msgid "Network"
+msgstr "网络"
+
+msgid "Access Control"
+msgstr "访问控制"
+
+msgid "Event View"
+msgstr "事件视图"
+
+msgid "Raw Log"
+msgstr "原始日志"
+
+msgid "Time View"
+msgstr "时间视图"
+
+msgid "Refresh"
+msgstr "刷新"
+
+msgid "System"
+msgstr "系统"
+
+msgid "Technical Details"
+msgstr "技术详情"
+
+msgid "No log events"
+msgstr "暂无日志事件"
+
+msgid "HomeGate service started"
+msgstr "HomeGate 服务已启动"
+
+msgid "HomeGate service stopped"
+msgstr "HomeGate 服务已停止"
+
+msgid "Settings applied"
+msgstr "设置已应用"
+
+msgid "Settings could not be applied"
+msgstr "设置应用失败"
+
+msgid "Public network connection updated"
+msgstr "公网连接已更新"
+
+msgid "Network operation failed"
+msgstr "网络操作失败"
+
+msgid "Network event"
+msgstr "网络事件"
+
+msgid "Wake-on-LAN packet sent"
+msgstr "网络唤醒数据包已发送"
+
+msgid "Domain address does not need updating"
+msgstr "域名地址无需更新"
+
+msgid "Domain address updated"
+msgstr "域名地址已更新"
+
+msgid "Dynamic DNS record deleted"
+msgstr "动态域名记录已删除"
+
+msgid "Dynamic DNS recovery scheduled"
+msgstr "动态域名恢复已安排"
+
+msgid "Dynamic DNS update failed"
+msgstr "动态域名更新失败"
+
+msgid "Certificate issued or renewed"
+msgstr "证书已签发或续期"
+
+msgid "Certificate operation failed"
+msgstr "证书操作失败"
+
+msgid "Certificate recovery scheduled"
+msgstr "证书恢复已安排"
+
+msgid "Certificate status event"
+msgstr "证书状态事件"
+
+msgid "Access request blocked"
+msgstr "访问请求已拦截"
+
+msgid "Using cached access region data"
+msgstr "正在使用缓存的访问地区数据"
+
+msgid "Access control update failed"
+msgstr "访问控制更新失败"
+
+msgid "Access control recovery scheduled"
+msgstr "访问控制恢复已安排"
+
+msgid "Access control event"
+msgstr "访问控制事件"
+
+msgid "Public service routing updated"
+msgstr "公网服务路由已更新"
+
+msgid "Public service recovered"
+msgstr "公网服务已恢复"
+
+msgid "Public service listener stopped"
+msgstr "公网服务监听已停止"
+
+msgid "Public service recovery scheduled"
+msgstr "公网服务恢复已安排"
+
+msgid "Public service runtime error"
+msgstr "公网服务运行错误"
+
+msgid "Public service event"
+msgstr "公网服务事件"
+
+msgid "Operation failed"
+msgstr "操作失败"
+
+msgid "Attention required"
+msgstr "需要注意"
+
+msgid "Technical event"
+msgstr "技术事件"
+
+msgid "Runtime event"
+msgstr "运行事件"
+
+msgid "WAN reconciled firewall"
+msgstr "WAN 已协调防火墙"
+
+msgid "Firewall active"
+msgstr "防火墙已启用"
+
+msgid "Firewall recovered"
+msgstr "防火墙已恢复"
+
+msgid "Web HTTPS internal listener"
+msgstr "Web HTTPS 内部监听器"
+
+msgid "Web HTTP internal listener"
+msgstr "Web HTTP 内部监听器"
+
+msgid "enabled"
+msgstr "已启用"
+
+msgid "stopped"
+msgstr "已停止"
+
+msgid "common runtime started"
+msgstr "服务已启动"
+
+msgid "common runtime stopped"
+msgstr "服务已停止"
+
+msgid "access geo country refreshed"
+msgstr "访问控制国家/地区数据已刷新"
+
+msgid "access region refreshed"
+msgstr "访问控制地区数据已刷新"
+
+msgid "access region using validated stale cache"
+msgstr "访问控制正在使用已验证的旧缓存"
+
+msgid "issued/renewed"
+msgstr "已签发/续期"
+
+msgid "unchanged"
+msgstr "无需更新"
+
+msgid "Province filtering has been retired. Only your allow list is permitted until you select and save a new access scope."
+msgstr "省份筛选已停用，当前仅允许名单中的地址访问；请选择新的访问范围并保存。"
+
+msgid "Access Time"
+msgstr "访问时间"
+
+msgid "Automatically renew below %d days by default"
+msgstr "默认不足%d天时自动续期"
+
+msgid "days"
+msgstr "天"
+
+msgid "Overview"
+msgstr "概览"
+
+msgid "Settings"
+msgstr "设置"
+
+msgid "Maintenance"
+msgstr "维护"
+
+msgid "Version Management"
+msgstr "版本管理"
+
+msgid "Runtime Logs"
+msgstr "运行日志"
+
+msgid "Plugin Operations"
+msgstr "插件操作"
+
+msgid "Language Package"
+msgstr "语言包"
+
+msgid "Packages match"
+msgstr "版本一致"
+
+msgid "Package versions require verification"
+msgstr "版本待核实"
+
+msgid "Software Packages"
+msgstr "软件包管理"
+
+msgid "Export omits credentials and upstream URLs. Restore them before enabling services."
+msgstr "导出省略凭据和上游地址，恢复后请先补充这些信息再启用服务。"
+
+msgid "Service Status"
+msgstr "服务状态"
+
+msgid "Current Version"
+msgstr "当前版本"
+
+msgid "Quick Access"
+msgstr "快捷操作"

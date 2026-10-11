@@ -1,0 +1,142 @@
+name: HomeGate 构建、验证与发布
+on:
+  workflow_dispatch:
+    inputs:
+      release_format:
+        description: '发布到 Releases 的安装包格式（完整构建与验证均保留）'
+        type: choice
+        options: [IPK, APK, 两者]
+        default: 两者
+        required: true
+      publish_release:
+        description: '构建通过后发布到 Releases；关闭则仅保留 Actions 产物'
+        type: boolean
+        default: true
+        required: true
+  push:
+  pull_request:
+permissions:
+  contents: read
+env:
+  HOMEGATE_ALLOW_LEGACY_GO: "1"
+jobs:
+  build:
+    name: 构建与完整验证
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - name: 检出源码
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: 配置 Go 工具链
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version: '1.27.1'
+          cache: false
+      - name: Go 单元测试、静态检查与并发检查
+        working-directory: project/core/src
+        run: |
+          go test -mod=vendor ./...
+          go vet -mod=vendor ./...
+          go test -race ./internal/logger ./internal/config ./internal/proxy ./internal/app
+      - name: 安装浏览器与 Lua 测试依赖
+        run: |
+          python3 -m venv build/verify-venv
+          build/verify-venv/bin/python -m pip install 'playwright==1.63.0' 'lupa==2.8'
+          build/verify-venv/bin/python -m playwright install --with-deps chromium
+          echo "$PWD/build/verify-venv/bin" >> "$GITHUB_PATH"
+      - name: 界面、主题与生命周期回归
+        run: |
+          python3 scripts/release-assets-regressions.py
+          sh scripts/ui-check.sh
+          python3 scripts/ui-regressions.py
+          python3 scripts/browser-regressions.py
+          python3 scripts/native-ui-regressions.py
+          python3 scripts/legacy-footer-regressions.py
+          python3 scripts/luci-loader-regressions.py
+          python3 scripts/native-theme-regressions.py
+          sh scripts/version-contract-smoke.sh
+          chmod +x project/core/files/usr/sbin/homegate-purge
+          sh scripts/package-lifecycle-smoke.sh
+          python3 scripts/apk-lifecycle-regressions.py
+          python3 scripts/offline-verifier-regressions.py
+      - name: 构建三个 IPK 组件与源码归档
+        run: python3 scripts/build-release.py
+      - name: 校验包结构、安装脚本与完整版本
+        run: |
+          python3 scripts/check-release.py
+          python3 scripts/version-regressions.py
+      - name: 构建官方 APK3 工具及全部 ARM64 包
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y meson ninja-build pkg-config libssl-dev zlib1g-dev liblua5.1-0-dev curl cmake libjson-c-dev
+          sh scripts/check-ucode.sh
+          sh scripts/bootstrap-apk-tools.sh
+          python3 scripts/build-apk.py --apk "$(cat build/apk-tools-path.txt)"
+          sudo env HOMEGATE_APK_TOOL="$(cat build/apk-tools-path.txt)" build/verify-venv/bin/python scripts/apk-manager-regressions.py
+          python3 scripts/build-offline-tests.py
+          for arch in $(python3 scripts/package-profiles.py --list); do
+            python3 scripts/build-release.py --packages-only --arch "$arch" --out "dist/packages/legacy-ipk/$arch"
+            python3 scripts/build-apk.py --arch "$arch" --binary build/homegate-arm64 --apk "$(cat build/apk-tools-path.txt)" --out "dist/packages/modern-apk/$arch"
+          done
+          python3 scripts/apk-architecture-regressions.py
+          python3 scripts/arm64-install-regressions.py
+          python3 scripts/service-diagnostic-regressions.py
+          sudo env HOMEGATE_APK_TOOL="$(cat build/apk-tools-path.txt)" build/verify-venv/bin/python scripts/arm64-apk-manager-regressions.py
+          cp scripts/install.sh dist/install.sh
+          cp scripts/arm64-profile.sh dist/arm64-profile.sh
+          cp scripts/access-diagnose.sh scripts/service-network-diagnostic.sh scripts/client-service-check.sh scripts/client-service-check.ps1 scripts/client-network-check.ps1 dist/verification/
+      - name: 上传完整构建包（仅 Actions）
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: HomeGate-1.3.0-11-ARM64
+          path: dist/
+          if-no-files-found: error
+      - name: 上传验证证据（仅 Actions）
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        if: always()
+        with:
+          name: verification-evidence
+          path: |
+            build/ui-regressions/
+            build/browser-regressions/
+            build/native-ui-regressions/
+          if-no-files-found: ignore
+      - name: 整理所选格式的 Releases 独立文件
+        if: github.event_name == 'workflow_dispatch' && inputs.publish_release
+        env:
+          RELEASE_FORMAT: ${{ inputs.release_format }}
+        run: python3 scripts/release-assets.py --format "$RELEASE_FORMAT"
+      - name: 保存待发布文件供发布任务读取
+        if: github.event_name == 'workflow_dispatch' && inputs.publish_release
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: HomeGate-1.3.0-11-Release-assets
+          path: build/release-assets/
+          if-no-files-found: error
+  publish:
+    name: 发布所选安装包到 Releases
+    needs: build
+    if: github.event_name == 'workflow_dispatch' && inputs.publish_release
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    concurrency:
+      group: homegate-release-${{ github.repository }}
+      cancel-in-progress: false
+    steps:
+      - name: 检出已验证提交
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: 读取待发布的独立安装包
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          name: HomeGate-1.3.0-11-Release-assets
+          path: build/release-assets/
+      - name: 发布安装包、校验表与安装说明
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/publish-release.py --assets build/release-assets

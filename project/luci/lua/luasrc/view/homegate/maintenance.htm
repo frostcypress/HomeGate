@@ -1,0 +1,84 @@
+<%+header%>
+<%+homegate/common%>
+<div class="hg-wrap">
+<% if notice ~= "" then %><div class="hg-notice"><%=pcdata(translate(notice))%></div><% end %>
+<% if error_message ~= "" then %><div class="hg-notice hg-notice-error"><%=pcdata(translate(error_message))%></div><% end %>
+<div class="hg-notice hg-notice-pending" id="hg-maintenance-dirty" style="display:none"><%:Changes are not saved yet.%></div>
+
+<div class="cbi-section hg-section">
+  <h3><%:Version Management%></h3>
+  <div class="cbi-value"><label class="cbi-value-title">Core</label><div class="cbi-value-field"><%=pcdata(packages.core or '-')%></div></div>
+  <div class="cbi-value"><label class="cbi-value-title">LuCI</label><div class="cbi-value-field"><%=pcdata(packages.luci or '-')%></div></div>
+  <div class="cbi-value"><label class="cbi-value-title"><%:Language Package%></label><div class="cbi-value-field"><%=pcdata(packages.i18n or '-')%></div></div>
+  <p><%=pcdata(translate(packages.core and packages.core ~= '-' and packages.core == packages.luci and packages.core == packages.i18n and 'Packages match' or 'Package versions require verification'))%></p>
+  <p><a href="<%=url('admin/system/packages')%>"><%:Software Packages%></a></p>
+</div>
+
+<div class="hg-maintenance-log-card">
+<form method="post" action="<%=url('admin/services/homegate/maintenance_apply')%>" id="homegate-maintenance-form">
+<input type="hidden" name="mode" value="apply" />
+<input type="hidden" name="token" value="<%=pcdata(token)%>" />
+<div class="cbi-section hg-section hg-form-fields">
+  <h3><%:Runtime Logs%></h3>
+  <div class="hg-form-row"><label class="hg-form-label"><%:Log Level%></label><div class="hg-form-field"><select class="hg-control" name="log_level"><option value="debug" <%=main.log_level == 'debug' and 'selected="selected"' or ''%>><%:Debug%></option><option value="info" <%= (main.log_level == nil or main.log_level == 'info') and 'selected="selected"' or ''%>><%:Info%></option><option value="warn" <%=main.log_level == 'warn' and 'selected="selected"' or ''%>><%:Warning%></option><option value="error" <%=main.log_level == 'error' and 'selected="selected"' or ''%>><%:Error%></option></select></div></div>
+  <div class="hg-form-row"><label class="hg-form-label"><%:Maximum Log Lines%></label><div class="hg-form-field"><input class="hg-control" type="number" min="64" max="20000" name="log_max_lines" value="<%=pcdata(main.log_max_lines or '1024')%>" /></div></div>
+</div>
+</form>
+
+<div id="hg-maintenance-log" class="hg-log hg-log-large"><%:Loading...%></div>
+<div class="hg-log-actions hg-log-actions-inline hg-log-actions-below">
+  <button class="cbi-button hg-btn-4" type="button" onclick="hgMaintenanceRefreshLog()"><%:Refresh%></button>
+  <form method="post" action="<%=url('admin/services/homegate/log_clear')%>" onsubmit="return confirm('<%:Clear the HomeGate runtime log?%>')"><input type="hidden" name="token" value="<%=pcdata(token)%>"/><button class="cbi-button hg-btn-4" type="submit"><%:Clear Log%></button></form>
+  <form method="post" action="<%=url('admin/services/homegate/diagnostic_download')%>"><input type="hidden" name="token" value="<%=pcdata(token)%>"/><button class="cbi-button hg-btn-4" type="submit"><%:Download Diagnostic%></button></form>
+</div>
+</div>
+
+<div class="cbi-section hg-section">
+  <h3><%:Configuration Management%></h3>
+  <p><%:Export omits credentials and upstream URLs. Restore them before enabling services.%></p>
+  <div class="hg-button-row">
+    <form method="post" action="<%=url('admin/services/homegate/config_export')%>"><input type="hidden" name="token" value="<%=pcdata(token)%>"/><button class="cbi-button hg-btn-4" type="submit"><%:Export Configuration%></button></form>
+    <form method="post" action="<%=url('admin/services/homegate/config_import')%>" id="hg-config-import-form" onsubmit="return false"><input type="hidden" name="token" value="<%=pcdata(token)%>"/><input class="hg-hidden-file" type="file" id="hg-config-import-file" accept=".conf,.txt" onchange="hgMaintenanceImportSelected(this)"/><textarea name="config_payload" id="hg-config-import-payload" style="display:none"></textarea><button class="cbi-button hg-btn-4" type="button" onclick="document.getElementById('hg-config-import-file').click()"><%:Import Configuration%></button></form>
+
+  </div>
+</div>
+
+<div class="cbi-section hg-section">
+  <h3><%:Plugin Operations%></h3>
+    <form method="post" action="<%=url('admin/services/homegate/config_reset')%>" onsubmit="return confirm('<%:Restore HomeGate default configuration? Current settings and service rules will be removed.%>')"><input type="hidden" name="token" value="<%=pcdata(token)%>"/><button class="cbi-button hg-btn-4" type="submit"><%:Restore Defaults%></button></form>
+  <p><a href="<%=url('admin/system/packages')%>"><%:Software Packages%></a></p>
+</div>
+
+</div>
+<div class="cbi-page-actions">
+  <input class="cbi-button cbi-button-apply" type="submit" form="homegate-maintenance-form" onclick="this.form.elements['mode'].value='apply'" value="<%:Save & Apply%>" />
+  <input class="cbi-button cbi-button-save" type="submit" form="homegate-maintenance-form" onclick="this.form.elements['mode'].value='save'" value="<%:Save%>" />
+  <input class="cbi-button cbi-button-reset" type="button" onclick="location.href='<%=url('admin/services/homegate/maintenance')%>'" value="<%:Reset%>" />
+</div>
+
+<span id="hg-maintenance-import-confirm" style="display:none"><%:Import this configuration and apply it now?%></span>
+<span id="hg-maintenance-import-read-error" style="display:none"><%:Unable to read the selected configuration file.%></span>
+<span id="hg-maintenance-import-too-large" style="display:none"><%:Configuration file is too large.%></span>
+
+<script type="text/javascript">
+var hgMaintenanceDirtyTracker=null;
+function hgMaintenanceRefreshLog(){
+  hgLoadText('<%=url('admin/services/homegate/api/logs')%>','hg-maintenance-log');
+}
+function hgMaintenanceImportSelected(file){
+  var form=document.getElementById('hg-config-import-form'),payload=document.getElementById('hg-config-import-payload');
+  if(!file||!file.files||!file.files.length||!form||!payload)return;
+  var f=file.files[0];
+  if(f.size>262144){alert(document.getElementById('hg-maintenance-import-too-large').textContent);file.value='';return;}
+  if(!confirm(document.getElementById('hg-maintenance-import-confirm').textContent)){file.value='';return;}
+  var r=new FileReader();
+  r.onload=function(){payload.value=String(r.result||'');form.onsubmit=null;form.submit();};
+  r.onerror=function(){alert(document.getElementById('hg-maintenance-import-read-error').textContent);file.value='';};
+  r.readAsText(f);
+}
+(function(){
+  hgMaintenanceRefreshLog();
+  hgMaintenanceDirtyTracker=hgFormDirtyTracker('homegate-maintenance-form','hg-maintenance-dirty');
+})();
+</script>
+<%+footer%>

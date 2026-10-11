@@ -1,0 +1,8 @@
+#!/bin/sh
+set -eu
+[ -n "${IPKG_INSTROOT:-}" ] && exit 0
+# APK runs separate upgrade hooks: this is a true product removal.
+rm -f /etc/config/homegate /etc/config/homegate.apk-new /etc/config/homegate.apk-save
+rm -rf /etc/homegate /var/run/homegate /tmp/homegate /tmp/homegate-frontend-jobs
+rm -f /var/log/homegate.log /tmp/.homegate-apk-upgrade-state /tmp/.homegate-purge-request
+rm -rf /tmp/homegate-import-* /tmp/homegate-before-import-* /tmp/homegate-local-cert-* /tmp/homegate-local-key-* /tmp/homegate-local-validate-* /tmp/homegate-rpc-*

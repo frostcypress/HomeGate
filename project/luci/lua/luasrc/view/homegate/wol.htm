@@ -1,0 +1,188 @@
+<%+header%>
+<%+homegate/common%>
+<div class="hg-wrap">
+<% if notice ~= "" then %><div class="hg-notice"><%=pcdata(translate(notice))%></div><% end %>
+<% if error_message ~= "" then %><div class="hg-notice hg-notice-error"><%=pcdata(translate(error_message))%></div><% end %>
+<div class="hg-notice hg-notice-pending" id="hg-wol-dirty" style="display:none"><%:Changes are not saved yet.%></div>
+
+<form method="post" action="<%=url('admin/services/homegate/wol_apply')%>" id="homegate-wol-form">
+<input type="hidden" name="mode" value="apply" />
+<input type="hidden" name="token" value="<%=pcdata(token)%>" />
+<div id="hg-wol-stage"></div>
+<div class="cbi-section hg-section hg-form-fields">
+<h3><%:Wake Settings%></h3>
+<div class="hg-form-row">
+<label class="hg-form-label"><%:Network Interface%></label>
+<div class="hg-form-field">
+<select class="hg-control" name="wol_interface" id="wol_interface" onchange="hgWolRecomputeDirty()">
+<% for _, iface in ipairs(wol_interfaces or {}) do %>
+<option value="<%=pcdata(iface.name)%>"<% if iface.name == (wol_selected_interface or 'br-lan') then %> selected="selected"<% end %>><%=pcdata(iface.name)%> (<% if iface.kind == 'wifi' then %><%:Wi-Fi%><% elseif iface.kind == 'ethernet' then %><%:Ethernet%><% elseif iface.name == 'br-lan' then %><%:LAN%><% else %><%:Bridge%><% end %>)</option>
+<% end %>
+</select>
+</div>
+</div>
+</div>
+</form>
+
+<div class="cbi-section hg-section">
+<div class="hg-section-head">
+<h3><%:Hosts%></h3>
+<button class="cbi-button hg-btn-4" type="button" onclick="hgWolOpenAdd()"><%:Add%></button>
+</div>
+<div class="hg-table-scroll-wrap"><table class="hg-table hg-table-stable hg-wol-table">
+<colgroup><col style="width:34%"/><col/><col style="width:240px"/></colgroup>
+<thead><tr><th><%:Name%></th><th><%:MAC Address%></th><th class="hg-action-head hg-wol-action-head"><div class="hg-wol-actions-head"><%:Actions%></div></th></tr></thead>
+<tbody id="hg-wol-hosts">
+<% if #hosts == 0 then %><tr><td colspan="3" class="hg-table-message hg-muted"><%:No hosts.%></td></tr><% end %>
+<% for i, h in ipairs(hosts) do %>
+<tr class="hg-wol-row" data-id="<%=pcdata(h.id)%>" data-name="<%=pcdata(h.name or h.id)%>" data-mac="<%=pcdata(h.mac or '')%>" data-committed="1">
+<td class="hg-wol-name" data-label="<%:Name%>"><%=pcdata(h.name or h.id)%></td>
+<td class="hg-wol-mac" data-label="<%:MAC Address%>"><%=pcdata(h.mac or '')%></td>
+<td class="hg-actions hg-action-cell" data-label="<%:Actions%>"><div class="hg-action-group hg-wol-actions-group">
+<button class="cbi-button hg-btn-4 hg-wol-edit" type="button" onclick="hgWolOpenIndex(<%=i-1%>)"><%:Edit%></button>
+<form class="hg-wol-wake-form" method="post" action="<%=url('admin/services/homegate/wol_action')%>"><input type="hidden" name="token" value="<%=pcdata(token)%>"/><input type="hidden" name="op" value="wake"/><input type="hidden" name="id" value="<%=pcdata(h.id)%>"/><button class="cbi-button hg-btn-4" type="submit"><%:Wake%></button></form>
+<button class="cbi-button hg-btn-4 hg-wol-delete" type="button" onclick="hgWolDeleteIndex(<%=i-1%>)"><%:Delete%></button>
+</div></td>
+</tr>
+<% end %>
+</tbody>
+</table></div>
+</div>
+
+</div>
+<div class="cbi-page-actions">
+<input class="cbi-button cbi-button-apply" type="submit" form="homegate-wol-form" onclick="this.form.elements['mode'].value='apply'" value="<%:Save & Apply%>" />
+<input class="cbi-button cbi-button-save" type="submit" form="homegate-wol-form" onclick="this.form.elements['mode'].value='save'" value="<%:Save%>" />
+<input class="cbi-button cbi-button-reset" type="button" onclick="location.href='<%=url('admin/services/homegate/wol')%>'" value="<%:Reset%>" />
+</div>
+
+<div class="hg-modal-backdrop" id="hg-wol-modal" aria-hidden="true" onclick="hgModalBackdrop(event)">
+<div class="hg-modal" role="dialog" aria-modal="true" aria-labelledby="hg-wol-modal-title">
+<div class="hg-modal-head">
+<h3 id="hg-wol-modal-title"><%:Add Host%></h3>
+
+</div>
+<input type="hidden" id="hg-wol-edit-index" value="" />
+<div class="hg-modal-grid">
+<label for="hg-wol-mac-choice"><%:MAC Address%></label>
+<div class="hg-modal-control-stack">
+<select class="hg-control" id="hg-wol-mac-choice" onchange="hgWolMacChanged()">
+<option value=""><%:Select a connected device%></option>
+<% for _, c in ipairs(wol_clients or {}) do %>
+<option value="<%=pcdata(c.mac)%>" data-name="<%=pcdata(c.name or '')%>"><%=pcdata(c.label)%></option>
+<% end %>
+<option value="__custom__"><%:Custom...%></option>
+</select>
+<input class="hg-control hg-wol-custom-mac" type="text" id="hg-wol-mac-custom" value="" placeholder="AA:BB:CC:DD:EE:FF" autocomplete="off" />
+</div>
+<label for="hg-wol-name"><%:Name%></label>
+<input class="hg-control" type="text" id="hg-wol-name" value="" autocomplete="off" />
+</div>
+<div class="hg-modal-actions">
+<button class="cbi-button hg-btn-4" type="button" onclick="hgWolClose()"><%:Cancel%></button>
+<button class="cbi-button cbi-button-save hg-btn-4" type="button" onclick="hgWolConfirm()"><%:Confirm%></button>
+</div>
+</div>
+</div>
+
+<span id="hg-wol-label-name" style="display:none"><%:Name%></span>
+<span id="hg-wol-label-mac" style="display:none"><%:MAC Address%></span>
+<span id="hg-wol-label-actions" style="display:none"><%:Actions%></span>
+<span id="hg-wol-label-edit" style="display:none"><%:Edit%></span>
+<span id="hg-wol-label-wake" style="display:none"><%:Wake%></span>
+<span id="hg-wol-label-delete" style="display:none"><%:Delete%></span>
+<span id="hg-wol-label-empty" style="display:none"><%:No hosts.%></span>
+<span id="hg-wol-label-add-title" style="display:none"><%:Add Host%></span>
+<span id="hg-wol-label-edit-title" style="display:none"><%:Edit Host%></span>
+<span id="hg-wol-label-delete-confirm" style="display:none"><%:Delete this saved host?%></span>
+
+<script type="text/javascript">
+var hgWolRows=[], hgWolHasUnsaved=false, hgWolSavedSignature='', hgWolSavedRows={};
+function hgWolEsc(v){ return String(v===undefined||v===null?'':v); }
+function hgWolRowSignature(r){return [hgWolEsc(r.name),hgWolEsc(r.mac)].join('\u001f');}
+function hgWolStateSignature(){
+  var iface=document.getElementById('wol_interface'),parts=[iface?String(iface.value||''):''];
+  for(var i=0;i<hgWolRows.length;i++){var r=hgWolRows[i];parts.push([hgWolEsc(r.id),hgWolEsc(r.name),hgWolEsc(r.mac)].join('\u001f'));}
+  return parts.join('\u001e');
+}
+function hgWolCaptureSavedState(){
+  hgWolSavedRows={};
+  for(var i=0;i<hgWolRows.length;i++){var r=hgWolRows[i];r.dirty=false;if(r.id)hgWolSavedRows[r.id]=hgWolRowSignature(r);}
+  hgWolSavedSignature=hgWolStateSignature();hgWolHasUnsaved=false;hgSetPending('hg-wol-dirty',false);hgWolRender();
+}
+function hgWolRecomputeDirty(){
+  for(var i=0;i<hgWolRows.length;i++){var r=hgWolRows[i],saved=r.id?hgWolSavedRows[r.id]:null;r.dirty=!saved||hgWolRowSignature(r)!==saved;}
+  hgWolHasUnsaved=hgWolStateSignature()!==hgWolSavedSignature;hgSetPending('hg-wol-dirty',hgWolHasUnsaved);hgWolRender();
+}
+function hgWolNormalizeMac(v){
+  var h=String(v||'').replace(/[:-]/g,'').toUpperCase();
+  if(!/^[0-9A-F]{12}$/.test(h)) return '';
+  return h.match(/../g).join(':');
+}
+function hgWolLoadRows(){
+  hgWolRows=[];
+  var rows=document.querySelectorAll('#hg-wol-hosts tr.hg-wol-row');
+  for(var i=0;i<rows.length;i++) hgWolRows.push({id:rows[i].getAttribute('data-id')||'',name:rows[i].getAttribute('data-name')||'',mac:rows[i].getAttribute('data-mac')||'',committed:true,dirty:false});
+  hgWolSyncStage();
+}
+function hgWolSyncStage(){
+  var box=document.getElementById('hg-wol-stage'); if(!box)return;
+  hgClearNode(box);
+  hgAppendHidden(box,'wol_host_count',String(hgWolRows.length));
+  for(var i=0;i<hgWolRows.length;i++){
+    hgAppendHidden(box,'wol_host_id_'+(i+1),hgWolRows[i].id||'');
+    hgAppendHidden(box,'wol_host_name_'+(i+1),hgWolRows[i].name||'');
+    hgAppendHidden(box,'wol_host_mac_'+(i+1),hgWolRows[i].mac||'');
+  }
+}
+function hgWolRender(){
+  var body=document.getElementById('hg-wol-hosts');if(!body)return;
+  if(!hgWolRows.length){hgTableMessage(body,3,hgLabel('hg-wol-label-empty'),'hg-muted');hgWolSyncStage();return;}
+  hgClearNode(body);
+  for(var i=0;i<hgWolRows.length;i++){
+    (function(idx){
+      var r=hgWolRows[idx],tr=document.createElement('tr');tr.className='hg-wol-row';
+      hgAppendTableCell(tr,r.name,hgLabel('hg-wol-label-name'),'hg-wol-name');
+      hgAppendTableCell(tr,r.mac,hgLabel('hg-wol-label-mac'),'hg-wol-mac');
+      var a=hgAppendTableCell(tr,'',hgLabel('hg-wol-label-actions'),'hg-actions hg-action-cell');
+      var group=document.createElement('div');group.className='hg-action-group hg-wol-actions-group';
+      group.appendChild(hgCreateButton(hgLabel('hg-wol-label-edit'),'cbi-button hg-btn-4 hg-wol-edit',function(){hgWolOpenIndex(idx);}));
+      if(r.id && !r.dirty && !hgWolHasUnsaved){
+        var f=hgCreatePostForm('<%=url('admin/services/homegate/wol_action')%>','<%=pcdata(token)%>',{op:'wake',id:r.id},'hg-wol-wake-form');
+        f.appendChild(hgCreateButton(hgLabel('hg-wol-label-wake'),'cbi-button hg-btn-4',null,{type:'submit'}));
+        group.appendChild(f);
+      } else {
+        group.appendChild(hgCreateButton(hgLabel('hg-wol-label-wake'),'cbi-button hg-btn-4',null,{disabled:true}));
+      }
+      group.appendChild(hgCreateButton(hgLabel('hg-wol-label-delete'),'cbi-button hg-btn-4 hg-wol-delete',function(){hgWolDeleteIndex(idx);}));
+      a.appendChild(group);
+      body.appendChild(tr);
+    })(i);
+  }
+  hgWolSyncStage();
+}
+function hgWolMacChanged(){
+  var s=document.getElementById('hg-wol-mac-choice'),c=document.getElementById('hg-wol-mac-custom'),n=document.getElementById('hg-wol-name');if(!s||!c)return;
+  var custom=s.value=='__custom__';c.style.display=custom?'block':'none';
+  if(!custom){c.value='';var o=s.options[s.selectedIndex];if(n && o && !n.value && o.getAttribute('data-name'))n.value=o.getAttribute('data-name');}
+}
+function hgWolSelectMac(mac){
+  var s=document.getElementById('hg-wol-mac-choice'),c=document.getElementById('hg-wol-mac-custom');if(!s||!c)return;
+  var target=hgWolNormalizeMac(mac),found=false;
+  for(var i=0;i<s.options.length;i++){if(hgWolNormalizeMac(s.options[i].value)==target && target){s.selectedIndex=i;found=true;break;}}
+  if(!found && target){s.value='__custom__';c.value=target;} else c.value='';hgWolMacChanged();
+}
+function hgWolOpenAdd(){document.getElementById('hg-wol-modal-title').textContent=hgLabel('hg-wol-label-add-title');document.getElementById('hg-wol-edit-index').value='';document.getElementById('hg-wol-name').value='';document.getElementById('hg-wol-mac-choice').value='';document.getElementById('hg-wol-mac-custom').value='';hgWolMacChanged();hgSetModalOpen('hg-wol-modal',true);}
+function hgWolOpenIndex(i){var r=hgWolRows[i];if(!r)return;document.getElementById('hg-wol-modal-title').textContent=hgLabel('hg-wol-label-edit-title');document.getElementById('hg-wol-edit-index').value=String(i);document.getElementById('hg-wol-name').value=r.name||'';hgWolSelectMac(r.mac);hgSetModalOpen('hg-wol-modal',true);}
+function hgWolConfirm(){
+  var idx=document.getElementById('hg-wol-edit-index').value,s=document.getElementById('hg-wol-mac-choice'),c=document.getElementById('hg-wol-mac-custom'),name=document.getElementById('hg-wol-name').value;
+  var mac=hgWolNormalizeMac(s.value=='__custom__'?c.value:s.value);if(!mac){alert('<%:Valid MAC address is required%>');return;}
+  if(!name && s.value!='__custom__'){var o=s.options[s.selectedIndex];if(o)name=o.getAttribute('data-name')||'';}if(!name)name=mac;
+  if(idx==='')hgWolRows.push({id:'',name:name,mac:mac,committed:false,dirty:true});else{idx=parseInt(idx,10);hgWolRows[idx].name=name;hgWolRows[idx].mac=mac;hgWolRows[idx].dirty=true;}
+  hgWolRecomputeDirty();hgWolClose();
+}
+function hgWolDeleteIndex(i){if(!confirm(hgLabel('hg-wol-label-delete-confirm')))return;hgWolRows.splice(i,1);hgWolRecomputeDirty();}
+function hgWolClose(){hgSetModalOpen('hg-wol-modal',false);}
+(function(){hgWolLoadRows();hgWolCaptureSavedState();hgWolMacChanged();})();
+</script>
+<%+footer%>

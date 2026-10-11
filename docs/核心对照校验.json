@@ -1,0 +1,7 @@
+{
+  "baseline_sha256": "33966bbb713b92bd113a086800bae15cda7af487365f6460af7d94f61ce38e1b",
+  "go_files": 130,
+  "changed_go_files": [],
+  "missing_go_files": [],
+  "scope": "Go source byte comparison only; generated Lua/rules and UI changes are separate"
+}

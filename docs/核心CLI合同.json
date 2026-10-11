@@ -1,0 +1,242 @@
+{
+  "schema": 1,
+  "status": "reference-inventory-not-migration-acceptance",
+  "source": "project/core/src/cmd/homegate/main.go",
+  "source_sha256": "87dab27b7257f46e4b23c830cc357044c290efa88cc11ee49d0b24375bcea083",
+  "api_version": 1,
+  "cli_commands": [
+    "access-clear-all",
+    "access-clear-denied",
+    "access-clear-entry",
+    "access-recent",
+    "access-refresh",
+    "access-status",
+    "access-update",
+    "access-validate-file",
+    "acme-ca-catalog",
+    "acme-ca-status",
+    "cert-import",
+    "cert-renew",
+    "cert-status",
+    "check",
+    "daemon",
+    "ddns-delete",
+    "ddns-status",
+    "ddns-sync",
+    "dns-check-private",
+    "dns-provider-catalog",
+    "dns-provider-status",
+    "dns-zones",
+    "firewall-apply",
+    "firewall-cleanup",
+    "firewall-status",
+    "log-events",
+    "network-resolve",
+    "proxy-status",
+    "recovery-status",
+    "selftest",
+    "status",
+    "version",
+    "web-job",
+    "web-job-ack",
+    "web-job-status",
+    "web-read",
+    "web-submit",
+    "wol",
+    "wol-status"
+  ],
+  "web_routes": {
+    "access_clear_all": {
+      "handler": "action_access_clear_all",
+      "write": true
+    },
+    "access_clear_denied": {
+      "handler": "action_access_clear_denied",
+      "write": true
+    },
+    "access_clear_entry": {
+      "handler": "action_access_clear_entry",
+      "write": true
+    },
+    "access_delete_all": {
+      "handler": "action_access_delete_all",
+      "write": true
+    },
+    "access_delete_entry": {
+      "handler": "action_access_delete_entry",
+      "write": true
+    },
+    "access_delete_rule": {
+      "handler": "action_access_delete_rule",
+      "write": true
+    },
+    "access_update": {
+      "handler": "action_access_update",
+      "write": true
+    },
+    "api/access_recent": {
+      "handler": "api_access_recent",
+      "write": false
+    },
+    "api/certs": {
+      "handler": "api_certs",
+      "write": false
+    },
+    "api/ddns": {
+      "handler": "api_ddns",
+      "write": false
+    },
+    "api/dns_zones": {
+      "handler": "api_dns_zones",
+      "write": false
+    },
+    "api/firewall": {
+      "handler": "api_firewall",
+      "write": false
+    },
+    "api/log_events": {
+      "handler": "api_log_events",
+      "write": false
+    },
+    "api/logs": {
+      "handler": "api_logs",
+      "write": false
+    },
+    "api/network": {
+      "handler": "api_network",
+      "write": false
+    },
+    "api/proxy": {
+      "handler": "api_proxy",
+      "write": false
+    },
+    "api/status": {
+      "handler": "api_status",
+      "write": false
+    },
+    "api/version": {
+      "handler": "api_version",
+      "write": false
+    },
+    "api/wol": {
+      "handler": "api_wol",
+      "write": false
+    },
+    "basic": {
+      "handler": "action_basic",
+      "write": false
+    },
+    "basic_apply": {
+      "handler": "action_basic_apply",
+      "write": true
+    },
+    "certificate_apply": {
+      "handler": "action_public_certificate_apply",
+      "write": true
+    },
+    "config_export": {
+      "handler": "action_config_export",
+      "write": true
+    },
+    "config_import": {
+      "handler": "action_config_import",
+      "write": true
+    },
+    "config_reset": {
+      "handler": "action_config_reset",
+      "write": true
+    },
+    "diagnostic_download": {
+      "handler": "action_diagnostic_download",
+      "write": true
+    },
+    "domain": {
+      "handler": "action_legacy_public_redirect",
+      "write": false
+    },
+    "log_clear": {
+      "handler": "action_log_clear",
+      "write": true
+    },
+    "maintenance": {
+      "handler": "action_maintenance",
+      "write": false
+    },
+    "maintenance_apply": {
+      "handler": "action_maintenance_apply",
+      "write": true
+    },
+    "overview": {
+      "handler": "action_overview",
+      "write": false
+    },
+    "public": {
+      "handler": "action_public",
+      "write": false
+    },
+    "public_account_apply": {
+      "handler": "action_public_account_apply",
+      "write": true
+    },
+    "public_action": {
+      "handler": "action_public_action",
+      "write": true
+    },
+    "public_apply": {
+      "handler": "action_public_apply",
+      "write": true
+    },
+    "settings/basic": {
+      "handler": "action_basic",
+      "write": false
+    },
+    "settings/public": {
+      "handler": "action_public",
+      "write": false
+    },
+    "settings/wol": {
+      "handler": "action_wol",
+      "write": false
+    },
+    "web": {
+      "handler": "action_legacy_public_redirect",
+      "write": false
+    },
+    "wol": {
+      "handler": "action_wol",
+      "write": false
+    },
+    "wol_action": {
+      "handler": "action_wol_action",
+      "write": true
+    },
+    "wol_apply": {
+      "handler": "action_wol_apply",
+      "write": true
+    }
+  },
+  "acceptance_status": {
+    "M01": "not-run",
+    "M02": "not-run",
+    "M03": "not-run",
+    "M04": "not-run",
+    "M05": "not-run",
+    "M06": "not-run",
+    "M07": "not-run",
+    "M08": "not-run",
+    "M09": "not-run",
+    "M10": "not-run",
+    "M11": "not-run",
+    "M12": "not-run",
+    "M13": "not-run",
+    "M14": "not-run",
+    "M15": "not-run",
+    "M16": "not-run",
+    "M17": "not-run",
+    "M18": "not-run",
+    "M19": "not-run",
+    "M20": "not-run",
+    "M21": "not-run",
+    "M22": "not-run"
+  }
+}

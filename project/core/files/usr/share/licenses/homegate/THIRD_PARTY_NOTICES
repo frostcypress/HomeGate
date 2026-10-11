@@ -1,0 +1,31 @@
+# Third-party notices
+
+HomeGate 的功能取舍与部分实现思路以 Lucky 1.4.10 的公开源码作为基线参考，并重新裁剪为独立的 HomeGate Core 与 LuCI 界面。
+
+Lucky 1.4.10 的公开代码采用 MIT License。原始许可文本见 `legal/Lucky-MIT.txt`，安装后位于 `/usr/share/licenses/homegate/Lucky-MIT.txt`。
+
+HomeGate 不包含或调用 Lucky 2.x 的闭源可执行文件，也不依赖 Lucky 运行。
+
+## Runtime geographic CIDR data
+
+HomeGate 0.5.0-12 can optionally download a selected China/province IPv4+IPv6 CIDR list at runtime from:
+
+- https://github.com/thintsing/ip-geo-list
+
+These geographic CIDR lists are **not bundled or redistributed** in the HomeGate source/IPK artifacts. The upstream project states that its generated lists aggregate several geolocation sources (including ip2region, qqwry, GeoLite2, Huawei regional data, and Meituan arbitration data). Use of downloaded data is subject to the upstream project and underlying data-source terms. HomeGate treats the data only as an approximate access-control signal; it is not an authentication mechanism.
+
+GopherLua v1.1.1 (github.com/yuin/gopher-lua), MIT License.
+The Go Core embeds a bounded Lua 5.1 configuration-rule VM; native LuCI renders JavaScript only.
+Copyright and license: core/vendor/github.com/yuin/gopher-lua/LICENSE; installed /usr/share/licenses/homegate/gopher-lua-MIT.txt.
+
+LuCI frontend and the embedded configuration controller retain the luci-app-homegate Apache-2.0 license. Core combines MIT code with that controller (MIT AND Apache-2.0). License text: legal/Apache-2.0.txt; installed /usr/share/licenses/homegate/Apache-2.0.txt.
+
+APNIC RIR allocation statistics (downloaded at runtime)
+Primary: https://ftp.apnic.net/stats/apnic/delegated-apnic-latest
+Official mirror: https://ftp.ripe.net/pub/stats/apnic/delegated-apnic-latest
+Format: https://www.apnic.net/about-apnic/corporate-documents/documents/resource-guidelines/rir-statistics-exchange-format/
+The reports are available for download and use subject to APNIC's conditions
+of use. APNIC disclaims responsibility for loss/damage and does not guarantee
+accuracy. Registration economy does not establish current physical location.
+The raw download includes APNIC's conditions; no statistics are bundled in the
+installed packages. Parsed CN prefixes are stored in the private runtime cache.

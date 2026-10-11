@@ -1,0 +1,88 @@
+name: HomeGate 首次导入接续源码
+on:
+  workflow_dispatch:
+    inputs:
+      source_zip:
+        description: 仓库根目录的源码接续草稿文件名
+        type: string
+        required: true
+      sha256:
+        description: 本地独立验证通过的 ZIP SHA256
+        type: string
+        required: true
+permissions:
+  contents: write
+jobs:
+  restore:
+    name: 核对哈希并恢复完整源码目录
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: 检出首次提交
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - name: 校验接续草稿并安全恢复
+        env:
+          SOURCE_ZIP: ${{ inputs.source_zip }}
+          EXPECTED_SHA256: ${{ inputs.sha256 }}
+        run: |
+          python3 - <<'PY'
+          import hashlib, os, pathlib, re, stat, zipfile
+          root = pathlib.Path.cwd().resolve()
+          name = os.environ['SOURCE_ZIP']
+          expected = os.environ['EXPECTED_SHA256']
+          if not re.fullmatch(r'homegate_[\w.\-]+\.zip', name) or not re.fullmatch(r'[a-f0-9]{64}', expected):
+              raise SystemExit('非法文件名或 SHA256')
+          file = root / name
+          if file.is_symlink() or hashlib.sha256(file.read_bytes()).hexdigest() != expected:
+              raise SystemExit('源码 ZIP SHA256 不一致')
+          docs = {'接续.md', '校验.md', '核实查漏修复.md'}
+          with zipfile.ZipFile(file) as archive:
+              if archive.testzip() is not None:
+                  raise SystemExit('ZIP CRC 校验失败')
+              infos = archive.infolist()
+              if len({i.filename for i in infos}) != len(infos) or sum(i.file_size for i in infos) > 64 * 1024 * 1024:
+                  raise SystemExit('ZIP 重复条目或体积超限')
+              manifest = archive.read('校验.md').decode('utf-8')
+              hashes = dict(re.findall(r'^- `(.+?)`：`([0-9a-f]{64})`', manifest, re.M))
+              if set(hashes) != {i.filename for i in infos} - {'校验.md'}:
+                  raise SystemExit('逐文件校验清单不完整')
+              pending = []
+              for info in infos:
+                  path = pathlib.PurePosixPath(info.filename)
+                  if path.is_absolute() or '..' in path.parts or '\\' in info.filename or stat.S_ISLNK(info.external_attr >> 16):
+                      raise SystemExit('ZIP 路径不安全')
+                  body = archive.read(info)
+                  if info.filename != '校验.md' and hashlib.sha256(body).hexdigest() != hashes[info.filename]:
+                      raise SystemExit('逐文件 SHA256 不一致')
+                  if path.parts[0] == '源码':
+                      relative = pathlib.Path(*path.parts[1:])
+                  elif info.filename in docs:
+                      relative = pathlib.Path(info.filename)
+                  else:
+                      raise SystemExit('接续草稿含未知根目录')
+                  if not relative.parts or '.git' in relative.parts or relative.suffix.lower() in {'.ipk', '.apk', '.exe', '.pem', '.key'}:
+                      raise SystemExit('源码包含不允许的路径')
+                  # GitHub Token 不能用来写入工作流；另在网页提交已核对的正式工作流。
+                  if relative.parts[:2] == ('.github', 'workflows'):
+                      continue
+                  target = root / relative
+                  if not target.resolve().is_relative_to(root) or target.is_symlink():
+                      raise SystemExit('目标路径不安全')
+                  pending.append((target, body, info.external_attr >> 16))
+              for target, body, mode in pending:
+                  target.parent.mkdir(parents=True, exist_ok=True)
+                  target.write_bytes(body)
+                  target.chmod(0o755 if mode & 0o111 else 0o644)
+              print('逐文件校验通过，恢复文件数：', len(pending))
+          PY
+          python3 scripts/project.py --check
+      - name: 提交展开后的源码并移除临时 ZIP
+        env:
+          SOURCE_ZIP: ${{ inputs.source_zip }}
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git rm -- "$SOURCE_ZIP"
+          git add -- . ':!.github/workflows'
+          git commit -m '导入经过完整哈希校验的 HomeGate 接续源码'
+          git push origin HEAD

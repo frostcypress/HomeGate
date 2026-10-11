@@ -1,0 +1,46 @@
+# HomeGate 1.3.0-r12 规范迁移草稿
+
+本目录是按《OpenWrt 通用插件开发标准 V2.0》整理的工作源码。**这不是已完成 Shell/C 核心迁移的可安装发行版。** 目标为 Zyxel Armor G5 (NBG7815) 的 QWRT R26.3.8 / QSDK 12.5、aarch64_cortex-a53、IPK + Lua LuCI。型号与运行库/组件报告已收，SDK 链接兼容与实机验收仍未完成。用户确认按 1.3.0-10 重构，设备上的优化版 1.3.1-1 作废，不要求当前降级。
+
+本轮已落实源码分层、唯一版本入口、概览/设置/维护导航、维护四分区、默认不导出凭据、目标核实清单、SDK 构建门禁、包元数据检查和可接续草稿。project/core/src/ 保留完整 Go 核心作为迁移对照；该项不符合最终核心要求，正式构建入口会拒绝它。
+
+新增隔离 BusyBox ash 原型，覆盖公共配置检查、8 项任务队列、互斥与代次/token。3 项静态检查通过，10 项 Linux 执行回归已接入 Actions，尚未运行；详情见 project/core/prototype/README.md。生产配方不安装原型。
+
+project/core 保存核心配方、安装文件和完整对照实现；project/luci/lua、js、common 分离两套前端与公共翻译。scripts 保存校验与生成程序；targets 保存逐台设备证据；.github/workflows 是当前流程，.github/reference 的历史 Go 流程不会自动运行。
+
+先读接续.md、核实查漏修复.md、docs/重构设计.md。完整历史合同见 docs/历史接续_1.3.0-10.md，其中的旧测试结果不能作为本版验收。
+
+## 本地检查
+
+Python 3.12+，Lua 回归另需 lupa==2.8；浏览器回归需 playwright==1.63.0、Node 和 Chromium/Edge。
+
+    python3 scripts/project.py --check
+    python3 scripts/重构回归.py
+    python3 scripts/Shell原型回归.py --static
+    python3 scripts/导航安全回归.py
+    python3 scripts/frontend-source-regressions.py
+    python3 scripts/native-ui-regressions.py
+
+只修改 VERSION 和 RELEASE，随后运行 python3 scripts/project.py --sync。homegate-version.mk 和独立对照安装/校验脚本的版本默认值均由此同步，禁止手工维护第二套版本。规范版本为 1.3.0-r12；Go 对照接口仍使用旧格式 1.3.0-12，不冒充已统一的新 SDK 安装包。
+
+修改 Lua Controller/HTM 后运行 sync-frontend.py 和 build-js-views.py；生成副本由 CI 核对。概览不轮询，使用手动刷新。各设置页的旧只读地址保留为兼容入口。
+
+## 目标与构建
+
+初次核实使用 scripts/核实设备.sh 与 scripts/补充核实设备.sh，用户已回传两份报告，无需重复运行。当前目标档案为 targets/qwrt-r26.3.8-ipq807x.json；SDK 已获用户允许使用 ImmortalWrt 21.02 或尝试 24.10，候选与动态库差异见 docs/目标兼容性报告.md。候选公布 SHA 不等于已下载验证或已兼容。下一步按 docs/Shell原型方案.md 验证完整业务与总占用，再冻结 A/B。
+
+新工作流默认仅检查源码。Lua/JS 与 IPK/APK 分开选择，目标/核心/包名迁移未完成时构建失败。目标SDK构建.py 使用匹配 SDK；检查三包.py 读取控制元数据并要求准确版本、架构和 Core 依赖。APK3 解码需要支持 adbdump --format json 的官方 apk-tools，具体目标工具尚待验证。
+
+用户指定仓库 https://github.com/frostcypress/HomeGate；本次浏览器检查时为空仓库，源码上传与新 GitHub run 尚未完成。
+
+历史 build-release.py 和 build-apk.py 只能显式设置 HOMEGATE_ALLOW_LEGACY_GO=1 后用于迁移对照，其结果不能通过新三包检查。包名仍为旧 homegate，改名升级与 FULL PURGE 生命周期未完成前保留原业务合同。正式 GitHub Release 当前禁止。
+
+## 配置导出
+
+默认导出白名单 UCI 字段，不包含 DNS key/token/账户标识、私钥、未知字段、上游 URL 或 DDNS URL。备份总开关关闭，恢复后先补齐凭据和地址再启用。此备份不承担完整敏感备份功能。导入预览、格式校验/持久回滚和密钥独立受限存储仍须继续迁移。
+
+## 可接续快照
+
+    python3 scripts/生成接续包.py --target pending --stage 规范迁移 --draft
+
+草稿仅含完整源码、许可、工作流、历史合同和三份接续文档，不附旧包。完整快照必须在迁移完成且具备真实三包后生成。

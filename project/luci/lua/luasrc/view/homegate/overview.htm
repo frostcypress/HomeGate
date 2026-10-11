@@ -1,0 +1,19 @@
+<%+header%>
+<div class="cbi-map">
+  <h2><%:Overview%></h2>
+  <div class="cbi-section">
+    <h3><%:Service Status%></h3>
+    <div class="cbi-value"><label class="cbi-value-title"><%:Current Version%></label><div class="cbi-value-field"><%=pcdata(packages.product or '-')%></div></div>
+    <div class="cbi-value"><label class="cbi-value-title"><%:Runtime Status%></label><div class="cbi-value-field"><%=pcdata(translate(status.service and (status.service.running and 'Running' or 'Stopped') or 'Unknown'))%></div></div>
+    <div class="cbi-value"><label class="cbi-value-title"><%:Public Services%></label><div class="cbi-value-field"><%=pcdata(public_count)%></div></div>
+    <div class="cbi-value"><label class="cbi-value-title"><%:Wake-on-LAN%></label><div class="cbi-value-field"><%=pcdata(wol_count)%></div></div>
+    <p><a class="cbi-button" href="<%=url('admin/services/homegate/overview')%>"><%:Refresh%></a></p>
+  </div>
+  <div class="cbi-section"><h3><%:Quick Access%></h3>
+    <a class="cbi-button" href="<%=url('admin/services/homegate/settings/basic')%>"><%:Basic Settings%></a>
+    <a class="cbi-button" href="<%=url('admin/services/homegate/settings/public')%>"><%:Public Services%></a>
+    <a class="cbi-button" href="<%=url('admin/services/homegate/settings/wol')%>"><%:Wake-on-LAN%></a>
+    <a class="cbi-button" href="<%=url('admin/services/homegate/maintenance')%>"><%:Maintenance%></a>
+  </div>
+</div>
+<%+footer%>

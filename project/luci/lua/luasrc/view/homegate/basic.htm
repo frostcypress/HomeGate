@@ -1,0 +1,61 @@
+<%+header%>
+<%+homegate/common%>
+<div class="hg-wrap">
+<% if notice ~= "" then %><div class="hg-notice"><%=pcdata(translate(notice))%></div><% end %>
+<% if error_message ~= "" then %><div class="hg-notice hg-notice-error"><%=pcdata(translate(error_message))%></div><% end %>
+<div class="hg-notice hg-notice-pending" id="hg-basic-dirty" style="display:none"><%:Changes are not saved yet.%></div>
+
+<div class="cbi-section hg-section">
+  <div class="hg-section-head">
+    <h3><%:Runtime Status%></h3>
+  </div>
+  <div class="hg-status-fields">
+    <div class="hg-status-row"><div class="hg-status-label">HomeGate</div><div class="hg-status-value" id="hg_service"><%:Loading...%></div></div>
+    <div class="hg-status-row"><div class="hg-status-label"><%:Version Information%></div><div class="hg-status-value"><%=pcdata(packages.product or '-')%></div></div>
+    <div class="hg-status-row"><div class="hg-status-label"><%:System Architecture%></div><div class="hg-status-value"><%=pcdata(packages.arch or '-')%></div></div>
+    <div class="hg-status-row"><div class="hg-status-label"><%:Process ID%></div><div class="hg-status-value" id="hg_pid">-</div></div>
+    <div class="hg-status-row"><div class="hg-status-label"><%:Public IPv6%></div><div class="hg-status-value" id="hg_ipv6"><%:Loading...%></div></div>
+    <div class="hg-status-row"><div class="hg-status-label"><%:Public Services%></div><div class="hg-status-value"><%=public_count or 0%></div></div>
+    <div class="hg-status-row"><div class="hg-status-label"><%:Wake Hosts%></div><div class="hg-status-value"><%=wol_count or 0%></div></div>
+  </div>
+</div>
+
+<form method="post" action="<%=url('admin/services/homegate/basic_apply')%>" id="homegate-basic-form">
+<input type="hidden" name="mode" value="apply" />
+<input type="hidden" name="token" value="<%=pcdata(token)%>" />
+<div class="cbi-section hg-section hg-form-fields">
+  <h3><%:Service Settings%></h3>
+  <div class="hg-form-row"><label class="hg-form-label"><%:Enable HomeGate%></label><div class="hg-form-field"><input class="cbi-input-checkbox" type="checkbox" name="enabled" value="1" <%= (main.enabled == '1') and 'checked="checked"' or '' %> /></div></div>
+  <div class="hg-form-row"><label class="hg-form-label"><%:Auto-configure IPv6 Firewall%></label><div class="hg-form-field"><input class="cbi-input-checkbox" type="checkbox" name="auto_firewall" value="1" <%= (main.auto_firewall ~= '0') and 'checked="checked"' or '' %> /></div></div>
+  <div class="hg-form-row"><label class="hg-form-label"><%:DDNS Interval (s)%></label><div class="hg-form-field"><input class="hg-control" type="number" min="60" max="86400" name="ddns_interval" value="<%=pcdata(main.ddns_interval or '300')%>" /></div></div>
+  <div class="hg-form-row"><label class="hg-form-label"><%:Public HTTPS Port%></label><div class="hg-form-field"><input class="hg-control" type="number" min="1" max="65535" name="https_port" value="<%=pcdata(main.https_port or '443')%>" /></div></div>
+  <div class="hg-form-row"><label class="hg-form-label"><%:Internal HTTPS Port%></label><div class="hg-form-field"><input class="hg-control" type="number" min="1" max="65535" name="proxy_https_port" value="<%=pcdata(main.proxy_https_port or '10443')%>" /></div></div>
+</div>
+
+</form>
+</div>
+<div class="cbi-page-actions">
+  <input class="cbi-button cbi-button-apply" type="submit" form="homegate-basic-form" onclick="this.form.elements['mode'].value='apply'" value="<%:Save & Apply%>" />
+  <input class="cbi-button cbi-button-save" type="submit" form="homegate-basic-form" onclick="this.form.elements['mode'].value='save'" value="<%:Save%>" />
+  <input class="cbi-button cbi-button-reset" type="button" onclick="location.href='<%=url('admin/services/homegate/basic')%>'" value="<%:Reset%>" />
+</div>
+
+
+<script type="text/javascript">
+(function(){
+  var tStopped='<%:Stopped%>', tHealthy='<%:Healthy%>', tUnhealthy='<%:Unhealthy%>';
+  hgGet('<%=url('admin/services/homegate/api/status')%>', function(s){
+    if (s && s.service) {
+      var state = s.service.running ? (s.service.healthy ? tHealthy : tUnhealthy) : tStopped;
+      hgText('hg_service', state);
+      hgText('hg_pid', s.runtime && s.runtime.pid ? 'PID ' + s.runtime.pid : '-');
+    } else hgText('hg_service', (s && s.error) || '-');
+  });
+  hgGet('<%=url('admin/services/homegate/api/network')%>', function(n){
+    var w = n && n.network && n.network.wan ? n.network.wan : {};
+    hgText('hg_ipv6', w.public_ipv6 || '-');
+  });
+})();
+(function(){hgFormDirtyTracker('homegate-basic-form','hg-basic-dirty');})();
+</script>
+<%+footer%>

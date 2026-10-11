@@ -1,0 +1,75 @@
+{
+  "official_legacy_theme_parity": [
+    [
+      "basic",
+      390
+    ],
+    [
+      "basic",
+      1400
+    ],
+    [
+      "public",
+      390
+    ],
+    [
+      "public",
+      1400
+    ],
+    [
+      "wol",
+      390
+    ],
+    [
+      "wol",
+      1400
+    ],
+    [
+      "maintenance",
+      390
+    ],
+    [
+      "maintenance",
+      1400
+    ]
+  ],
+  "real_form_submissions": [
+    [
+      "basic",
+      "save"
+    ],
+    [
+      "basic",
+      "apply"
+    ],
+    [
+      "public",
+      "save"
+    ],
+    [
+      "public",
+      "apply"
+    ],
+    [
+      "wol",
+      "save"
+    ],
+    [
+      "wol",
+      "apply"
+    ],
+    [
+      "maintenance",
+      "save"
+    ],
+    [
+      "maintenance",
+      "apply"
+    ]
+  ],
+  "invalid_number_blocked": true,
+  "enter_default_apply": true,
+  "reset_navigation": true,
+  "fixture_commit": "20b3600d4d64bf60588cf4975c7a62104411870e",
+  "scope": "Official upstream CSS and input-selector stress; actual QWRT stylesheet/device acceptance pending"
+}

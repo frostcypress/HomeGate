@@ -1,0 +1,17 @@
+{
+  "schema": 1,
+  "id": "pending",
+  "verified": false,
+  "distribution": null,
+  "version": null,
+  "device": null,
+  "target": null,
+  "subtarget": null,
+  "architecture": null,
+  "abi": null,
+  "package_format": null,
+  "luci": {"lua": null, "js": null, "bootstrap": null},
+  "sdk": {"url": null, "sha256": null},
+  "resources": {"ram_kib": null, "overlay_available_kib": null},
+  "evidence": null
+}

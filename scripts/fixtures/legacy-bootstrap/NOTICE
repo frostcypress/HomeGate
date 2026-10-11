@@ -1,0 +1,3 @@
+Unmodified official OpenWrt LuCI legacy Bootstrap theme and CBI footer reference.
+Upstream license: see LICENSE; cascade.css includes its Apache-2.0 notice.
+Used only for regression tests. This is not the exact QWRT custom theme.

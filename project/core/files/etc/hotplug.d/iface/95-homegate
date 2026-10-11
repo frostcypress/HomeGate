@@ -1,0 +1,26 @@
+#!/bin/sh
+
+[ "$(uci -q get homegate.main.enabled)" = "1" ] || exit 0
+
+case "$ACTION" in
+	ifup|ifupdate|ifdown) ;;
+	*) exit 0 ;;
+esac
+
+# QWRT normally reports logical wan/wan6 here, but PPPoE hotplug events can
+# expose the real netdevice instead. Cover both without reacting to unrelated
+# LAN/Wi-Fi interface churn.
+case "$INTERFACE" in
+	wan|wan6|wan_6) ;;
+	*)
+		case "${DEVICE:-${DEVICENAME:-}}" in
+			pppoe-*|ppp*) ;;
+			*) exit 0 ;;
+		esac
+		;;
+esac
+
+# Do not turn a WAN event into a full UCI reload. The daemon scheduler receives
+# a dedicated WANChanged event and reconciles network-dependent runtime state.
+/etc/init.d/homegate network_changed >/dev/null 2>&1 || true
+exit 0

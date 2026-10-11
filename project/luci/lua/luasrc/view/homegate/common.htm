@@ -1,0 +1,985 @@
+<style type="text/css">
+.hg-wrap { width: 100%; max-width: none; min-width: 0; box-sizing: border-box; container-type: inline-size; padding-bottom: 18px; }
+/* HomeGate UI Foundation: the default contract is theme-neutral. Known theme adapters below are
+ * intentionally thin regression adapters, not the architecture boundary. Unknown LuCI themes
+ * must remain usable through this base layer without being treated as BOOT or Design. */
+.hg-wrap, .hg-modal, .hg-plugin-header {
+  --hg-surface: var(--background-color-high, #fff);
+  --hg-text-secondary: var(--text-color-secondary, #666);
+  --hg-control-width: 280px;
+  --hg-control-height: 28px;
+  --hg-control-line-height: 26px;
+  --hg-label-width: 150px;
+  --hg-field-width: 280px;
+  --hg-field-gap: 14px;
+  --hg-mobile-label-min: 112px;
+  --hg-mobile-label-share: 36%;
+  --hg-mobile-gap: 10px;
+  --hg-mobile-pair-columns: minmax(var(--hg-mobile-label-min), var(--hg-mobile-label-share)) minmax(0, 1fr);
+  --hg-form-columns: var(--hg-label-width) var(--hg-field-width);
+  --hg-form-column-gap: var(--hg-field-gap);
+  --hg-form-row-min-height: 34px;
+  --hg-form-row-margin: 0 0 .3em 0;
+  --hg-form-row-padding: 0;
+  --hg-form-label-align: right;
+  --hg-form-label-wrap: nowrap;
+  --hg-form-control-max: 100%;
+  --hg-status-columns: var(--hg-label-width) minmax(0, 1fr);
+  --hg-status-column-gap: var(--hg-field-gap);
+  --hg-status-row-min-height: 34px;
+  --hg-status-row-margin: 0 0 .3em 0;
+  --hg-status-row-padding: 0;
+  --hg-status-label-align: right;
+  --hg-status-label-wrap: nowrap;
+  --hg-modal-width: 500px;
+  --hg-modal-wide-width: 760px;
+  --hg-modal-access-width: 980px;
+  --hg-modal-max-width: 100%;
+  --hg-modal-padding: 1.15em 1.25em;
+  --hg-modal-radius: 0px;
+  --hg-modal-border: 1px solid #bbb;
+  --hg-modal-shadow: 0 6px 24px rgba(0,0,0,.22);
+  --hg-modal-head-margin-bottom: 1em;
+  --hg-modal-title-line-height: normal;
+  --hg-modal-grid-columns: 128px minmax(0, 1fr);
+  --hg-modal-grid-row-gap: .75em;
+  --hg-modal-grid-column-gap: 14px;
+  --hg-modal-label-color: inherit;
+  --hg-modal-mobile-label-color: inherit;
+  --hg-modal-note-color: inherit;
+  --hg-modal-note-opacity: .72;
+  --hg-modal-footnote-margin-top: 1em;
+  --hg-modal-footnote-padding-top: .8em;
+  --hg-modal-footnote-border-color: #ddd;
+  --hg-modal-actions-gap: .35em;
+  --hg-modal-actions-margin-top: 1em;
+  --hg-modal-mobile-radius: 0px;
+
+
+  --hg-detail-columns: var(--hg-mobile-pair-columns);
+  --hg-detail-gap: var(--hg-mobile-gap);
+  --hg-detail-row-padding: .28em 0;
+  --hg-detail-action-gap: 8px;
+  --hg-action-gap: 8px;
+  --hg-access-actions-width: 144px;
+  --hg-detail-item-gap: .5em;
+  --hg-detail-item-padding: .15em 0 .8em;
+  --hg-divider-color: #ddd;
+  --hg-notice-success-border: #5cb85c;
+  --hg-notice-success-bg: rgba(92,184,92,.08);
+  --hg-notice-error-border: #d9534f;
+  --hg-notice-error-bg: rgba(217,83,79,.08);
+  --hg-notice-pending-border: #f0ad4e;
+  --hg-notice-pending-bg: rgba(240,173,78,.09);
+  --hg-btn-short: 68px;
+  --hg-btn-long: 96px;
+  --hg-log-action-gap: 14px;
+  /* Public desktop table geometry: protocol + certificate status live in one
+   * Access Address column. Give the full address the flexible width and keep
+   * Actions fixed; conditional buttons collapse without reserving empty slots. */
+  --hg-public-column-gap: 10px;
+  --hg-public-enabled-width: 46px;
+  --hg-public-address-min: 300px;
+  --hg-public-target-min: 150px;
+  --hg-public-actions-width: 292px;
+  --hg-public-actions-inset: 8px;
+}
+/* Theme-neutral geometry: HomeGate owns containment/overflow while the host theme keeps colors and outer LuCI chrome. */
+.hg-wrap > *, .hg-wrap .cbi-section, .hg-wrap .hg-section, .hg-wrap .hg-section-head,
+.hg-wrap .hg-form-fields, .hg-wrap .hg-form-row,
+.hg-wrap .hg-table-scroll-wrap, .hg-wrap .hg-log-actions, .hg-wrap .hg-button-row {
+  max-width: 100%; min-width: 0; box-sizing: border-box;
+}
+.hg-wrap .cbi-section { max-width: 100% !important; min-width: 0 !important; box-sizing: border-box !important; }
+.hg-section-head > *, .hg-form-row > *, .hg-modal-grid > *, .hg-modal-head > * { min-width: 0; }
+/* HomeGate typography: one CJK sans stack for all UI text; logs remain monospaced for diagnostics. */
+.hg-wrap, .hg-modal, .hg-plugin-header {
+  font-family: "Microsoft YaHei", "PingFang SC", "Noto Sans CJK SC", "Source Han Sans SC", sans-serif !important;
+  font-weight: 400;
+}
+.hg-wrap input, .hg-wrap select, .hg-wrap textarea, .hg-wrap button,
+.hg-modal input, .hg-modal select, .hg-modal textarea, .hg-modal button {
+  font-family: inherit !important;
+  font-weight: 400 !important;
+}
+.hg-wrap label, .hg-wrap td, .hg-wrap a, .hg-wrap .hg-muted, .hg-wrap .hg-field-note,
+.hg-modal label, .hg-modal td, .hg-modal .hg-field-note {
+  font-weight: 400 !important;
+}
+.hg-wrap h1, .hg-wrap h2, .hg-wrap h3, .hg-wrap h4,
+.hg-modal h1, .hg-modal h2, .hg-modal h3, .hg-modal h4,
+.hg-table th { font-weight: 600 !important; }
+.hg-wrap table tbody td, .hg-modal table tbody td { font-weight: 400 !important; }
+
+/* Shared plugin identity. The same title/subtitle is shown on every HomeGate page and is
+ * moved ahead of LuCI's existing tab menu without replacing or restyling the tabs. */
+.hg-plugin-header { width: 100%; max-width: 100%; min-width: 0; box-sizing: border-box; margin: 0 0 .9em 0; padding: 0; }
+.hg-plugin-header h2 { margin: 0 0 .22em 0 !important; padding: 0 !important; text-indent: 0 !important; font-size: 2em; line-height: 1.22; font-weight: 600 !important; }
+.hg-plugin-subtitle { margin: 0 !important; padding: 0 !important; color: var(--hg-text-secondary); font-size: .95em; line-height: 1.45; font-weight: 400 !important; }
+html.hg-theme-design .hg-plugin-header { margin-bottom: 1em; }
+html.hg-theme-design .hg-plugin-header h2 { font-size: 1.85rem; }
+
+.hg-section { margin-top: 1.25em; }
+/* Keep number validation and keyboard input while hiding pointer steppers. */
+.hg-wrap input[type="number"], .hg-modal input[type="number"] {
+  -moz-appearance: textfield; appearance: textfield;
+}
+.hg-wrap input[type="number"]::-webkit-inner-spin-button,
+.hg-wrap input[type="number"]::-webkit-outer-spin-button,
+.hg-modal input[type="number"]::-webkit-inner-spin-button,
+.hg-modal input[type="number"]::-webkit-outer-spin-button {
+  -webkit-appearance: none; margin: 0;
+}
+.hg-control, .hg-control[type="text"], .hg-control[type="password"], .hg-control[type="number"], select.hg-control { box-sizing: border-box; width: var(--hg-control-width); min-width: 0; min-height: var(--hg-control-height); height: var(--hg-control-height); }
+/* One-line controls own their complete content box. Host themes may set vertical padding globally;
+ * leaving that padding in place while forcing a 28px height shifts text off-centre. */
+.hg-control:not(textarea) {
+  padding-top: 0 !important; padding-bottom: 0 !important;
+  padding-left: .55em !important; padding-right: .55em !important;
+  line-height: var(--hg-control-line-height) !important; vertical-align: middle !important;
+}
+/* Textareas keep normal multi-line padding/line-height. */
+textarea.hg-control { padding: .45em .55em !important; line-height: 1.4 !important; }
+/* One select-chevron style across native selects and custom resource pickers. */
+select.hg-control {
+  -webkit-appearance: none; -moz-appearance: none; appearance: none;
+  padding-right: 2em !important;
+  background-color: var(--hg-surface);
+  background-image: linear-gradient(45deg, transparent 50%, #666 50%), linear-gradient(135deg, #666 50%, transparent 50%);
+  background-position: calc(100% - 11px) 50%, calc(100% - 7px) 50%;
+  background-size: 4px 4px, 4px 4px;
+  background-repeat: no-repeat;
+}
+textarea.hg-control { box-sizing: border-box; width: var(--hg-control-width); min-width: 0; min-height: 72px; height: 72px; }
+.hg-table { width: 100%; border-collapse: collapse; }
+.hg-table-stable { table-layout: fixed; }
+.hg-table-stable th, .hg-table-stable td { overflow-wrap: anywhere; word-break: normal; }
+/* Runtime status consumes the same foundation label/value geometry as ordinary settings. */
+.hg-status-fields { width: 100%; min-width: 0; max-width: 100%; }
+.hg-status-row {
+  display: grid; grid-template-columns: var(--hg-status-columns);
+  column-gap: var(--hg-status-column-gap); align-items: center; min-height: var(--hg-status-row-min-height);
+  margin: var(--hg-status-row-margin); padding: var(--hg-status-row-padding);
+}
+.hg-status-label { margin: 0; padding: 0; text-align: var(--hg-status-label-align); line-height: 1.25; white-space: var(--hg-status-label-wrap); font-weight: 400 !important; }
+.hg-status-value { min-width: 0; margin: 0; padding: 0; overflow-wrap: anywhere; font-weight: 400 !important; }
+.hg-table th, .hg-table td { padding: .45em .5em; text-align: left; vertical-align: middle; border: 0 !important; border-top: 0 !important; border-bottom: 0 !important; box-shadow: none !important; }
+/* Full-plugin freeze: HomeGate lists/tables use spacing and alignment, never row/header separator lines.
+ * This applies inside modals and to JS-rendered rows too. Explicit semantic dividers such as
+ * .hg-modal-footnote are separate components and remain allowed. */
+.hg-wrap .hg-table, .hg-modal .hg-table,
+.hg-wrap .hg-table thead, .hg-modal .hg-table thead,
+.hg-wrap .hg-table tbody, .hg-modal .hg-table tbody,
+.hg-wrap .hg-table tr, .hg-modal .hg-table tr,
+.hg-wrap .hg-table th, .hg-modal .hg-table th,
+.hg-wrap .hg-table td, .hg-modal .hg-table td {
+  border: 0 !important; border-top: 0 !important; border-bottom: 0 !important; box-shadow: none !important;
+}
+.hg-table th { font-weight: 600; }
+/* Shared list action-column contract. Never infer an action column from :last-child: colspan
+ * messages and future columns must not inherit action alignment by accident. */
+.hg-action-head, .hg-action-cell { box-sizing: border-box; text-align: left !important; }
+.hg-action-head { font-weight: 600 !important; }
+.hg-action-group {
+  display: flex !important; align-items: center; justify-content: flex-start !important; gap: var(--hg-action-gap);
+  white-space: nowrap; margin: 0; padding: 0;
+}
+.hg-action-group .cbi-button, .hg-action-group form { margin: 0 !important; flex: 0 0 auto; }
+.hg-action-group form { display: block; }
+.hg-table-message { text-align: center !important; white-space: normal !important; overflow: visible !important; text-overflow: clip !important; }
+/* Positional theme rules such as th:last-child/td:last-child must not win over semantic roles. */
+.hg-wrap .hg-table th.hg-action-head, .hg-modal .hg-table th.hg-action-head { text-align: left !important; }
+.hg-wrap .hg-table td.hg-action-cell, .hg-modal .hg-table td.hg-action-cell { text-align: left !important; }
+.hg-wrap .hg-table tbody td.hg-table-message, .hg-modal .hg-table tbody td.hg-table-message { text-align: center !important; }
+.hg-actions { white-space: nowrap; }
+.hg-muted { opacity: .72; }
+.hg-subtle { color: #666; opacity: 1; font-weight: 400 !important; }
+/* Notice semantics are component-owned and theme-neutral; host themes may still supply surrounding typography. */
+.hg-notice { margin: .75em 0; padding: .55em .75em; border-left: 3px solid var(--hg-notice-success-border); background: var(--hg-notice-success-bg); }
+.hg-notice-error { border-left-color: var(--hg-notice-error-border); background: var(--hg-notice-error-bg); }
+.hg-notice-pending { border-left-color: var(--hg-notice-pending-border); background: var(--hg-notice-pending-bg); }
+.hg-log { box-sizing: border-box; width: 100%; min-height: 220px; max-height: 460px; overflow: auto; white-space: pre-wrap; word-break: break-word; font-family: Consolas, "SFMono-Regular", "Noto Sans Mono CJK SC", "Microsoft YaHei", monospace !important; font-weight: 400 !important; font-size: 12px; padding: .65em; border: 1px solid #ccc; background: rgba(0,0,0,.02); }
+.hg-field-note { margin-top: .35em; max-width: 420px; opacity: .72; line-height: 1.45; }
+.hg-modal .hg-field-note { color: var(--hg-modal-note-color); opacity: var(--hg-modal-note-opacity); }
+.hg-modal-footnote { max-width: none; margin-top: var(--hg-modal-footnote-margin-top); padding-top: var(--hg-modal-footnote-padding-top); border-top: 1px solid var(--hg-modal-footnote-border-color); }
+.hg-section-head { display: flex; align-items: center; justify-content: space-between; gap: .75em; margin-bottom: .55em; }
+.hg-section-head h3 { margin: 0; }
+.hg-modal-backdrop { display: none; position: fixed; z-index: 10000; left: 0; top: 0; right: 0; bottom: 0; padding: 1em; background: rgba(0,0,0,.35); box-sizing: border-box; }
+.hg-modal-backdrop.hg-open { display: flex; align-items: center; justify-content: center; }
+/* Modal component geometry is token-driven. Known-theme adapters override values, not component structure. */
+.hg-modal { box-sizing: border-box; width: var(--hg-modal-width); max-width: var(--hg-modal-max-width); min-width: 0; padding: var(--hg-modal-padding); background: var(--hg-surface); border: var(--hg-modal-border); border-radius: var(--hg-modal-radius); box-shadow: var(--hg-modal-shadow); }
+.hg-modal-wide { width: var(--hg-modal-wide-width); }
+/* Public Service modal uses a fixed action footer. Only the form body scrolls.
+ * Keeping Cancel/Confirm outside the scroll viewport prevents scroll-bottom
+ * reflow/anchoring from making action buttons visibly jump on hover/focus. */
+.hg-public-service-modal {
+  display: flex; flex-direction: column;
+  max-height: calc(var(--hg-modal-vh, 100vh) - 2em);
+  overflow: hidden;
+}
+.hg-public-service-scroll {
+  flex: 1 1 auto; min-height: 0; min-width: 0;
+  box-sizing: border-box; padding-right: 12px;
+  overflow-y: auto; overflow-x: hidden; overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch; scrollbar-gutter: stable;
+}
+.hg-public-service-modal > .hg-public-service-footer { flex: 0 0 auto; }
+/* Footer action geometry is owned by HomeGate. Host hover/focus rules may repaint
+ * the buttons, but cannot change their outer height and trigger a visible bounce. */
+.hg-public-service-modal > .hg-public-service-footer .cbi-button,
+.hg-public-service-modal > .hg-public-service-footer .cbi-button:hover,
+.hg-public-service-modal > .hg-public-service-footer .cbi-button:focus,
+.hg-public-service-modal > .hg-public-service-footer .cbi-button:active {
+  height: var(--hg-control-height) !important;
+  min-height: var(--hg-control-height) !important;
+  max-height: var(--hg-control-height) !important;
+}
+.hg-modal-head { display: flex; align-items: center; justify-content: space-between; gap: 1em; margin-bottom: var(--hg-modal-head-margin-bottom); }
+.hg-modal-head h3 { margin: 0; line-height: var(--hg-modal-title-line-height); }
+.hg-modal-grid { display: grid; grid-template-columns: var(--hg-modal-grid-columns); row-gap: var(--hg-modal-grid-row-gap); column-gap: var(--hg-modal-grid-column-gap); align-items: start; }
+/* Modal labels align with the first 28px control only; helper text below controls never shifts the label. */
+.hg-modal-grid > label {
+  display: flex; align-items: center; justify-content: flex-end; box-sizing: border-box;
+  min-height: var(--hg-control-height); margin: 0; padding: 0; line-height: 1.2; text-align: right; white-space: nowrap; color: var(--hg-modal-label-color);
+}
+.hg-modal-grid .hg-control { width: 100%; min-width: 0; }
+.hg-modal-check { min-width: 0; display: flex; align-items: center; justify-content: flex-start; min-height: var(--hg-control-height); }
+.hg-modal-check input[type="checkbox"] { float: none !important; margin: 0 !important; }
+.hg-web-enabled-check { float: none !important; margin: 0 !important; vertical-align: middle; }
+.hg-modal-control-stack { min-width: 0; }
+/* Match the primary-domain empty-state hint; only this placeholder changes. */
+#hg-public-renew-days::placeholder { color: #9ca9b7; opacity: 1; }
+.hg-modal-control-stack .hg-control { width: 100%; }
+.hg-field-note-compact { margin-top: .3em; max-width: none; }
+.hg-modal-static { min-height: var(--hg-control-height); display: flex; align-items: center; min-width: 0; word-break: break-word; }
+.hg-log-actions, .hg-button-row { display: flex; flex-wrap: wrap; align-items: center; gap: .45em; margin-top: .55em; }
+.hg-log-actions-below { margin-top: var(--hg-log-action-gap); }
+.hg-log-actions form, .hg-button-row form { display: inline-block; margin: 0; }
+.hg-hidden-file { display: none !important; }
+.hg-public-hint { white-space: nowrap; }
+.hg-wol-custom-mac { display: none; margin-top: .45em; }
+.hg-modal-actions { display: flex; align-items: center; justify-content: flex-end; gap: var(--hg-modal-actions-gap); margin-top: var(--hg-modal-actions-margin-top); text-align: right; white-space: nowrap; }
+.hg-modal-actions .cbi-button { margin: 0 !important; }
+/* Theme-safe action geometry: HomeGate owns spacing, host themes must not inject icons/floats/hidden margins. */
+.hg-wrap .cbi-button, .hg-modal .cbi-button { float: none !important; text-indent: 0 !important; max-width: 100%; }
+.hg-wrap .cbi-button:before, .hg-wrap .cbi-button:after,
+.hg-modal .cbi-button:before, .hg-modal .cbi-button:after { content: none !important; display: none !important; }
+
+
+/* HomeGate button sizing: exactly two tiers.
+ * Chinese labels up to four characters use 68px; five-to-six-character actions use 96px.
+ * English labels may naturally expand beyond the tier width; no text is clipped. */
+.hg-wrap .cbi-button, .hg-modal .cbi-button {
+  background-image: none !important; background-position: 0 0 !important;
+  box-sizing: border-box; text-align: center; white-space: nowrap;
+  transform: none !important; translate: none !important; scale: 1 !important;
+  box-shadow: none !important;
+}
+/* Full-plugin interaction geometry guard. Some LuCI themes animate :focus/:active by
+ * scaling or translating buttons. HomeGate allows paint changes, but interaction must
+ * not make any action control physically smaller, larger or displaced. */
+.hg-wrap button.cbi-button:hover, .hg-wrap button.cbi-button:focus, .hg-wrap button.cbi-button:active,
+.hg-modal button.cbi-button:hover, .hg-modal button.cbi-button:focus, .hg-modal button.cbi-button:active,
+.hg-wrap button.cbi-button.hg-active, .hg-modal button.cbi-button.hg-active {
+  transform: none !important; translate: none !important; scale: 1 !important;
+  top: auto !important; right: auto !important; bottom: auto !important; left: auto !important;
+  box-shadow: none !important;
+}
+.hg-btn-4 {
+  width: auto !important; padding-left: 8px !important; padding-right: 8px !important;
+}
+.hg-btn-4 { min-width: var(--hg-btn-short) !important; }
+/* Chinese UI uses the active compact button width exactly; non-Chinese labels may expand naturally. */
+html:lang(zh) .hg-btn-4 { width: var(--hg-btn-short) !important; min-width: var(--hg-btn-short) !important; max-width: var(--hg-btn-short) !important; }
+/* Maintenance actions may have longer translated or fallback labels. */
+html:lang(zh) .hg-log-actions .hg-btn-4, html:lang(zh) .hg-button-row .hg-btn-4 {
+  width: auto !important; min-width: var(--hg-btn-short) !important; max-width: none !important;
+}
+.hg-wrap button.hg-btn-4, .hg-modal button.hg-btn-4 {
+  display: inline-flex !important; align-items: center; justify-content: center;
+}
+
+.hg-log-large { height: 380px; min-height: 380px; max-height: 560px; }
+.hg-file-control { padding-top: .2em !important; padding-bottom: .2em !important; }
+.hg-file-native { display: none !important; }
+.hg-file-picker { display: flex; align-items: center; gap: .55em; width: 100%; min-width: 0; }
+.hg-file-picker .cbi-button { flex: 0 0 auto; margin: 0 !important; }
+.hg-file-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; opacity: .78; }
+.hg-table-scroll-wrap { display: block; width: 100%; max-width: 100%; min-width: 0; overflow-x: auto; overflow-y: hidden; -webkit-overflow-scrolling: touch; box-sizing: border-box; }
+.hg-public-table { display: block; width: 100%; min-width: 820px; }
+.hg-public-table thead, .hg-public-table tbody { display: block; width: 100%; }
+/* Public desktop columns: Access Address owns most flexible width and contains
+ * http/https plus the stable status hint. LAN Target remains compact. */
+.hg-public-table tr {
+  display: grid;
+  grid-template-columns:
+    var(--hg-public-enabled-width)
+    minmax(var(--hg-public-address-min), 2fr)
+    minmax(var(--hg-public-target-min), .9fr)
+    var(--hg-public-actions-width);
+  column-gap: var(--hg-public-column-gap);
+  align-items: center; width: 100%; box-sizing: border-box;
+}
+/* Service List is intentionally line-free: spacing and column alignment carry the hierarchy. */
+.hg-public-table thead, .hg-public-table tbody, .hg-public-table tr,
+.hg-public-table th, .hg-public-table td {
+  border: 0 !important; border-top: 0 !important; border-bottom: 0 !important; box-shadow: none !important;
+}
+.hg-public-table th, .hg-public-table td { min-width: 0; padding: .45em 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* Desktop action contract mirrors WOL: Actions starts exactly where Edit starts.
+ * Hidden/unsupported actions are not rendered, so later buttons move forward. */
+.hg-wrap .hg-public-table th.hg-public-action-head, .hg-wrap .hg-public-table td.hg-actions { padding-left: var(--hg-public-actions-inset) !important; padding-right: 0 !important; }
+.hg-public-table td.hg-actions { overflow: visible; text-overflow: clip; }
+.hg-public-table td.hg-action-group { gap: 4px; }
+/* Never ellipsize a public address. Very long hostnames and the parenthesized
+ * status hint wrap naturally while remaining fully readable. */
+.hg-public-table .hg-public-address {
+  white-space: normal !important; overflow: visible !important; text-overflow: clip !important;
+  overflow-wrap: anywhere; word-break: break-word; line-height: 1.35;
+}
+.hg-public-table td[colspan] { grid-column: 1 / -1; }
+/* HomeGate form rows: one shared semantic label/control contract across every page. */
+.hg-form-fields { min-width: 0; max-width: 100%; }
+.hg-form-row {
+  display: grid;
+  grid-template-columns: var(--hg-form-columns);
+  column-gap: var(--hg-form-column-gap);
+  align-items: center;
+  min-height: var(--hg-form-row-min-height);
+  margin: var(--hg-form-row-margin);
+  padding: var(--hg-form-row-padding);
+}
+.hg-form-label {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+  text-align: var(--hg-form-label-align);
+  line-height: 1.25;
+  white-space: var(--hg-form-label-wrap);
+  font-weight: 400 !important;
+}
+.hg-form-field { min-width: 0; margin: 0; padding: 0; }
+.hg-form-field > input[type="checkbox"] { float: none !important; margin: 0 !important; }
+.hg-form-field .hg-control { width: min(100%, var(--hg-form-control-max)); max-width: 100%; }
+.hg-inline-status-control { display: flex; align-items: center; gap: 10px; min-height: 30px; white-space: nowrap; }
+
+.hg-access-modal { width: var(--hg-modal-access-width); }
+/* Access modal owns one content edge. Header, table and footer inherit the modal padding directly;
+ * none of them may introduce a second horizontal inset. The title is deliberately not an h3 so
+ * host LuCI heading rules cannot re-indent it. */
+.hg-access-modal > .hg-access-toolbar,
+.hg-access-modal > .hg-access-table-wrap,
+.hg-access-modal > .hg-access-footer {
+  box-sizing: border-box; width: 100%; max-width: 100%;
+  margin-left: 0 !important; margin-right: 0 !important;
+  padding-left: 0 !important; padding-right: 0 !important;
+}
+.hg-access-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 1em; }
+.hg-access-title { margin: 0 !important; padding: 0 !important; border: 0 !important; text-indent: 0 !important; position: static !important; transform: none !important; line-height: var(--hg-modal-title-line-height); font-size: 1.17em; font-weight: 600 !important; }
+.hg-access-toolbar-actions { display: flex; align-items: center; justify-content: flex-end; gap: .45em; flex: 0 0 auto; margin: 0 !important; padding: 0 !important; }
+.hg-access-add-rule { display: flex; align-items: center; flex-wrap: nowrap; gap: .45em; margin: 0 0 .7em; min-width: 0; width: 100%; max-width: 100%; }
+.hg-access-add-rule .hg-control { flex: 1 1 auto; width: auto; min-width: 0; }
+.hg-access-add-rule .hg-access-rule-kind { flex: 0 0 110px !important; width: 110px !important; max-width: 110px !important; }
+.hg-access-table-wrap { overflow-x: hidden; box-sizing: border-box; }
+.hg-access-table-scroll { max-height: 306px; overflow-x: hidden; overflow-y: auto; }
+.hg-access-table-scroll .hg-access-table thead th { position: sticky; top: 0; z-index: 1; background: var(--hg-surface); }
+.hg-access-table { width: 100%; max-width: 100%; min-width: 0; margin: 0 !important; table-layout: fixed; }
+.hg-access-table th, .hg-access-table td { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-weight: 400 !important; }
+.hg-access-table th:first-child, .hg-access-table td:first-child { padding-left: 0 !important; }
+.hg-modal .hg-access-table th.hg-access-action-head, .hg-modal .hg-access-table td.hg-access-action { padding-left: 0 !important; padding-right: 0 !important; }
+.hg-access-table th { font-weight: 600 !important; }
+.hg-access-table .hg-access-source, .hg-access-table .hg-access-time { font-family: inherit !important; }
+.hg-access-table .hg-access-action { overflow: visible; text-overflow: clip; white-space: nowrap; text-align: left !important; }
+.hg-access-action-group { width: 100%; max-width: 100%; }
+.hg-access-actions-col { width: var(--hg-access-actions-width); }
+.hg-access-footer { justify-content: flex-end; }
+.hg-wol-table { table-layout: fixed; min-width: 720px; }
+.hg-wol-table thead, .hg-wol-table tbody, .hg-wol-table tr,
+.hg-wol-table th, .hg-wol-table td {
+  border: 0 !important; border-top: 0 !important; border-bottom: 0 !important; box-shadow: none !important;
+}
+.hg-wol-table td { font-weight: 400 !important; }
+/* WOL action contract: header starts exactly where Edit starts; the three actions have room to breathe. */
+.hg-wrap .hg-wol-table th.hg-wol-action-head, .hg-wrap .hg-wol-table td.hg-actions { padding-left: 0 !important; padding-right: 0 !important; }
+.hg-wol-table td.hg-actions { overflow: visible; text-align: left; }
+.hg-wol-actions-head, .hg-wol-actions-group { box-sizing: border-box; width: 100%; margin: 0; }
+.hg-wol-actions-head { text-align: left; }
+.hg-wol-actions-group { gap: 18px; }
+
+/* Known-theme adapter: Design. This block preserves the frozen Design regression surface only.
+ * The generic foundation remains the default for every other LuCI theme. */
+html.hg-theme-design .hg-wrap, html.hg-theme-design .hg-modal {
+  --hg-control-height: 38px;
+  --hg-control-line-height: 36px;
+  --hg-form-columns: minmax(220px, 34%) minmax(0, 1fr);
+  --hg-form-column-gap: 18px;
+  --hg-form-row-min-height: 52px;
+  --hg-form-row-margin: 0;
+  --hg-form-row-padding: 9px 0;
+  --hg-form-label-align: left;
+  --hg-form-label-wrap: normal;
+  --hg-form-control-max: 560px;
+  --hg-status-columns: minmax(220px, 34%) minmax(0, 1fr);
+  --hg-status-column-gap: 18px;
+  --hg-status-row-min-height: 52px;
+  --hg-status-row-margin: 0;
+  --hg-status-row-padding: 9px 0;
+  --hg-status-label-align: left;
+  --hg-status-label-wrap: normal;
+  --hg-modal-width: 560px;
+  --hg-modal-wide-width: min(980px, calc(100vw - 48px));
+  --hg-modal-access-width: min(980px, calc(100vw - 48px));
+  --hg-modal-max-width: calc(100vw - 48px);
+  --hg-modal-padding: 18px 20px 16px;
+  --hg-modal-radius: 10px;
+  --hg-modal-border: 1px solid rgba(127,127,127,.16);
+  --hg-modal-shadow: 0 10px 32px rgba(0,0,0,.20);
+  --hg-modal-head-margin-bottom: 14px;
+  --hg-modal-title-line-height: 1.3;
+  --hg-modal-grid-columns: 132px minmax(0, 1fr);
+  --hg-modal-grid-column-gap: 16px;
+  --hg-modal-grid-row-gap: 10px;
+  --hg-modal-label-color: var(--hg-text-secondary);
+  --hg-modal-mobile-label-color: inherit;
+  --hg-modal-note-color: var(--text-color-secondary, #777);
+  --hg-modal-note-opacity: 1;
+  --hg-modal-footnote-margin-top: 14px;
+  --hg-modal-footnote-padding-top: 12px;
+  --hg-modal-footnote-border-color: rgba(127,127,127,.16);
+  --hg-modal-actions-gap: 8px;
+  --hg-modal-actions-margin-top: 14px;
+  --hg-modal-mobile-radius: 8px;
+
+}
+html.hg-theme-design .hg-wrap { padding-bottom: 18px; }
+html.hg-theme-design .hg-wrap .hg-section {
+  background: var(--hg-surface);
+  border-radius: 8px;
+  padding: 14px 16px;
+  margin-top: 12px;
+  margin-bottom: 0;
+}
+html.hg-theme-design .hg-wrap .hg-section > h3,
+html.hg-theme-design .hg-wrap .hg-section-head h3 {
+  margin-top: 0 !important; margin-left: 0 !important;
+  padding-left: 0 !important; text-indent: 0 !important;
+}
+
+/* Design native-style setting rows: geometry is expressed through foundation tokens above.
+ * Only genuinely Design-specific surface/flow behavior remains in the adapter. */
+html.hg-theme-design .hg-form-fields { width: 100%; max-width: 100%; }
+html.hg-theme-design .hg-form-row { border: 0 !important; }
+html.hg-theme-design .hg-form-row + .hg-form-row { margin-top: 2px; }
+html.hg-theme-design .hg-form-field { width: 100%; min-width: 0; }
+html.hg-theme-design .hg-form-field > .cbi-button,
+html.hg-theme-design .hg-form-field > form,
+html.hg-theme-design .hg-form-field > .hg-inline-status-control { justify-self: start; }
+
+/* Design's frozen 38px controls, 34/66 row split and runtime-row rhythm now consume
+ * the same semantic foundation tokens as BOOT and unknown LuCI themes. */
+html.hg-theme-design .hg-status-value { width: 100%; min-width: 0; }
+/* Keep the maintenance log and its immediate controls on one Design surface. */
+html.hg-theme-design .hg-maintenance-log-card {
+  background: var(--hg-surface);
+  border-radius: 8px;
+  padding: 14px 16px;
+  margin-top: 12px;
+  box-sizing: border-box;
+}
+html.hg-theme-design .hg-maintenance-log-card .hg-section {
+  background: transparent; border-radius: 0; padding: 0; margin: 0;
+}
+html.hg-theme-design .hg-maintenance-log-card .hg-log-actions { margin-top: var(--hg-log-action-gap); }
+
+/* Design page actions stay on a white footer surface instead of floating on the grey canvas. */
+
+/* Design modal adapter is data-only: the token block above carries the frozen 560px/10px/spacing visual values. */
+
+/* Generic host-theme interference protection: constrain HomeGate geometry only. */
+.hg-section-head .cbi-button, .hg-log-actions .cbi-button, .hg-button-row .cbi-button { flex: 0 0 auto; margin-left: 0 !important; margin-right: 0 !important; }
+
+/* Known-theme adapter: BOOT desktop. The 16px edge inset is a frozen regression contract,
+ * not a generic-theme assumption. */
+@media (min-width: 701px) {
+  html.hg-theme-boot .hg-wrap .hg-section-head { padding-right: 16px; }
+  html.hg-theme-boot .hg-wrap .hg-table-scroll-wrap { padding-right: 16px; }
+
+
+  /* Desktop page-action sizing is frozen independently of mobile Design. */
+
+
+
+
+
+
+}
+.hg-wrap table { box-sizing: border-box; }
+.hg-wrap input, .hg-wrap select, .hg-wrap textarea, .hg-modal input, .hg-modal select, .hg-modal textarea {
+  max-width: 100% !important; min-width: 0 !important; box-sizing: border-box !important;
+}
+
+@media (max-width: 700px) {
+  /* Mobile contract is plugin-wide: HomeGate must never require horizontal scrolling.
+   * Lists become stacked details; ordinary key/value and label/control pairs stay on one row
+   * whenever the available width is sufficient, then wrap only at genuinely narrow widths. */
+  .hg-wrap { width: 100% !important; max-width: 100% !important; min-width: 0; overflow-x: hidden !important; }
+  .hg-plugin-header { margin-left: 0 !important; width: 100% !important; max-width: 100% !important; }
+  .hg-plugin-header h2, .hg-plugin-subtitle { box-sizing: border-box; padding-left: var(--hg-plugin-offset, 0px) !important; padding-right: 0 !important; }
+  .hg-wrap .cbi-section, .hg-wrap .hg-section { width: 100%; max-width: 100% !important; min-width: 0 !important; margin-left: 0 !important; margin-right: 0 !important; }
+  .hg-section-head { width: 100%; display: grid; grid-template-columns: minmax(0, 1fr) auto; column-gap: .75em; align-items: center; }
+  .hg-section-head h3 { min-width: 0; overflow-wrap: anywhere; }
+
+  /* LuCI-like adaptive mobile rows. 36/64 keeps short labels and values/controls together.
+   * The ultra-narrow fallback below is the only place ordinary rows become one column. */
+  html.hg-theme-foundation .hg-form-row {
+    grid-template-columns: var(--hg-mobile-pair-columns);
+    column-gap: var(--hg-mobile-gap); row-gap: .15em; align-items: center;
+    min-height: 40px; margin: 0 0 .25em 0; padding: .3em 0; border: 0 !important;
+  }
+  html.hg-theme-foundation .hg-form-label {
+    text-align: left; padding: 0; white-space: normal; overflow-wrap: anywhere;
+  }
+  .hg-form-field { width: 100%; min-width: 0; }
+  html.hg-theme-foundation .hg-form-field .hg-control,
+  .hg-control, .hg-control[type="text"], .hg-control[type="password"], .hg-control[type="number"],
+  select.hg-control, textarea.hg-control {
+    width: 100%; max-width: 100%; min-width: 0; margin-left: 0 !important; margin-right: 0 !important;
+  }
+  .hg-form-field > input[type="checkbox"] { justify-self: start; }
+  /* Stacked mobile tables are grid rows. Keep native checkboxes at the start of the value column;
+   * some host themes otherwise auto-center standalone checkbox inputs inside table cells. */
+  .hg-public-table td > input[type="checkbox"],
+  .hg-wol-table td > input[type="checkbox"],
+  .hg-access-table td > input[type="checkbox"] {
+    justify-self: start !important; align-self: center; float: none !important;
+    margin-left: 0 !important; margin-right: 0 !important;
+  }
+  .hg-inline-status-control { min-width: 0; max-width: 100%; flex-wrap: wrap; white-space: normal; gap: 8px; }
+  .hg-inline-status-control .hg-subtle { min-width: 0; overflow-wrap: anywhere; }
+
+  /* Runtime status mirrors the QWRT system-status rhythm without row separators. */
+  html.hg-theme-foundation .hg-status-row {
+    grid-template-columns: var(--hg-mobile-pair-columns);
+    column-gap: var(--hg-mobile-gap); row-gap: .15em; align-items: start;
+    min-height: 0; margin: 0; padding: .35em 0;
+  }
+  html.hg-theme-foundation .hg-status-label { text-align: left; white-space: normal; overflow-wrap: anywhere; }
+  .hg-status-value { min-width: 0; overflow-wrap: anywhere; word-break: break-word; }
+
+  /* There is no horizontal-scroll exception on mobile. Every HomeGate table/list is adapted. */
+  .hg-table-scroll-wrap, .hg-access-table-wrap {
+    display: block; width: 100%; max-width: 100%; min-width: 0;
+    overflow-x: hidden !important; overflow-y: visible; box-sizing: border-box;
+  }
+  .hg-table-stable, .hg-public-table, .hg-wol-table, .hg-access-table { width: 100%; min-width: 0 !important; max-width: 100%; }
+
+  /* Shared stacked-detail table contract for Public Services, WOL Hosts and Recent Access. */
+  .hg-public-table, .hg-wol-table, .hg-access-table { display: block; table-layout: auto; }
+  .hg-public-table thead, .hg-wol-table thead, .hg-access-table thead { display: none; }
+  .hg-public-table tbody, .hg-wol-table tbody, .hg-access-table tbody { display: block; width: 100%; }
+  .hg-public-table tr, .hg-wol-table tr, .hg-access-table tr {
+    display: block; width: 100%; max-width: 100%; min-width: 0; padding: var(--hg-detail-item-padding); box-sizing: border-box;
+  }
+  .hg-public-table tr + tr, .hg-wol-table tr + tr, .hg-access-table tr + tr { margin-top: var(--hg-detail-item-gap); }
+  .hg-public-table td, .hg-wol-table td, .hg-access-table td {
+    display: grid; grid-template-columns: var(--hg-detail-columns); column-gap: var(--hg-detail-gap);
+    width: 100%; min-width: 0; max-width: 100%; padding: var(--hg-detail-row-padding) !important;
+    white-space: normal !important; overflow: visible !important; text-overflow: clip !important;
+    overflow-wrap: anywhere; word-break: break-word; box-sizing: border-box; border: 0 !important;
+  }
+  .hg-public-table td:before, .hg-wol-table td:before, .hg-access-table td:before {
+    content: attr(data-label); min-width: 0; font-weight: 400 !important; white-space: normal; overflow-wrap: anywhere;
+  }
+  .hg-public-table td[colspan], .hg-wol-table td[colspan], .hg-access-table td[colspan] { display: block; }
+  .hg-public-table td[colspan]:before, .hg-wol-table td[colspan]:before, .hg-access-table td[colspan]:before { content: none; }
+  .hg-public-list-wrap { overflow-x: hidden !important; }
+
+  .hg-public-table td.hg-actions,
+  .hg-wol-table td.hg-actions,
+  .hg-access-table td.hg-access-action {
+    display: flex !important; flex-wrap: wrap; align-items: center; justify-content: flex-start;
+    gap: var(--hg-detail-action-gap); width: 100%; min-width: 0; white-space: normal !important;
+  }
+  .hg-public-table td.hg-actions { padding-left: 0; }
+  .hg-public-table td.hg-actions:before,
+  .hg-wol-table td.hg-actions:before,
+  .hg-access-table td.hg-access-action:before { content: attr(data-label); flex: 0 0 100%; width: 100%; }
+  .hg-public-table td.hg-actions .cbi-button,
+  .hg-wol-table td.hg-actions .cbi-button,
+  .hg-access-table td.hg-access-action .cbi-button { flex: 0 0 auto; }
+  .hg-access-action-group { flex: 0 0 100%; width: 100%; max-width: 100%; }
+  .hg-wol-actions-group { width: 100%; max-width: 100%; display: flex; flex-wrap: wrap; gap: var(--hg-detail-action-gap); white-space: normal; }
+  .hg-wol-actions-group form { max-width: 100%; }
+
+  /* Mobile Access uses one vertical scroller only: the modal itself.  Keeping a second scroll
+   * viewport around Recent Access traps the gesture and prevents the user from naturally reaching
+   * the modal footer/Close button after a long list. Desktop keeps the bounded table viewport. */
+  .hg-access-table-scroll {
+    max-width: 100%; max-height: none !important;
+    overflow: visible !important;
+    -webkit-overflow-scrolling: auto;
+  }
+  .hg-access-table-scroll .hg-access-table thead th { position: static; }
+  .hg-access-source { word-break: break-all; }
+
+  .hg-access-toolbar { padding-left: 0; padding-right: 0; flex-wrap: wrap; }
+  .hg-access-toolbar-actions { margin-left: auto; }
+  .hg-access-add-rule { width: 100%; margin-left: 0; margin-right: 0; flex-wrap: wrap; }
+  .hg-access-add-rule .hg-control { flex: 1 1 100%; width: 100%; }
+  .hg-access-add-rule .hg-access-rule-kind { flex: 0 0 100% !important; width: 100% !important; max-width: 100% !important; }
+
+  /* Modals follow visualViewport and contain their own vertical overflow only. */
+  .hg-modal-backdrop { left: var(--hg-modal-vv-left, 0px); top: var(--hg-modal-vv-top, 0px); right: auto; bottom: auto; width: var(--hg-modal-vv-width, 100vw); height: var(--hg-modal-vh, 100vh); padding: 8px; overflow: hidden; }
+  html.hg-theme-foundation .hg-modal {
+    width: 100%; max-width: 100%; max-height: calc(var(--hg-modal-vh, 100vh) - 16px);
+    padding: 1em; border-radius: var(--hg-modal-mobile-radius);
+    overflow-y: auto; overflow-x: hidden; overscroll-behavior: contain; -webkit-overflow-scrolling: touch;
+  }
+  html.hg-theme-foundation .hg-modal.hg-public-service-modal {
+    display: flex; flex-direction: column; overflow: hidden;
+  }
+  html.hg-theme-foundation .hg-public-service-modal > .hg-public-service-scroll {
+    min-height: 0; overflow-y: auto; overflow-x: hidden; overscroll-behavior: contain;
+    -webkit-overflow-scrolling: touch; scrollbar-gutter: stable;
+  }
+  html.hg-theme-foundation .hg-modal-grid { grid-template-columns: 1fr; gap: .3em; }
+  html.hg-theme-foundation .hg-modal-grid > label { display: block; min-height: 0; text-align: left; margin-top: .4em; padding: 0; line-height: normal; color: var(--hg-modal-mobile-label-color); }
+  .hg-modal-actions { white-space: normal; flex-wrap: wrap; }
+  .hg-public-hint { white-space: normal; }
+
+  /* BOOT phone keeps the accepted full-width segmented page-action bar. */
+
+
+
+  /* Design phone: HomeGate controls only placement/containment. Button width, height,
+   * padding, radius and colors are left to Design's native cbi-button classes. */
+
+
+  .hg-log-event > summary { grid-template-columns:58px 72px minmax(0,1fr); gap:.35em; }
+  .hg-log-event-detail { margin-left:0; }
+  .hg-log-actions, .hg-button-row { width: 100%; max-width: 100%; min-width: 0; }
+  .hg-log-actions form, .hg-button-row form { max-width: 100%; }
+  .hg-log-large { height: 340px; min-height: 340px; }
+}
+
+/* If a theme narrows the content pane while the browser viewport remains wide, follow the pane width too. */
+@container (max-width: 700px) {
+  html.hg-theme-foundation .hg-form-row {
+    grid-template-columns: var(--hg-mobile-pair-columns);
+    column-gap: var(--hg-mobile-gap); row-gap: .15em; align-items: center; min-height: 40px; padding: .3em 0; border: 0 !important;
+  }
+  html.hg-theme-foundation .hg-form-label { text-align: left; padding: 0; white-space: normal; overflow-wrap: anywhere; }
+  html.hg-theme-foundation .hg-status-row {
+    grid-template-columns: var(--hg-mobile-pair-columns); column-gap: var(--hg-mobile-gap); row-gap: .15em; padding: .35em 0; min-height: 0;
+  }
+  html.hg-theme-foundation .hg-status-label { text-align: left; white-space: normal; overflow-wrap: anywhere; }
+  .hg-form-field, html.hg-theme-foundation .hg-form-field .hg-control,
+  .hg-control, .hg-control[type="text"], .hg-control[type="password"], .hg-control[type="number"], select.hg-control, textarea.hg-control {
+    width: 100%; max-width: 100%; min-width: 0;
+  }
+  .hg-table-scroll-wrap, .hg-access-table-wrap { width: 100%; max-width: 100%; min-width: 0; overflow-x: hidden !important; }
+  .hg-table-stable, .hg-public-table, .hg-wol-table, .hg-access-table { width: 100%; min-width: 0 !important; max-width: 100%; }
+  .hg-public-table, .hg-wol-table, .hg-access-table { display: block; table-layout: auto; }
+  .hg-public-table thead, .hg-wol-table thead, .hg-access-table thead { display: none; }
+  .hg-public-table tbody, .hg-wol-table tbody, .hg-access-table tbody { display: block; width: 100%; }
+  .hg-public-table tr, .hg-wol-table tr, .hg-access-table tr { display: block; width: 100%; min-width: 0; padding: var(--hg-detail-item-padding); }
+  .hg-public-table td, .hg-wol-table td, .hg-access-table td {
+    display: grid; grid-template-columns: var(--hg-detail-columns); column-gap: var(--hg-detail-gap);
+    width: 100%; min-width: 0; padding: var(--hg-detail-row-padding) !important; white-space: normal !important; overflow: visible !important;
+    text-overflow: clip !important; overflow-wrap: anywhere; word-break: break-word; border: 0 !important; box-sizing: border-box;
+  }
+  .hg-public-table td:before, .hg-wol-table td:before, .hg-access-table td:before { content: attr(data-label); white-space: normal; font-weight: 400 !important; }
+  .hg-public-table td[colspan], .hg-wol-table td[colspan], .hg-access-table td[colspan] { display: block; }
+  .hg-public-table td[colspan]:before, .hg-wol-table td[colspan]:before, .hg-access-table td[colspan]:before { content: none; }
+  .hg-public-table td.hg-actions, .hg-wol-table td.hg-actions, .hg-access-table td.hg-access-action { display: flex !important; flex-wrap: wrap; gap: var(--hg-detail-action-gap); }
+  .hg-public-table td.hg-actions { padding-left: 0; }
+  .hg-public-table td.hg-actions:before, .hg-wol-table td.hg-actions:before, .hg-access-table td.hg-access-action:before { content: attr(data-label); flex: 0 0 100%; width: 100%; }
+  .hg-access-action-group { flex: 0 0 100%; width: 100%; max-width: 100%; }
+  .hg-wol-actions-group { flex-wrap: wrap; gap: var(--hg-detail-action-gap); white-space: normal; }
+}
+
+@media (max-width: 320px) {
+  html.hg-theme-foundation .hg-form-row,
+  html.hg-theme-foundation .hg-status-row,
+  .hg-public-table td, .hg-wol-table td, .hg-access-table td { grid-template-columns: 1fr; row-gap: .12em; }
+  .hg-modal-backdrop { padding: 6px; }
+  .hg-modal { max-height: calc(var(--hg-modal-vh, 100vh) - 12px); padding: .8em; }
+}
+</style>
+<div class="hg-plugin-header" id="hg-plugin-header">
+  <h2><%:HomeGate%></h2>
+  <p class="hg-plugin-subtitle"><%:Home public access, dynamic DNS, HTTPS reverse proxy and Wake-on-LAN service.%></p>
+</div>
+<script type="text/javascript">
+function hgText(id, value) {
+  var e = document.getElementById(id);
+  if (e) e.textContent = (value === undefined || value === null || value === '') ? '-' : String(value);
+}
+function hgLabel(id) {
+  var e = document.getElementById(id);
+  return e ? e.textContent : '';
+}
+function hgClearNode(nodeOrId) {
+  var e = typeof nodeOrId === 'string' ? document.getElementById(nodeOrId) : nodeOrId;
+  if (!e) return null;
+  while (e.firstChild) e.removeChild(e.firstChild);
+  return e;
+}
+function hgAppendHidden(parent, name, value) {
+  if (!parent) return null;
+  var e = document.createElement('input');
+  e.type = 'hidden';
+  e.name = name;
+  e.value = value === undefined || value === null ? '' : String(value);
+  parent.appendChild(e);
+  return e;
+}
+function hgCreatePostForm(action, token, fields, className) {
+  var form = document.createElement('form');
+  form.method = 'post';
+  form.action = action;
+  if (className) form.className = className;
+  hgAppendHidden(form, 'token', token || '');
+  fields = fields || {};
+  for (var k in fields) {
+    if (Object.prototype.hasOwnProperty.call(fields, k)) hgAppendHidden(form, k, fields[k]);
+  }
+  return form;
+}
+function hgSubmitPost(action, token, fields) {
+  var form = hgCreatePostForm(action, token, fields);
+  form.style.display = 'none';
+  document.body.appendChild(form);
+  form.submit();
+  return form;
+}
+function hgCreateButton(text, className, onClick, options) {
+  var button = document.createElement('button');
+  options = options || {};
+  button.type = options.type || 'button';
+  button.className = className || 'cbi-button hg-btn-4';
+  button.textContent = text === undefined || text === null ? '' : String(text);
+  if (typeof onClick === 'function') button.onclick = onClick;
+  if (options.disabled) button.disabled = true;
+  if (options.title) button.title = String(options.title);
+  return button;
+}
+function hgAppendTableCell(row, text, label, className) {
+  if (!row) return null;
+  var cell = document.createElement('td');
+  if (className) cell.className = className;
+  if (text !== undefined && text !== null) cell.textContent = String(text);
+  if (label) cell.setAttribute('data-label', String(label));
+  row.appendChild(cell);
+  return cell;
+}
+function hgTableMessage(bodyOrId, colSpan, text, className) {
+  var body = hgClearNode(bodyOrId);
+  if (!body) return null;
+  var row = document.createElement('tr');
+  var extra = className ? String(className) : '';
+  var cell = hgAppendTableCell(row, text, '', 'hg-table-message' + (extra ? ' ' + extra : ''));
+  cell.colSpan = colSpan;
+  body.appendChild(row);
+  return row;
+}
+function hgSetModalOpen(id, open) {
+  var modal = document.getElementById(id);
+  if (!modal) return false;
+  modal._hgModalEpoch = (modal._hgModalEpoch || 0) + 1;
+  if (modal.classList) {
+    if (open) modal.classList.add('hg-open');
+    else modal.classList.remove('hg-open');
+  } else {
+    modal.className = open ? 'hg-modal-backdrop hg-open' : 'hg-modal-backdrop';
+  }
+  modal.setAttribute('aria-hidden', open ? 'false' : 'true');
+  if (open) hgSyncModalViewport(modal);
+  return true;
+}
+function hgModalBackdrop(event) {
+  var e = event || window.event;
+  var modal = e && (e.currentTarget || e.target);
+  if (e && modal && e.target === modal && modal.id) hgSetModalOpen(modal.id, false);
+}
+function hgLoadText(url, targetId) {
+  var target = document.getElementById(targetId);
+  if (!target) return;
+  var request = target._hgTextRequest = (target._hgTextRequest || 0) + 1;
+  XHR.get(url, null, function(xhr) {
+    var e = document.getElementById(targetId);
+    if (e === target && target._hgTextRequest === request) e.textContent = xhr.responseText || '';
+  });
+}
+function hgGet(url, cb) {
+  XHR.get(url, null, function(xhr, data) {
+    if (!data) {
+      try { data = JSON.parse(xhr.responseText || '{}'); }
+      catch (e) { data = {ok:false, error:'invalid JSON'}; }
+    }
+    cb(data, xhr);
+  });
+}
+function hgSetPending(id, dirty) {
+  var e = document.getElementById(id);
+  if (e) e.style.display = dirty ? 'block' : 'none';
+}
+function hgFormSnapshot(formId) {
+  var form = document.getElementById(formId), out = [];
+  if (!form || !form.elements) return '';
+  for (var i = 0; i < form.elements.length; i++) {
+    var e = form.elements[i];
+    if (!e || !e.name || e.name === 'token' || e.name === 'mode' || e.disabled) continue;
+    var type = String(e.type || '').toLowerCase();
+    if (type === 'submit' || type === 'button' || type === 'reset' || type === 'file') continue;
+    var v = '';
+    if (type === 'checkbox' || type === 'radio') v = e.checked ? String(e.value || '1') : '';
+    else v = String(e.value === undefined || e.value === null ? '' : e.value);
+    out.push(JSON.stringify([String(e.name), v]));
+  }
+  out.sort();
+  return out.join('\n');
+}
+function hgFormDirtyTracker(formId, pendingId) {
+  var form = document.getElementById(formId), saved = '';
+  function current() { return hgFormSnapshot(formId); }
+  function recompute() { var dirty = current() !== saved; hgSetPending(pendingId, dirty); return dirty; }
+  function capture() { saved = current(); hgSetPending(pendingId, false); }
+  if (form && form.elements) {
+    for (var i = 0; i < form.elements.length; i++) {
+      var e = form.elements[i];
+      if (!e || typeof e.addEventListener !== 'function') continue;
+      e.addEventListener('input', recompute);
+      e.addEventListener('change', recompute);
+    }
+  }
+  capture();
+  return { capture: capture, recompute: recompute, current: current, saved: function(){ return saved; } };
+}
+function hgNarrowViewport() {
+  return (window.innerWidth || document.documentElement.clientWidth || 0) <= 700;
+}
+function hgModalNeedsPortal(modal) {
+  if (hgNarrowViewport()) return true;
+  if (!window.getComputedStyle) return false;
+  var p = modal ? modal.parentNode : null;
+  while (p && p !== document.body && p !== document.documentElement) {
+    var cs = window.getComputedStyle(p), contain = String(cs.contain || '');
+    if ((cs.transform && cs.transform !== 'none') || (cs.perspective && cs.perspective !== 'none') || (cs.filter && cs.filter !== 'none') || /paint|layout|strict|content/.test(contain)) return true;
+    p = p.parentNode;
+  }
+  return false;
+}
+function hgSyncModalViewport(modal) {
+  if (!modal) return;
+  if (hgModalNeedsPortal(modal) && modal.parentNode !== document.body) document.body.appendChild(modal);
+  if (!hgNarrowViewport()) {
+    modal.style.removeProperty('--hg-modal-vv-top');
+    modal.style.removeProperty('--hg-modal-vv-left');
+    modal.style.removeProperty('--hg-modal-vv-width');
+    modal.style.removeProperty('--hg-modal-vh');
+    return;
+  }
+  var vv = window.visualViewport || null;
+  var top = vv ? (vv.offsetTop || 0) : 0, left = vv ? (vv.offsetLeft || 0) : 0;
+  var width = (vv && vv.width) || window.innerWidth || document.documentElement.clientWidth || 320;
+  var height = (vv && vv.height) || window.innerHeight || document.documentElement.clientHeight || 640;
+  modal.style.setProperty('--hg-modal-vv-top', Math.round(top) + 'px');
+  modal.style.setProperty('--hg-modal-vv-left', Math.round(left) + 'px');
+  modal.style.setProperty('--hg-modal-vv-width', Math.max(240, Math.floor(width)) + 'px');
+  modal.style.setProperty('--hg-modal-vh', Math.max(180, Math.floor(height)) + 'px');
+}
+function hgSyncOpenModals() {
+  var list = document.querySelectorAll('.hg-modal-backdrop.hg-open');
+  for (var i = 0; i < list.length; i++) hgSyncModalViewport(list[i]);
+}
+(function() {
+  var syncPending = false;
+  function syncSoon() {
+    if (syncPending) return;
+    syncPending = true;
+    window.setTimeout(function() { syncPending = false; hgSyncOpenModals(); }, 0);
+  }
+  if (window.MutationObserver && document.body) {
+    var obs = new MutationObserver(function(changes) {
+      for (var i = 0; i < changes.length; i++) {
+        var t = changes[i].target;
+        if (changes[i].type === 'childList' || (changes[i].type === 'attributes' && t && t.className && String(t.className).indexOf('hg-modal-backdrop') >= 0)) { syncSoon(); break; }
+      }
+    });
+    obs.observe(document.body, {subtree:true, childList:true, attributes:true, attributeFilter:['class']});
+  }
+  window.addEventListener('resize', syncSoon);
+  if (window.visualViewport) {
+    window.visualViewport.addEventListener('resize', syncSoon);
+    window.visualViewport.addEventListener('scroll', syncSoon);
+  }
+})();
+function hgPlacePluginHeader() {
+  var head=document.getElementById('hg-plugin-header');
+  if(!head)return;
+  var tabs=document.querySelector('.cbi-tabmenu, ul.tabs');
+  if(!tabs||!tabs.parentNode)return;
+  if(tabs!==head.nextSibling)tabs.parentNode.insertBefore(head,tabs);
+
+  /* Align the plugin title text with the first visible LuCI tab label, not merely the
+   * tab container edge. BOOT and Design use different tab padding, so measure it. */
+  var first=tabs.querySelector('a')||tabs.querySelector('li');
+  if(first&&first.getBoundingClientRect&&tabs.parentNode.getBoundingClientRect&&window.getComputedStyle){
+    var fr=first.getBoundingClientRect(), pr=tabs.parentNode.getBoundingClientRect();
+    var cs=window.getComputedStyle(first), pad=parseFloat(cs.paddingLeft||'0')||0;
+    var offset=Math.max(0, Math.round(fr.left + pad - pr.left));
+    head.style.setProperty('--hg-plugin-offset', offset ? offset+'px' : '0px');
+    head.style.marginLeft=offset ? offset+'px' : '0';
+    head.style.width=offset ? 'calc(100% - '+offset+'px)' : '100%';
+  }
+}
+hgPlacePluginHeader();
+if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',hgPlacePluginHeader);
+else window.setTimeout(hgPlacePluginHeader,0);
+window.addEventListener('load',hgPlacePluginHeader);
+window.setTimeout(hgPlacePluginHeader,80);
+window.setTimeout(hgPlacePluginHeader,300);
+function hgApplyThemeClass() {
+  var links = document.getElementsByTagName('link'), adapter = '';
+  for (var i = 0; i < links.length; i++) {
+    var href = String(links[i].getAttribute('href') || '').toLowerCase();
+    if (href.indexOf('/luci-static/design/') >= 0) { adapter = 'design'; break; }
+    if (!adapter && (href.indexOf('/luci-static/bootstrap/') >= 0 || href.indexOf('/luci-static/bootstrap-dark/') >= 0)) adapter = 'boot';
+  }
+  var root = document.documentElement, classes = ['hg-theme-foundation', adapter ? 'hg-theme-' + adapter : 'hg-theme-generic'];
+  for (var c = 0; c < classes.length; c++) {
+    var cls = classes[c];
+    if (root && (' ' + root.className + ' ').indexOf(' ' + cls + ' ') < 0) root.className += (root.className ? ' ' : '') + cls;
+  }
+  if (root) root.setAttribute('data-hg-theme-adapter', adapter || 'generic');
+}
+hgApplyThemeClass();
+function hgConsumeFlashQuery() {
+  if (!window.history || typeof window.history.replaceState !== 'function') return;
+  var href = window.location.href, hash = '', hashAt = href.indexOf('#');
+  if (hashAt >= 0) { hash = href.substring(hashAt); href = href.substring(0, hashAt); }
+  var qAt = href.indexOf('?');
+  if (qAt < 0) return;
+  var base = href.substring(0, qAt), query = href.substring(qAt + 1), parts = query ? query.split('&') : [], keep = [], changed = false;
+  for (var i = 0; i < parts.length; i++) {
+    if (!parts[i]) continue;
+    var rawKey = parts[i].split('=')[0], key = rawKey;
+    try { key = decodeURIComponent(rawKey.replace(/\+/g, ' ')); } catch (e) {}
+    if (key === 'notice' || key === 'error') changed = true;
+    else keep.push(parts[i]);
+  }
+  if (!changed) return;
+  var clean = base + (keep.length ? '?' + keep.join('&') : '') + hash;
+  window.history.replaceState(null, document.title, clean);
+}
+function hgInitFlashNotices() {
+  var notices = document.querySelectorAll('.hg-notice:not(.hg-notice-error):not(.hg-notice-pending)');
+  for (var i = 0; i < notices.length; i++) (function(n) {
+    window.setTimeout(function() { if (n) n.style.display = 'none'; }, 3000);
+  })(notices[i]);
+}
+hgConsumeFlashQuery();
+if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',hgInitFlashNotices);
+else hgInitFlashNotices();
+</script>

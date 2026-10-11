@@ -1,0 +1,34 @@
+{
+  "schema": 1,
+  "display_name": "HomeGate",
+  "stage": "migration-draft",
+  "core": {
+    "implementation": "go-reference",
+    "architecture": "pending",
+    "package": "homegate",
+    "planned_package": "homegate-core",
+    "source": "project/core/src",
+    "migration_complete": false,
+    "prototype": {
+      "source": "project/core/prototype/homegate-prototype.sh",
+      "implementation": "busybox-ash",
+      "scope": "isolated-config-and-event-control",
+      "production_install": false,
+      "static_checks": "passed",
+      "runtime_checks": "pending-linux"
+    }
+  },
+  "frontends": [
+    "lua",
+    "js"
+  ],
+  "target_status": "partially-verified",
+  "release_ready": false,
+  "baseline": {
+    "archive_version": "1.3.0-10",
+    "user_confirmed": true,
+    "ignored_optimization_version": "1.3.1-1",
+    "immediate_router_downgrade_required": false
+  },
+  "target_manifest": "targets/qwrt-r26.3.8-ipq807x.json"
+}

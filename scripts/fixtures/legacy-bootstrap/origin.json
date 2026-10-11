@@ -1,0 +1,18 @@
+{
+  "commit": "20b3600d4d64bf60588cf4975c7a62104411870e",
+  "branch": "openwrt-18.06",
+  "files": {
+    "cascade.css": {
+      "url": "https://raw.githubusercontent.com/openwrt/luci/20b3600d4d64bf60588cf4975c7a62104411870e/themes/luci-theme-bootstrap/htdocs/luci-static/bootstrap/cascade.css",
+      "sha256": "5f12ffe2ecf3d389f95ccc92dabf986972e890ece25e34361494a4c1628cd478"
+    },
+    "footer.htm": {
+      "url": "https://raw.githubusercontent.com/openwrt/luci/20b3600d4d64bf60588cf4975c7a62104411870e/modules/luci-base/luasrc/view/cbi/footer.htm",
+      "sha256": "b58a7dd7506732715277cc5da248fcf7ac853b5727457fd1aa5349ef79df6091"
+    },
+    "LICENSE": {
+      "url": "https://raw.githubusercontent.com/openwrt/luci/20b3600d4d64bf60588cf4975c7a62104411870e/LICENSE",
+      "sha256": "43070e2d4e532684de521b885f385d0841030efa2b1a20bafb76133a5e1379c1"
+    }
+  }
+}

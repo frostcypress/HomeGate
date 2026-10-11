@@ -1,0 +1,17 @@
+Package: homegate
+Version: @VERSION@
+Depends: libc, uci, ubus, ip, ip6tables, ca-bundle
+Source: project/core
+SourceName: homegate
+License: MIT AND Apache-2.0
+LicenseFiles: LICENSE Apache-2.0.txt
+Section: net
+SourceDateEpoch: 1693809628
+Maintainer: HomeGate contributors
+Architecture: aarch64_cortex-a53
+Installed-Size: @SIZE@
+Description:  HomeGate core runtime for DDNS, ACME, reverse proxy, access restriction and Wake-on-LAN.
+ Phase 6 adds the validated HTTPS reverse proxy and IPv6 firewall lifecycle on top of DDNS and ACME.
+ Phase 6b adds bounded cold-boot firewall recovery while PPPoE IPv6 is still coming up.
+ Phase 7 migrates r6 Wake-on-LAN with raw Ethernet 0x0842 plus UDP broadcast, using the common LAN resolver for bridge members.
+ It uses no external etherwake helper and preserves the legacy CLI contract used by the frozen r6 LuCI controller.

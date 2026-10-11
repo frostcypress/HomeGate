@@ -1,0 +1,12 @@
+Package: luci-app-homegate
+Version: @VERSION@
+Depends: libc, homegate, luci-base, luci-compat
+Source: project/luci
+SourceName: luci-app-homegate
+License: Apache-2.0
+Section: luci
+SourceDateEpoch: 1693809628
+Maintainer: HomeGate contributors
+Architecture: all
+Installed-Size: @SIZE@
+Description:  LuCI support for HomeGate.

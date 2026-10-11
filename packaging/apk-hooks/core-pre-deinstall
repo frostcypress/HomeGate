@@ -1,0 +1,6 @@
+#!/bin/sh
+set -eu
+[ -n "${IPKG_INSTROOT:-}" ] && exit 0
+init=${HOMEGATE_PACKAGE_INIT:-/etc/init.d/homegate}
+"$init" stop
+"$init" disable

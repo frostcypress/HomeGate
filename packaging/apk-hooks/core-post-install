@@ -1,0 +1,20 @@
+#!/bin/sh
+set -eu
+[ -n "${IPKG_INSTROOT:-}" ] && exit 0
+init=${HOMEGATE_PACKAGE_INIT:-/etc/init.d/homegate}
+state=${HOMEGATE_PACKAGE_UPGRADE_STATE:-/tmp/.homegate-apk-upgrade-state}
+config=${HOMEGATE_PACKAGE_CONFIG_FILE:-/etc/config/homegate}
+chmod 600 "$config"
+uci -q set homegate.main.version='@VERSION@'
+uci -q commit homegate
+if [ -f "$state" ]; then
+ running=$(sed -n 's/^running=\([01]\)$/\1/p' "$state")
+ enabled=$(sed -n 's/^enabled=\([01]\)$/\1/p' "$state")
+ if [ "$enabled" = 1 ]; then "$init" enable; else "$init" disable; fi
+ if [ "$running" = 1 ]; then "$init" start; else "$init" stop; fi
+ rm -f "$state"
+else
+ if [ "$(uci -q get homegate.main.enabled)" = 1 ]; then "$init" enable; "$init" start
+ else "$init" disable; "$init" stop
+ fi
+fi

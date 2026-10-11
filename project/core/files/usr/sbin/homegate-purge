@@ -1,0 +1,45 @@
+#!/bin/sh
+set -u
+
+if [ "$(id -u)" != "0" ]; then
+	echo "homegate-purge: root required" >&2
+	exit 1
+fi
+
+remove_product() {
+ if command -v apk >/dev/null 2>&1 && ! command -v opkg >/dev/null 2>&1; then
+  set --
+  for package in luci-i18n-homegate-zh-cn luci-app-homegate homegate; do
+   if apk info -e "$package" >/dev/null 2>&1; then set -- "$@" "$package"; fi
+  done
+  [ "$#" -gt 0 ] || return 0
+  apk del "$@"
+ else
+  if ! opkg --help 2>&1 | grep -q -- '--force-removal-of-dependent-packages'; then
+   echo "homegate-purge: opkg lacks --force-removal-of-dependent-packages" >&2
+   return 2
+  fi
+  opkg remove --force-removal-of-dependent-packages homegate
+ fi
+}
+
+# HomeGate 1.0.1+ uninstall contract: removing the product is destructive.
+# The marker also tells luci-app-homegate postrm that this removal is already
+# part of a product-wide purge, preventing a second deferred opkg transaction.
+PURGE_MARKER=${HOMEGATE_PURGE_MARKER:-/tmp/.homegate-purge-request}
+umask 077
+printf '%s\n' 'purge=1' > "$PURGE_MARKER"
+
+# Ask opkg to remove reverse dependents (LuCI + i18n) together with Core;
+# Core postrm then performs the persistent-state FULL PURGE.
+if remove_product; then
+	rm -f /tmp/luci-indexcache
+	rm -rf /tmp/luci-modulecache/* 2>/dev/null || true
+	rmdir /usr/lib/lua/luci/view/homegate 2>/dev/null || true
+	rm -f "$PURGE_MARKER"
+	exit 0
+else
+ rc=$?
+ rm -f "$PURGE_MARKER"
+ exit "$rc"
+fi

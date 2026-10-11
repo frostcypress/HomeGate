@@ -49,4 +49,4 @@ Python 3.12+，Lua 回归另需 lupa==2.8；浏览器回归需 playwright==1.63.
 
 1.3.0-r13 增加隔离配置事务原型 `homegate-config-prototype.sh`：严格的公共字段预览、128 位随机确认句柄、失效/重放拒绝、整代配置和私有凭据原子发布、祖先代次回滚。仅覆盖 `main-public-v1`，没有接入生产 UCI 或 LuCI 导入按钮；14 项真实 Linux 事务回归已通过 [本轮运行](https://github.com/frostcypress/HomeGate/actions/runs/38138863941)。见 [配置事务原型说明](project/core/prototype/配置事务说明.md)。
 
-1.3.0-r14 本地通过 17 项 Lua 配置检查、12 组预览几何和 9 项行为合同；Linux CI 本轮待执行。仅预览不是完整配置事务，完整 SDK/实机验收仍未完成。
+1.3.0-r14 本地通过 17 项 Lua 配置检查、12 组预览几何和 9 项行为合同；Linux 源码 CI 已通过 [本轮运行](https://github.com/frostcypress/HomeGate/actions/runs/38144574657)。仅预览不是完整配置事务，完整 SDK/实机验收仍未完成。

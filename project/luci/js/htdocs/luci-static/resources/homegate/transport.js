@@ -66,6 +66,11 @@ function finish(result) {
  }
 }
 function install(root) {
+ window.homegatePreviewImport=async function(values) {
+  const result=await action('config_import',values);
+  if(!result.ok || result.redirect)throw new Error(_('Unable to preview configuration.'));
+  return JSON.parse(result.body || '{}');
+ };
  window.homegateXHR = {get:function(value,extra,callback) {
   let destination;
   try {destination=routeURL(value);} catch(e) {callback({status:400,responseText:''},null);return;}

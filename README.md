@@ -4,7 +4,7 @@
 
 本轮已落实源码分层、唯一版本入口、概览/设置/维护导航、维护四分区、默认不导出凭据、目标核实清单、SDK 构建门禁、包元数据检查和可接续草稿。project/core/src/ 保留完整 Go 核心作为迁移对照；该项不符合最终核心要求，正式构建入口会拒绝它。
 
-新增隔离 BusyBox ash 原型，覆盖公共配置检查、8 项任务队列、互斥与代次/token。3 项静态检查通过，10 项 Linux 执行回归已接入 Actions，尚未运行；详情见 project/core/prototype/README.md。生产配方不安装原型。
+新增隔离 BusyBox ash 原型，覆盖公共配置检查、8 项任务队列、互斥与代次/token。3 项静态检查通过，10 项 Linux 执行回归已在 Actions 通过；详情见 project/core/prototype/README.md。生产配方不安装原型。
 
 project/core 保存核心配方、安装文件和完整对照实现；project/luci/lua、js、common 分离两套前端与公共翻译。scripts 保存校验与生成程序；targets 保存逐台设备证据；.github/workflows 是当前流程，.github/reference 的历史 Go 流程不会自动运行。
 
@@ -12,7 +12,7 @@ project/core 保存核心配方、安装文件和完整对照实现；project/lu
 
 ## 本地检查
 
-Python 3.12+，Lua 回归另需 lupa==2.8；浏览器回归需 playwright==1.63.0、Node 和 Chromium/Edge。
+Python 3.12+，Lua 回归另需 lupa==2.8；浏览器回归需 playwright==1.63.0、Node 和 Chromium/Edge。Shell 静态检查需要 tree-sitter==0.25.2 与 tree-sitter-bash==0.25.1，执行检查需要带必要 applet 的 Linux BusyBox。
 
     python3 scripts/project.py --check
     python3 scripts/重构回归.py
@@ -31,7 +31,7 @@ Python 3.12+，Lua 回归另需 lupa==2.8；浏览器回归需 playwright==1.63.
 
 新工作流默认仅检查源码。Lua/JS 与 IPK/APK 分开选择，目标/核心/包名迁移未完成时构建失败。目标SDK构建.py 使用匹配 SDK；检查三包.py 读取控制元数据并要求准确版本、架构和 Core 依赖。APK3 解码需要支持 adbdump --format json 的官方 apk-tools，具体目标工具尚待验证。
 
-用户指定仓库 https://github.com/frostcypress/HomeGate；本次浏览器检查时为空仓库，源码上传与新 GitHub run 尚未完成。
+用户指定仓库 https://github.com/frostcypress/HomeGate，完整源码已展开提交，Linux 源码回归已通过。一次性导入工作流完成后已移除；常规工作流所有作业均只有 contents:read。实际运行记录见 docs/验证/GitHub首次导入.json。
 
 历史 build-release.py 和 build-apk.py 只能显式设置 HOMEGATE_ALLOW_LEGACY_GO=1 后用于迁移对照，其结果不能通过新三包检查。包名仍为旧 homegate，改名升级与 FULL PURGE 生命周期未完成前保留原业务合同。正式 GitHub Release 当前禁止。
 
@@ -44,3 +44,5 @@ Python 3.12+，Lua 回归另需 lupa==2.8；浏览器回归需 playwright==1.63.
     python3 scripts/生成接续包.py --target pending --stage 规范迁移 --draft
 
 草稿仅含完整源码、许可、工作流、历史合同和三份接续文档，不附旧包。完整快照必须在迁移完成且具备真实三包后生成。
+
+Linux 回归证据：https://github.com/frostcypress/HomeGate/actions/runs/38127877469；实机业务/SDK 构建仍未执行。

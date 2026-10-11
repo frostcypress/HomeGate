@@ -15,7 +15,8 @@
       "scope": "isolated-config-and-event-control",
       "production_install": false,
       "static_checks": "passed",
-      "runtime_checks": "pending-linux"
+      "runtime_checks": "passed-linux-busybox-1.33.2",
+      "runtime_run": "https://github.com/frostcypress/HomeGate/actions/runs/38127877469"
     }
   },
   "frontends": [

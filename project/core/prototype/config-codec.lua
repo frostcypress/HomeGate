@@ -22,20 +22,49 @@ local function parsed(path)
     if not doc then fail() end
     return doc
 end
+local function allowed(doc)
+    local slots={}
+    for _,s in ipairs(doc) do
+        if s.kind=="dns_account" then
+            for _,slot in ipairs({"key_id","secret","account_id","endpoint"}) do
+                slots[#slots+1]=s.values.provider.."."..s.name.."."..slot
+            end
+        elseif s.kind=="ddns_rule" then slots[#slots+1]="ddns."..s.name..".url"
+        elseif s.kind=="web_rule" then slots[#slots+1]="web."..s.name..".target"
+        end
+    end
+    return slots
+end
 if arg[1]=="normalize" and not arg[2] then
     local body=codec.canonical(read())
     if not body then fail() end
     io.write(body)
 elseif arg[1]=="allowed" and arg[2] and not arg[3] then
-    for _,s in ipairs(parsed(arg[2])) do
-        if s.kind=="dns_account" then
-            for _,slot in ipairs({"key_id","secret","account_id","endpoint"}) do
-                io.write(s.values.provider,".",s.name,".",slot,"\n")
-            end
-        elseif s.kind=="ddns_rule" then io.write("ddns.",s.name,".url\n")
-        elseif s.kind=="web_rule" then io.write("web.",s.name,".target\n")
+    for _,slot in ipairs(allowed(parsed(arg[2]))) do io.write(slot,"\n") end
+elseif arg[1]=="snapshot" and arg[2] and arg[3] and not arg[4] then
+    local body=read(arg[2].."/public.conf")
+    local doc=codec.parse(body)
+    if not doc then fail() end
+    local slots=allowed(doc); table.sort(slots)
+    local records={}; local count=0
+    for _,name in ipairs(slots) do
+        local f=io.open(arg[2].."/credentials/"..name,"rb")
+        if f then
+            local value=f:read(4097); local closed=f:close()
+            if not value or #value<1 or #value>4096 or not closed then fail() end
+            count=count+1
+            records[#records+1]=#name.."\n"..#value.."\n"..name..value
         end
     end
+    local frame="HGPRIVATE1\n"..arg[3].."\n"..#body.."\n"..count.."\n"..body..table.concat(records).."END\n"
+    local loader=loadfile(dir.."/private-snapshot.lua")
+    if not loader or not loader().parse(frame,codec) then fail() end
+    -- The parent already checks FD 3 is a pipe and owns the store flock.
+    -- Validate the whole frame before delivering any private bytes.
+    local f=io.open("/proc/self/fd/3","wb")
+    if not f then fail() end
+    local written=f:write(frame); local closed=f:close()
+    if not written or not closed then fail() end
 elseif arg[1]=="migrate" and arg[2] and arg[3] and not arg[4] then
     local body,slots=codec.migration(read(arg[2]))
     if not body then fail() end

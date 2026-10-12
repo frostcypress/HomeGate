@@ -446,6 +446,7 @@ fi
 case "$command" in
     init|status|export|preview|cancel) [ "$#" -eq 0 ] || fail 'Unexpected arguments' 2;;
     migration-preview) [ "$#" -eq 0 ] && [ "$public_mode" = true ] || fail 'Migration requires full schema' 2;;
+    snapshot-read) [ "$#" -eq 0 ] && [ "$public_mode" = true ] || fail 'Private reader requires full schema' 2;;
     rollback-preview) [ "$#" -eq 1 ] && number "$1" 1 32 && [ "$1" = "$value" ] || fail 'Expected generation number' 2;;
     commit) [ "$#" -eq 1 ] && [ "${#1}" -eq 32 ] || fail 'Expected confirmation handle' 2
         case "$1" in *[!0-9a-f]*) fail 'Invalid confirmation handle' 2;; esac
@@ -479,6 +480,14 @@ case "$command" in
     export)
         need_initialized
         cat "$store/gen-$head_revision/public.conf" || fail 'Unable to export public config'
+        ;;
+    snapshot-read)
+        need_initialized
+        # Only an inherited pipe may receive private bytes. Never a path, RPC
+        # response, terminal, or regular file. Hold the same flock throughout.
+        [ -p /proc/self/fd/3 ] || fail 'Private reader requires inherited pipe' 2
+        lua "$codec" snapshot "$store/gen-$head_revision" "$head_revision" 2>/dev/null || fail 'Unable to deliver private snapshot'
+        printf '{"api_version":1,"prototype":true,"ok":true,"revision":%s,"scope":"private-business-reader"}\n' "$head_revision"
         ;;
     preview)
         need_initialized

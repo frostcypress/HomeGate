@@ -56,7 +56,7 @@ jobs:
       - name: 安装 BusyBox、语法解析与页面回归依赖
         run: |
           sudo apt-get update
-          sudo apt-get install --no-install-recommends -y build-essential lua5.1
+          sudo apt-get install --no-install-recommends -y build-essential lua5.1 liblua5.1-0-dev libjson-c-dev
           mkdir -p build/busybox-runtime
           curl --fail --location --connect-timeout 15 --max-time 120 \
             https://busybox.net/downloads/busybox-1.33.2.tar.bz2 \
@@ -91,6 +91,7 @@ jobs:
           build/verify-venv/bin/python -m pip install 'lupa==2.8' 'playwright==1.63.0' 'tree-sitter==0.25.2' 'tree-sitter-bash==0.25.1'
           build/verify-venv/bin/python -m playwright install --with-deps chromium
           python3 scripts/准备UCI解析回归.py
+          python3 scripts/准备服务采样回归.py
       - name: 验证 Shell 原型语法与真实 BusyBox 执行
         run: |
           for file in project/core/prototype/*.sh; do busybox ash -n "$file"; done
@@ -108,6 +109,8 @@ jobs:
           build/verify-venv/bin/python scripts/工作监督回归.py --static
           build/verify-venv/bin/python scripts/工作监督回归.py --runtime
           build/verify-venv/bin/python scripts/服务意图回归.py --runtime
+          build/verify-venv/bin/python scripts/服务采样回归.py --static
+          build/verify-venv/bin/python scripts/服务采样回归.py --runtime
       - name: 验证安全导出、导航与页面行为
         run: |
           build/verify-venv/bin/python scripts/导航安全回归.py

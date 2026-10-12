@@ -15,6 +15,26 @@ trap 'interrupted=130' INT
 trap 'exec 5>&- 2>/dev/null || :' EXIT
 private_file() { [ -f "$1" ] && [ ! -L "$1" ] && [ "$(stat -c '%u:%a:%h' "$1")" = "$owner:600:1" ]; }
 private_fifo() { [ -p "$1" ] && [ ! -L "$1" ] && [ "$(stat -c '%u:%a:%h' "$1")" = "$owner:600:1" ]; }
+validate_store_path() {
+    case "$store" in /tmp/homegate-config-prototype-*) ;; *) fail 'Invalid isolated worker store' 2;; esac
+    walk=; old_ifs=$IFS; IFS=/; set -f
+    for component in $store; do
+        case "$component" in '') continue;; .|..) fail 'Invalid isolated worker store' 2;; esac
+        walk="$walk/$component"
+        [ ! -L "$walk" ] || fail 'Invalid isolated worker store' 2
+        if [ "$walk" != /tmp ]; then
+            [ -d "$walk" ] && [ "$(stat -c '%u:%a' "$walk" 2>/dev/null)" = "$owner:700" ] || fail 'Invalid isolated worker store' 2
+        fi
+    done
+    IFS=$old_ifs; set +f
+    if [ -e "$store/worker" ] || [ -L "$store/worker" ]; then
+        private_file "$store/worker" && [ "$(stat -c %s "$store/worker")" -le 512 ] || fail 'Invalid isolated worker store' 2
+    fi
+}
+validate_configuration() {
+    rc=0; ash "$engine" --public-uci status >/dev/null 2>&1 || rc=$?
+    case "$rc" in 0) ;; 4) fail 'Configuration busy' 4;; *) fail 'Invalid isolated worker store' 2;; esac
+}
 digits() { case "$1" in ''|*[!0-9]*) return 1;; esac; [ "${#1}" -le "$2" ]; }
 token_valid() { [ "${#1}" -eq 32 ] || return 1; case "$1" in *[!0-9a-f]*) return 1;; esac; }
 now() { moment=$(lua "$process" now 2>/dev/null) || fail 'Unable to read worker deadline'; }
@@ -165,8 +185,12 @@ esac
 budget=${HOMEGATE_WORKER_PROTO_TIMEOUT:-30}
 case "$budget" in [1-9]|[12][0-9]|30) ;; *) fail 'Worker timeout must be 1 to 30 seconds' 2;; esac
 sleep 0.001 >/dev/null 2>&1 || fail 'Worker pacing is unavailable' 2
-ash "$engine" --public-uci status >/dev/null 2>&1 || fail 'Invalid isolated worker store' 2
+command -v kill >/dev/null 2>&1 || fail 'Worker signalling is unavailable' 2
 owner=$(id -u) || fail 'Unable to identify worker owner'
+validate_store_path
+# A blocked snapshot producer can still own the configuration flock after
+# outer SIGKILL. Recovery must prove the family quiet before taking that lock.
+[ "$command" = recover ] || validate_configuration
 boot=$(cat /proc/sys/kernel/random/boot_id) || fail 'Unable to read worker boot identity'
 store_digest=$(printf '%s\n' "$store" | sha256sum); store_digest=${store_digest%% *}
 for file in "$store/.recovery.lock" "$store/.supervisor.lock"; do
@@ -183,6 +207,7 @@ fi
 exec 7>>"$store/.supervisor.lock" || fail 'Unable to open worker supervisor lock'
 flock -n 7 || fail 'Worker group has not released its control lock' 4
 [ "$stale" = false ] || lease_remove
+[ "$command" != recover ] || validate_configuration
 if [ "$command" = run-apply ]; then
     if run_job apply "$handle"; then
         ash "$engine" --public-uci apply-finish "$handle" success >/dev/null 2>&1 || fail 'Application acknowledgement is uncertain'

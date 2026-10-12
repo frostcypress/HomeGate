@@ -206,6 +206,17 @@ class Runtime(unittest.TestCase):
         self.assertEqual(process.returncode,0,(stdout,stderr)); self.assertEqual(stderr,b'')
         self.assert_closed(3)
 
+    def test_snapshot_producer_retries_busy_before_delivering_private_frame(self):
+        marker=self.base/'producer-busy-once'
+        self.fault('flock','from pathlib import Path\n'
+                   'parent=Path("/proc/"+str(os.getppid())+"/cmdline").read_bytes().split(b"\\x00")\n'
+                   'marker=Path('+repr(str(marker))+')\n'
+                   'if sys.argv[-1]=="9" and b"apply-snapshot-read" in parent and not marker.exists():\n'
+                   '    marker.write_text("busy"); sys.exit(1)')
+        self.supervise('run-apply',self.handle)
+        self.assertEqual(marker.read_text(),'busy'); self.assert_closed(3)
+        self.assertEqual(self.receipt()['role'],'apply'); self.assertEqual(self.receipt()['https_port'],'8443')
+
     def test_outer_sigterm_waits_for_family_and_leaves_explicit_recovery(self):
         self.hang_apply(); process,lease=self.start_supervisor()
         process.terminate(); stdout,stderr=process.communicate(timeout=8)

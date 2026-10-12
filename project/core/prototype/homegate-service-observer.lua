@@ -3,9 +3,10 @@
 local function fail() os.exit(1) end
 if arg[1] then fail() end
 local json= require('luci.jsonc')
-local function read(path,limit,empty)
+local function read(path,limit,empty,vanishing)
     local f=io.open(path,'rb'); if not f then return nil end
     local body=f:read(limit+1); local ok=f:close()
+    if body==nil and vanishing and ok then return nil end
     if not body and empty then body='' end
     if not body or #body>limit or not ok then fail() end
     return body
@@ -22,18 +23,27 @@ local function boot()
     return s:sub(1,-2)
 end
 local function process(pid)
-    local a=read('/proc/'..pid..'/stat',8192); if not a then return nil end
+    local a=read('/proc/'..pid..'/stat',8192,false,true); if not a then return nil end
     local tail=a:match('^%d+ %(.+%) (.+)$'); if not tail then fail() end
     local fields={}; for v in tail:gmatch('%S+') do fields[#fields+1]=v end
     if #fields<20 or not fields[20]:match('^%d+$') then fail() end
     if fields[1]=='Z' or fields[1]=='X' then return nil end
     local command=read('/proc/'..pid..'/cmdline',8192,true)
     if command==nil then return nil end -- task may have exited while inspected
-    local b=read('/proc/'..pid..'/stat',8192)
-    if not b then return nil end
+    local b=read('/proc/'..pid..'/stat',8192,false,true)
+    if not b then
+        if command=='/usr/bin/homegate\0daemon\0' then fail() end
+        return nil
+    end
     local bt=b:match('^%d+ %(.+%) (.+)$'); if not bt then fail() end
     local after={}; for v in bt:gmatch('%S+') do after[#after+1]=v end
-    if after[20]~=fields[20] or after[1]=='Z' or after[1]=='X' then fail() end
+    if after[20]~=fields[20] or after[1]=='Z' or after[1]=='X' then
+        -- Unrelated short-lived tasks may exit during the bounded /proc scan.
+        -- A tracked PID is still rejected by the caller when no identity is
+        -- returned. A recognized daemon transition is never ignored.
+        if command=='/usr/bin/homegate\0daemon\0' then fail() end
+        return nil
+    end
     return command,fields[20]
 end
 local function object(value)

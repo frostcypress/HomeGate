@@ -4,16 +4,17 @@ local function number(s,max)
     if type(s)~="string" or not s:match("^[1-9]%d*$") or #s>9 then fail() end
     local n=tonumber(s); if not n or n>max then fail() end; return n
 end
-local function read(path,limit,empty_allowed)
+local function read(path,limit,empty_allowed,vanishing)
     local f=io.open(path,"rb"); if not f then return nil end
     local s=f:read(limit+1); local ok=f:close()
+    if s==nil and vanishing and ok then return nil end
     if not s and empty_allowed then s="" end
     if not s or #s>limit or not ok then fail() end
     return s
 end
 local function inspect(pid,token)
     number(pid,999999999)
-    local body=read("/proc/"..pid.."/stat",8192); if not body then return nil end
+    local body=read("/proc/"..pid.."/stat",8192,false,true); if not body then return nil end
     local tail=body:match("^%d+ %(.+%) (.+)$"); if not tail then fail() end
     local a={}; for v in tail:gmatch("%S+") do a[#a+1]=v end
     if #a<20 or not a[1]:match("^[A-Z]$") then fail() end

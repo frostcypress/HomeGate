@@ -51,7 +51,12 @@ class Static(unittest.TestCase):
         self.assertNotIn('prototype/',(ROOT/'project/core/Makefile').read_text())
 
 class Runtime(unittest.TestCase):
-    setUpClass=classmethod(FullRuntime.setUpClass.__func__)
+    @classmethod
+    def setUpClass(cls):
+        FullRuntime.setUpClass.__func__(cls)
+        # Presence of sleep alone does not establish fractional durations.
+        result=subprocess.run([cls.busybox,'sleep','0.001'],capture_output=True,timeout=2)
+        if result.returncode or result.stderr: raise RuntimeError('BusyBox FLOAT_DURATION is required')
     tearDown=FullRuntime.tearDown
     raw=FullRuntime.raw
     cli=FullRuntime.cli

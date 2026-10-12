@@ -15,11 +15,10 @@
       "scope": "isolated-config-and-event-control",
       "production_install": false,
       "static_checks": "passed",
-      "runtime_checks": "passed-linux-busybox-1.33.2-lua51-10",
-      "tested_revision": "1.3.0-r20",
-      "previous_runtime_run": "https://github.com/frostcypress/HomeGate/actions/runs/38205254898",
-      "previous_tested_revision": "1.3.0-r19",
-      "runtime_run": "https://github.com/frostcypress/HomeGate/actions/runs/38207827999"
+      "runtime_checks": "pending",
+      "tested_revision": "1.3.0-r21",
+      "previous_runtime_run": "https://github.com/frostcypress/HomeGate/actions/runs/38207827999",
+      "previous_tested_revision": "1.3.0-r20"
     },
     "configuration_prototype": {
       "source": "project/core/prototype/homegate-config-prototype.sh",
@@ -27,76 +26,73 @@
       "scope": "isolated-main-public-schema-and-opaque-credential-transactions",
       "production_install": false,
       "static_checks": "passed",
-      "runtime_checks": "passed-linux-busybox-1.33.2-lua51-14",
+      "runtime_checks": "pending",
       "uci_migration": false,
       "power_loss_durability": "not-verified-no-fsync",
-      "tested_revision": "1.3.0-r20",
+      "tested_revision": "1.3.0-r21",
       "runtime_case_count": 14,
       "full_schema": {
         "switch": "--public-uci",
         "schema": "public-uci-v1",
         "local_codec_checks": "passed-4",
-        "runtime_checks": "passed-linux-busybox-1.33.2-lua51-20",
+        "runtime_checks": "pending",
         "runtime_case_count": 20,
         "production_install": false,
         "confirmation": "baseline-bound-boot-bound-300-second-single-use",
         "publication": "checked-file-and-directory-fsync-barriers",
         "device_power_loss_durability": "not-verified",
-        "tested_revision": "1.3.0-r20",
+        "tested_revision": "1.3.0-r21",
         "official_uci_parser": "passed-host-2019-pinned-source",
         "legacy_migration": {
           "command": "migration-preview",
           "scope": "isolated-legacy-UCI-candidate-and-private-backup",
           "production_switch": false,
           "local_lua_checks": "passed-6",
-          "runtime_checks": "passed-linux-busybox-1.33.2-lua51-12",
+          "runtime_checks": "pending",
           "runtime_case_count": 12,
-          "tested_revision": "1.3.0-r20",
+          "tested_revision": "1.3.0-r21",
           "private_slot_capacity": 192,
           "source_removed": false,
           "external_certificate_tree_migration": false,
-          "previous_runtime_run": "https://github.com/frostcypress/HomeGate/actions/runs/38205254898",
-          "previous_tested_revision": "1.3.0-r19",
-          "runtime_run": "https://github.com/frostcypress/HomeGate/actions/runs/38207827999"
+          "previous_runtime_run": "https://github.com/frostcypress/HomeGate/actions/runs/38207827999",
+          "previous_tested_revision": "1.3.0-r20"
         },
-        "previous_runtime_run": "https://github.com/frostcypress/HomeGate/actions/runs/38205254898",
-        "previous_tested_revision": "1.3.0-r19",
+        "previous_runtime_run": "https://github.com/frostcypress/HomeGate/actions/runs/38207827999",
+        "previous_tested_revision": "1.3.0-r20",
         "private_reader": {
           "command": "snapshot-read",
           "transport": "inherited-pipe-fd3",
           "same_generation_flock": true,
           "local_lua_checks": "passed-6",
-          "runtime_checks": "passed-linux-busybox-1.33.2-lua51-8",
+          "runtime_checks": "pending",
           "runtime_case_count": 8,
-          "tested_revision": "1.3.0-r20",
+          "tested_revision": "1.3.0-r21",
           "production_switch": false,
           "maximum_frame_bytes": 1114112,
-          "previous_runtime_run": "https://github.com/frostcypress/HomeGate/actions/runs/38205254898",
-          "previous_tested_revision": "1.3.0-r19",
-          "runtime_run": "https://github.com/frostcypress/HomeGate/actions/runs/38207827999"
+          "previous_runtime_run": "https://github.com/frostcypress/HomeGate/actions/runs/38207827999",
+          "previous_tested_revision": "1.3.0-r20"
         },
         "application_recovery": {
           "command": "commit-apply",
           "recovery_command": "recover-application",
           "scope": "isolated-journal-and-explicit-worker-acknowledgements",
-          "runtime_checks": "passed-linux-busybox-1.33.2-lua51-15",
+          "runtime_checks": "pending",
           "runtime_case_count": 15,
-          "tested_revision": "1.3.0-r20",
+          "tested_revision": "1.3.0-r21",
           "production_switch": false,
           "actual_business_workers": false,
           "process_supervision": false,
           "device_reboot_power_loss": "not-verified",
-          "previous_runtime_run": "https://github.com/frostcypress/HomeGate/actions/runs/38205254898",
-          "previous_tested_revision": "1.3.0-r19",
-          "runtime_run": "https://github.com/frostcypress/HomeGate/actions/runs/38207827999"
+          "previous_runtime_run": "https://github.com/frostcypress/HomeGate/actions/runs/38207827999",
+          "previous_tested_revision": "1.3.0-r20"
         },
         "worker_supervision": {
           "source": "project/core/prototype/homegate-worker-supervisor.sh",
           "scope": "fixed-worker-family-and-isolated-derived-state-receipt",
           "static_checks": "passed-1-with-documented-FIFO-parser-mask",
-          "runtime_checks": "passed-linux-busybox-1.33.2-lua51-19",
+          "runtime_checks": "pending",
           "runtime_case_count": 19,
-          "tested_revision": "1.3.0-r20",
+          "tested_revision": "1.3.0-r21",
           "persistent_worker_lease": true,
           "independent_watchdog": true,
           "timeout_seconds": 30,
@@ -105,10 +101,9 @@
           "actual_business_workers": false,
           "double_supervisor_kill": "fail-closed-if-descendants-live",
           "device_reboot_power_loss": "not-verified",
-          "previous_runtime_run": "https://github.com/frostcypress/HomeGate/actions/runs/38205254898",
-          "previous_tested_revision": "1.3.0-r19",
-          "busy_snapshot": "retry-before-private-frame-with-independent-watchdog-budget",
-          "runtime_run": "https://github.com/frostcypress/HomeGate/actions/runs/38207827999"
+          "previous_runtime_run": "https://github.com/frostcypress/HomeGate/actions/runs/38207827999",
+          "previous_tested_revision": "1.3.0-r20",
+          "busy_snapshot": "retry-before-private-frame-with-independent-watchdog-budget"
         },
         "service_intent": {
           "command": "commit-apply-intent",
@@ -116,9 +111,9 @@
           "journal_format": "HGAPPLICATION2",
           "baseline_boot_and_running_independent": true,
           "baseline_bound_to_boot": true,
-          "runtime_checks": "passed-linux-busybox-1.33.2-lua51-16",
+          "runtime_checks": "pending",
           "runtime_case_count": 16,
-          "tested_revision": "1.3.0-r20",
+          "tested_revision": "1.3.0-r21",
           "actual_service_sampling": false,
           "actual_service_actions": false,
           "service_worker_supervision": false,
@@ -126,13 +121,29 @@
           "cold_start": "explicit-barrier-not-implemented",
           "journal_line_count": 11,
           "complete_record_checksum": "SHA256-not-MAC",
-          "runtime_run": "https://github.com/frostcypress/HomeGate/actions/runs/38207827999"
+          "previous_runtime_run": "https://github.com/frostcypress/HomeGate/actions/runs/38207827999",
+          "previous_tested_revision": "1.3.0-r20"
         },
-        "runtime_run": "https://github.com/frostcypress/HomeGate/actions/runs/38207827999"
+        "service_observer": {
+          "command": "commit-apply-observed",
+          "scope": "fixed-readonly-init-ubus-proc-observer-before-isolated-publication",
+          "runtime_checks": "pending",
+          "runtime_case_count": 13,
+          "static_case_count": 2,
+          "tested_revision": "1.3.0-r21",
+          "actual_service_sampling": "implemented-target-unverified-fixture-endpoints-tested-in-CI",
+          "production_install": false,
+          "production_switch": false,
+          "actual_service_actions": false,
+          "supervised_observation": true,
+          "watchdog_deadline_seconds": 5,
+          "termination_grace_seconds": 1,
+          "json_decoder": "official-luci.jsonc",
+          "target_json_abi": "not-verified"
+        }
       },
-      "previous_runtime_run": "https://github.com/frostcypress/HomeGate/actions/runs/38205254898",
-      "previous_tested_revision": "1.3.0-r19",
-      "runtime_run": "https://github.com/frostcypress/HomeGate/actions/runs/38207827999"
+      "previous_runtime_run": "https://github.com/frostcypress/HomeGate/actions/runs/38207827999",
+      "previous_tested_revision": "1.3.0-r20"
     }
   },
   "frontends": [
@@ -165,10 +176,9 @@
     "core_credential_migration": false,
     "local_lua_checks": "passed-lua51-17",
     "browser_checks": "passed-local-edge-12-geometry-9-behavior",
-    "linux_ci": "passed",
-    "tested_revision": "1.3.0-r20",
-    "previous_runtime_run": "https://github.com/frostcypress/HomeGate/actions/runs/38205254898",
-    "previous_tested_revision": "1.3.0-r19",
-    "runtime_run": "https://github.com/frostcypress/HomeGate/actions/runs/38207827999"
+    "linux_ci": "pending",
+    "tested_revision": "1.3.0-r21",
+    "previous_runtime_run": "https://github.com/frostcypress/HomeGate/actions/runs/38207827999",
+    "previous_tested_revision": "1.3.0-r20"
   }
 }

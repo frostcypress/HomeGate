@@ -1,7 +1,7 @@
 #!/bin/sh
 # Isolated transaction experiment; NOT an installer or production UCI importer.
 # Default legacy main schema; --public-uci uses the shared six-type Lua codec.
-# Neither mode activates production services or modifies /etc/config.
+# Production publication is gated off; only test copies enable isolated fixtures.
 set -u
 umask 077
 export LC_ALL=C
@@ -11,6 +11,11 @@ published=false
 keep_candidate=false
 application_transaction=false
 service_intent_transaction=false
+projection_transaction=false
+# Native Lua writers, the persistent namespace and lifecycle still need migration.
+# No CLI argument or environment variable can enable production publication.
+production_writes_enabled=false
+projection_scratch=
 journal_active=false
 public_mode=false
 public_limit=1024
@@ -25,12 +30,13 @@ fail() {
 }
 cleanup() {
     [ -z "$scratch" ] || rm -f "$scratch"
+    [ -z "$projection_scratch" ] || rm -f "$projection_scratch"
     # Only files allocated by this invocation are removed. No recursive delete.
     if [ -n "$generation_dir" ] && [ "$published" = false ] && [ "$keep_candidate" = false ]; then
         for item in "$generation_dir/credentials/"*; do
             [ ! -e "$item" ] || rm -f "$item"
         done
-        rm -f "$generation_dir/public.conf" "$generation_dir/parent" "$generation_dir/manifest" "$generation_dir/legacy.conf"
+        rm -f "$generation_dir/public.conf" "$generation_dir/parent" "$generation_dir/manifest" "$generation_dir/legacy.conf" "$generation_dir/source.conf"
         rmdir "$generation_dir/credentials" "$generation_dir" 2>/dev/null || :
     fi
 }
@@ -144,7 +150,7 @@ open_store() {
     fi
     journal_read
     if [ "$journal_active" = true ]; then
-        case "$command" in status|export|recover-application|apply-finish|restore-finish|apply-finish-intent|restore-finish-intent|apply-snapshot-read|restore-snapshot-read|apply-authorize|restore-authorize|apply-service-snapshot-read|restore-service-snapshot-read|service-intent-read) ;;
+        case "$command" in status|export|recover-application|apply-finish|restore-finish|apply-finish-intent|restore-finish-intent|apply-finish-projection|restore-finish-projection|projection-publish|apply-snapshot-read|restore-snapshot-read|apply-authorize|restore-authorize|apply-service-snapshot-read|restore-service-snapshot-read|service-intent-read) ;;
             *) fail 'Application recovery barrier is active' 4;; esac
     fi
 }
@@ -235,6 +241,7 @@ generation_manifest() {
         cd "$1" || exit 1
         sha256sum public.conf parent || exit 1
         [ ! -e legacy.conf ] || sha256sum legacy.conf || exit 1
+        [ ! -e source.conf ] || sha256sum source.conf || exit 1
         for item in credentials/*; do
             [ ! -e "$item" ] || sha256sum "$item" || exit 1
         done
@@ -245,7 +252,7 @@ validate_generation() {
     private_dir "$checked_dir" || fail 'Missing private generation'
     for item in "$checked_dir/"*; do
         case "${item##*/}" in public.conf|parent|manifest|credentials) ;;
-            legacy.conf) [ "$public_mode" = true ] || fail 'Unexpected legacy backup'
+            legacy.conf|source.conf) [ "$public_mode" = true ] || fail 'Unexpected legacy backup'
                 private_file "$item" && number "$(stat -c %s "$item")" 1 "$public_limit" || fail 'Unsafe legacy backup';;
             *) fail 'Unexpected generation entry';; esac
     done
@@ -299,6 +306,7 @@ synchronize_generation() {
         # BusyBox 1.33.2 sync -f ignores syncfs errors. Use checked fsync.
         fsync "$generation_dir/public.conf" "$generation_dir/parent" "$generation_dir/manifest" 2>/dev/null || fail 'Unable to synchronize candidate files'
         [ ! -e "$generation_dir/legacy.conf" ] || fsync "$generation_dir/legacy.conf" 2>/dev/null || fail 'Unable to synchronize legacy backup'
+        [ ! -e "$generation_dir/source.conf" ] || fsync "$generation_dir/source.conf" 2>/dev/null || fail 'Unable to synchronize source backup'
         for item in "$generation_dir/credentials/"*; do
             [ ! -e "$item" ] || fsync "$item" 2>/dev/null || fail 'Unable to synchronize credential file'
         done
@@ -372,7 +380,7 @@ journal_read() {
         IFS= read -r journal_after <&8 || fail 'Incomplete application journal'
     case "$journal_format" in
         HGAPPLICATION1) ;;
-        HGAPPLICATION2)
+        HGAPPLICATION2|HGAPPLICATION3)
             IFS= read -r journal_boot_enabled <&8 && IFS= read -r journal_was_running <&8 &&
                 IFS= read -r journal_intent_boot <&8 && IFS= read -r journal_checksum <&8 || fail 'Incomplete service intent'
             case "$journal_boot_enabled:$journal_was_running" in 0:0|0:1|1:0|1:1) ;; *) fail 'Invalid service intent';; esac;;
@@ -380,7 +388,7 @@ journal_read() {
     esac
     if IFS= read -r extra <&8; then fail 'Unexpected application journal data'; fi
     exec 8<&-
-    if [ "$journal_format" = HGAPPLICATION2 ]; then
+    if [ "$journal_format" != HGAPPLICATION1 ]; then
         [ "${#journal_intent_boot}" -eq 36 ] || fail 'Invalid service boot identity'
         case "$journal_intent_boot" in *[!0-9a-f-]*) fail 'Invalid service boot identity';; esac
         [ "${#journal_checksum}" -eq 64 ] || fail 'Invalid service intent checksum'
@@ -401,6 +409,10 @@ journal_read() {
     [ "$digest" = "$journal_before" ] || fail 'Application baseline changed'
     validate_generation "$journal_target"
     [ "$validated_parent" = "$journal_base" ] || fail 'Invalid application ancestry'
+    if [ "$journal_format" = HGAPPLICATION3 ]; then
+        private_file "$store/gen-$journal_target/source.conf" || fail 'Missing bound source configuration'
+        lua "$codec" source-baseline "$store/gen-$journal_target/source.conf" "$store/gen-$journal_base" 2>/dev/null || fail 'Source baseline does not match generation'
+    fi
     journal_binding "$journal_target"
     [ "$digest" = "$journal_after" ] || fail 'Application candidate changed'
     case "$head_revision" in "$journal_base"|"$journal_target") ;; *) fail 'Application pointer is inconsistent';; esac
@@ -410,8 +422,8 @@ journal_read() {
 }
 journal_binding() {
     manifest_body=$(cat "$store/gen-$1/manifest") || fail 'Unable to bind application generation'
-    if [ "$journal_format" = HGAPPLICATION2 ]; then
-        digest=$(printf '%s\n' HGAPPLICATION2 "$store" "$journal_intent_boot" "$journal_boot_enabled" "$journal_was_running" "$manifest_body" | sha256sum) || fail 'Unable to bind service intent'
+    if [ "$journal_format" != HGAPPLICATION1 ]; then
+        digest=$(printf '%s\n' "$journal_format" "$store" "$journal_intent_boot" "$journal_boot_enabled" "$journal_was_running" "$manifest_body" | sha256sum) || fail 'Unable to bind service intent'
     else
         digest=$(printf '%s\n%s\n' "$store" "$manifest_body" | sha256sum) || fail 'Unable to bind application store'
     fi
@@ -421,12 +433,12 @@ journal_binding() {
 }
 journal_payload_write() {
     printf '%s\n' "$journal_format" "$journal_base" "$journal_target" "$journal_token" "$1" "$journal_before" "$journal_after" || return 1
-    if [ "$journal_format" = HGAPPLICATION2 ]; then printf '%s\n' "$journal_boot_enabled" "$journal_was_running" "$journal_intent_boot"; fi
+    if [ "$journal_format" != HGAPPLICATION1 ]; then printf '%s\n' "$journal_boot_enabled" "$journal_was_running" "$journal_intent_boot"; fi
 }
 journal_body_write() {
     journal_payload=$(journal_payload_write "$1") || return 1
     printf '%s\n' "$journal_payload" || return 1
-    if [ "$journal_format" = HGAPPLICATION2 ]; then
+    if [ "$journal_format" != HGAPPLICATION1 ]; then
         journal_checksum_value=$(printf '%s\n' "$journal_payload" | sha256sum) || return 1
         journal_checksum_value=${journal_checksum_value%% *}
         [ "${#journal_checksum_value}" -eq 64 ] || return 1
@@ -452,6 +464,7 @@ journal_begin() {
     journal_format=HGAPPLICATION1
     if [ "$service_intent_transaction" = true ]; then
         journal_format=HGAPPLICATION2; journal_boot_enabled=$request_boot_enabled; journal_was_running=$request_was_running
+        [ "$projection_transaction" = false ] || journal_format=HGAPPLICATION3
         clock_now; journal_intent_boot=$boot
     fi
     journal_base=$head_revision; journal_target=$new_revision
@@ -465,8 +478,8 @@ journal_need() {
     [ "$confirmation" = "$journal_token" ] || fail 'Application handle changed' 5
 }
 intent_ack_need() {
-    if [ "$journal_format" = HGAPPLICATION2 ] && [ "$application_result" = success ]; then
-        case "$command" in apply-finish-intent) expected_running=0;; restore-finish-intent) expected_running=$journal_was_running;;
+    if [ "$journal_format" != HGAPPLICATION1 ] && [ "$application_result" = success ]; then
+        case "$command:$journal_format" in apply-finish-intent:HGAPPLICATION2|apply-finish-projection:HGAPPLICATION3) expected_running=0;; restore-finish-intent:HGAPPLICATION2|restore-finish-projection:HGAPPLICATION3) expected_running=$journal_was_running;;
             *) fail 'Service observations are required' 5;; esac
         # Imported candidates are always disabled. Preserve boot links but do
         # not start a previously stopped service or activate imported settings.
@@ -474,7 +487,7 @@ intent_ack_need() {
         clock_now
         [ "$boot" = "$journal_intent_boot" ] || fail 'Service intent requires cold-start reconciliation' 7
     else
-        case "$command" in *-finish-intent) fail 'No bound service intent' 5;; esac
+        case "$command" in *-finish-intent|*-finish-projection) fail 'No bound service intent' 5;; esac
     fi
 }
 restore_pointer() {
@@ -621,12 +634,95 @@ ancestor() {
     return 1
 }
 
+production_source_lock() {
+    # Existing Go bridge writers use this same flock. Native Lua writers do
+    # not yet all participate; the fixed production publication gate stays off.
+    private_dir /var/run/homegate && private_file /var/run/homegate/frontend.lock || fail 'Unsafe legacy writer lock' 7
+    exec 6>>/var/run/homegate/frontend.lock || fail 'Unable to open legacy writer lock' 7
+    flock -n 6 || fail 'Legacy configuration writer is busy' 4
+}
+projection_source_check() {
+    [ -d /etc ] && [ ! -L /etc ] && [ -d /etc/config ] && [ ! -L /etc/config ] || fail 'Unsafe configuration directory' 7
+    case "$(stat -c '%u:%a' /etc/config 2>/dev/null)" in "$owner:700"|"$owner:755") ;; *) fail 'Unsafe configuration directory' 7;; esac
+    private_file /etc/config/homegate || fail 'Source configuration must be private' 7
+    number "$(stat -c %s /etc/config/homegate)" 1 "$public_limit" || fail 'Source configuration exceeds limit' 7
+}
+projection_capture() {
+    projection_source_check
+    source_identity=$(stat -c '%d:%i:%u:%a:%h:%s' /etc/config/homegate) || fail 'Unable to identify source configuration' 7
+    head -c "$((public_limit + 1))" /etc/config/homegate > "$generation_dir/source.conf" || fail 'Unable to capture source configuration' 7
+    private_file "$generation_dir/source.conf" && number "$(stat -c %s "$generation_dir/source.conf")" 1 "$public_limit" || fail 'Invalid source capture' 7
+    lua "$codec" source-baseline "$generation_dir/source.conf" "$store/gen-$head_revision" 2>/dev/null || fail 'Source configuration differs from baseline' 7
+    digest_file "$generation_dir/source.conf"; source_digest=$digest
+    projection_source_check
+    [ "$source_identity" = "$(stat -c '%d:%i:%u:%a:%h:%s' /etc/config/homegate)" ] || fail 'Source identity changed during capture' 7
+    digest_file /etc/config/homegate
+    [ "$digest" = "$source_digest" ] || fail 'Source configuration changed during capture' 7
+}
+projection_need() {
+    journal_need
+    [ "$journal_format" = HGAPPLICATION3 ] || fail 'No bound source projection' 5
+    clock_now
+    [ "$boot" = "$journal_intent_boot" ] || fail 'Source projection requires cold-start reconciliation' 7
+}
+projection_file_state() {
+    projection_source_check
+    digest_file "$store/gen-$journal_target/source.conf"; projection_base_digest=$digest
+    digest_file "$store/gen-$journal_target/public.conf"; projection_target_digest=$digest
+    digest_file /etc/config/homegate; projection_seen_digest=$digest
+    case "$projection_seen_digest" in "$projection_base_digest"|"$projection_target_digest") ;;
+        *) fail 'Configuration changed outside the source projection' 7;; esac
+}
+projection_publish() {
+    projection_need
+    case "$projection_role:$journal_state:$head_revision" in
+        "apply:applying:$journal_target") projection_desired="$store/gen-$journal_target/public.conf";;
+        "restore:restoring:$journal_base") projection_desired="$store/gen-$journal_target/source.conf";;
+        *) fail 'Source projection phase is not ready' 5;; esac
+    production_source_lock
+    sample_service
+    [ "$request_was_running" = 0 ] && [ "$request_boot_enabled" = "$journal_boot_enabled" ] || fail 'Service must be quiet with matching boot intent' 7
+    projection_file_state
+    digest_file "$projection_desired"; projection_desired_digest=$digest
+    if [ "$projection_seen_digest" != "$projection_desired_digest" ]; then
+        projection_scratch="/etc/config/.homegate-projection.$$"
+        (set -C; : > "$projection_scratch") 2>/dev/null || fail 'Unable to allocate projection file' 7
+        cat "$projection_desired" > "$projection_scratch" || fail 'Unable to stage configuration projection' 7
+        private_file "$projection_scratch" || fail 'Unsafe projection file' 7
+        digest_file "$projection_scratch"; [ "$digest" = "$projection_desired_digest" ] || fail 'Projection copy is incomplete' 7
+        fsync "$projection_scratch" 2>/dev/null || fail 'Unable to synchronize projection file' 7
+        projection_source_check; digest_file /etc/config/homegate
+        [ "$digest" = "$projection_seen_digest" ] || fail 'Configuration changed before projection publication' 7
+        mv -f "$projection_scratch" /etc/config/homegate || fail 'Unable to publish configuration projection' 7
+        projection_scratch=
+    fi
+    fsync /etc/config/homegate /etc/config 2>/dev/null || fail 'Configuration projection durability is uncertain' 7
+    projection_file_state
+    [ "$projection_seen_digest" = "$projection_desired_digest" ] || fail 'Projection readback does not match generation' 7
+    printf '{"api_version":1,"prototype":true,"ok":true,"scope":"bound-uci-projection","configuration_published":true,"business_applied":false}\n'
+}
+projection_observe_finish() {
+    [ "$owner" = 0 ] || fail 'Production projection requires root' 2
+    projection_need
+    production_source_lock
+    projection_file_state
+    case "$command:$journal_state:$head_revision" in
+        "apply-finish-projection:applying:$journal_target") projection_expected=$projection_target_digest;;
+        "restore-finish-projection:restoring:$journal_base") projection_expected=$projection_base_digest;;
+        *) fail 'Projection acknowledgement is stale' 5;; esac
+    [ "$projection_seen_digest" = "$projection_expected" ] || fail 'Expected configuration projection is not published' 7
+    sample_service
+    # Re-read after actual two-state sampling, before the terminal journal.
+    projection_file_state
+    [ "$projection_seen_digest" = "$projection_expected" ] || fail 'Projection changed during observation' 7
+    observed_boot_enabled=$request_boot_enabled; observed_running=$request_was_running
+}
 sample_service() {
     # Called after open_store + plan_read hold the configuration flock.
     # Only fixed production reads; neither publication nor service actions.
     allocate_scratch
     result=0
-    setsid ash "$(dirname "$0")/homegate-service-observer-watchdog.sh" "$confirmation" 3>"$scratch" 7>&- 8>&- 9>&- </dev/null >/dev/null 2>&1 || result=$?
+    setsid ash "$(dirname "$0")/homegate-service-observer-watchdog.sh" "$confirmation" 3>"$scratch" 6>&- 7>&- 8>&- 9>&- </dev/null >/dev/null 2>&1 || result=$?
     [ "$result" -eq 0 ] || fail 'Service state is unknown or unstable' 7
     read_one "$scratch" 64
     exec 8<"$scratch" || fail 'Unable to read service observation' 7
@@ -662,10 +758,21 @@ case "$command" in
     snapshot-read) [ "$#" -eq 0 ] && [ "$public_mode" = true ] || fail 'Private reader requires full schema' 2;;
     recover-application) [ "$#" -eq 0 ] && [ "$public_mode" = true ] || fail 'Recovery requires full schema' 2;;
     rollback-preview) [ "$#" -eq 1 ] && number "$1" 1 32 && [ "$1" = "$value" ] || fail 'Expected generation number' 2;;
-    commit-apply-observed)
+    commit-apply-projection|commit-apply-observed)
         [ "$public_mode" = true ] && [ "$#" -eq 1 ] && [ "${#1}" -eq 32 ] || fail 'Expected confirmation handle' 2
         case "$1" in *[!0-9a-f]*) fail 'Invalid confirmation handle' 2;; esac
         confirmation=$1; application_transaction=true; service_intent_transaction=true;;
+    projection-publish)
+        [ "$production_writes_enabled" = true ] || fail 'Production writer migration is incomplete' 2
+        [ "$public_mode" = true ] && [ "$#" -eq 2 ] && [ "${#1}" -eq 32 ] || fail 'Expected projection handle and role' 2
+        case "$1" in *[!0-9a-f]*) fail 'Invalid projection handle' 2;; esac
+        case "$2" in apply|restore) ;; *) fail 'Invalid projection role' 2;; esac
+        confirmation=$1; projection_role=$2;;
+    apply-finish-projection|restore-finish-projection)
+        [ "$production_writes_enabled" = true ] || fail 'Production writer migration is incomplete' 2
+        [ "$public_mode" = true ] && [ "$#" -eq 1 ] && [ "${#1}" -eq 32 ] || fail 'Expected projection handle' 2
+        case "$1" in *[!0-9a-f]*) fail 'Invalid projection handle' 2;; esac
+        confirmation=$1; application_result=success;;
     commit-apply-intent)
         [ "$public_mode" = true ] && [ "$#" -eq 3 ] && [ "${#1}" -eq 32 ] || fail 'Expected service intent' 2
         case "$1" in *[!0-9a-f]*) fail 'Invalid confirmation handle' 2;; esac
@@ -711,7 +818,7 @@ case "$command" in
         [ ! -e "$store/pending" ] || preview=true
         scope=main-public-v1; [ "$public_mode" = false ] || scope=public-uci-v1
         application_phase=none; [ "$journal_active" = false ] || application_phase=$journal_state
-        intent_bound=false; [ "$journal_format" != HGAPPLICATION2 ] || intent_bound=true
+        intent_bound=false; [ "$journal_format" = HGAPPLICATION1 ] || intent_bound=true
         printf '{"api_version":1,"prototype":true,"ok":true,"revision":%s,"preview_present":%s,"service_enabled":false,"history_capacity":32,"credential_capacity":%s,"scope":"%s","application_pending":%s,"application_phase":"%s","workers_pending":%s,"service_intent_bound":%s}\n' "$head_revision" "$preview" "$credential_limit" "$scope" "$journal_active" "$application_phase" "$workers_pending" "$intent_bound"
         ;;
     export)
@@ -727,7 +834,7 @@ case "$command" in
     apply-snapshot-read|restore-snapshot-read|apply-authorize|restore-authorize|apply-service-snapshot-read|restore-service-snapshot-read|service-intent-read)
         need_initialized; journal_need
         case "$command:$journal_format" in
-            apply-service-snapshot-read:HGAPPLICATION2|restore-service-snapshot-read:HGAPPLICATION2|service-intent-read:HGAPPLICATION2) ;;
+            apply-service-snapshot-read:HGAPPLICATION2|restore-service-snapshot-read:HGAPPLICATION2|service-intent-read:HGAPPLICATION2|apply-service-snapshot-read:HGAPPLICATION3|restore-service-snapshot-read:HGAPPLICATION3|service-intent-read:HGAPPLICATION3) ;;
             apply-snapshot-read:HGAPPLICATION1|restore-snapshot-read:HGAPPLICATION1|apply-authorize:HGAPPLICATION1|restore-authorize:HGAPPLICATION1) ;;
             *) fail 'Worker type does not match application intent' 5;;
         esac
@@ -749,9 +856,15 @@ case "$command" in
             printf '{"api_version":1,"prototype":true,"ok":true,"revision":%s,"scope":"internal-worker-context"}\n' "$head_revision";;
             *) private_snapshot;; esac
         ;;
-    apply-finish|apply-finish-intent)
+    projection-publish)
+        need_initialized
+        [ "$owner" = 0 ] || fail 'Production projection requires root' 2
+        projection_publish
+        ;;
+    apply-finish|apply-finish-intent|apply-finish-projection)
         need_initialized; journal_need
         [ "$journal_state" = applying ] && [ "$head_revision" = "$journal_target" ] || fail 'Application acknowledgement is stale' 5
+        [ "$command" != apply-finish-projection ] || projection_observe_finish
         intent_ack_need
         if [ "$application_result" = failure ]; then journal_restore
         else
@@ -760,9 +873,10 @@ case "$command" in
             printf '{"api_version":1,"prototype":true,"ok":true,"revision":%s,"application_pending":false,"worker_acknowledged":true}\n' "$head_revision"
         fi
         ;;
-    restore-finish|restore-finish-intent)
+    restore-finish|restore-finish-intent|restore-finish-projection)
         need_initialized; journal_need
         [ "$journal_state" = restoring ] && [ "$head_revision" = "$journal_base" ] || fail 'Recovery acknowledgement is stale' 5
+        [ "$command" != restore-finish-projection ] || projection_observe_finish
         intent_ack_need
         [ "$application_result" = success ] || fail 'Business restoration remains incomplete' 7
         journal_write restored
@@ -817,10 +931,12 @@ case "$command" in
         plan_kind=rollback; plan_source=$1
         plan_write
         ;;
-    commit|commit-apply|commit-apply-intent|commit-apply-observed)
+    commit|commit-apply|commit-apply-intent|commit-apply-observed|commit-apply-projection)
         need_initialized
         plan_read
-        if [ "$command" = commit-apply-observed ]; then sample_service; plan_read; fi
+        case "$command" in
+            commit-apply-projection) production_source_lock; sample_service; plan_read; projection_transaction=true;;
+            commit-apply-observed) sample_service; plan_read;; esac
         if [ "$plan_kind" = rollback ]; then
             ancestor "$plan_source" || fail 'Rollback target is not committed ancestry' 5
             validate_generation "$plan_source"
@@ -831,6 +947,7 @@ case "$command" in
         begin_generation
         printf '%s\n' "$plan_public" > "$generation_dir/public.conf" || fail 'Unable to write candidate config'
         copy_vault "$copy_source"
+        [ "$projection_transaction" = false ] || projection_capture
         if [ "$plan_kind" = migration ]; then
             cp "$store/gen-$plan_source/legacy.conf" "$generation_dir/legacy.conf" || fail 'Unable to retain private migration backup'
         fi

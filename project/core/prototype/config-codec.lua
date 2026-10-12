@@ -65,6 +65,23 @@ elseif arg[1]=="snapshot" and arg[2] and arg[3] and not arg[4] then
     if not f then fail() end
     local written=f:write(frame); local closed=f:close()
     if not written or not closed then fail() end
+elseif arg[1]=="source-baseline" and arg[2] and arg[3] and not arg[4] then
+    -- A private exact legacy copy must describe the same public configuration
+    -- AND credentials as the baseline generation. Never emit either input.
+    local raw=read(arg[2]); local expected=read(arg[3].."/public.conf")
+    local previous=io.open(arg[3].."/source.conf","rb")
+    local already_projected=previous and raw==expected
+    if previous and not previous:close() then fail() end
+    if not already_projected then
+        local public,slots=codec.migration(raw)
+        if not public or public~=expected then fail() end
+        for _,name in ipairs(allowed(parsed(arg[3].."/public.conf"))) do
+            local f=io.open(arg[3].."/credentials/"..name,"rb")
+            local value
+            if f then value=f:read(4097); if not value or #value<1 or #value>4096 or not f:close() then fail() end end
+            if value~=slots[name] then fail() end
+        end
+    end
 elseif arg[1]=="migrate" and arg[2] and arg[3] and not arg[4] then
     local body,slots=codec.migration(read(arg[2]))
     if not body then fail() end

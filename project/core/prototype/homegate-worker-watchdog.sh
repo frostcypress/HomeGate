@@ -39,9 +39,9 @@ running() {
 stop_family() {
     printf '%s\n' "$1" > "$store/worker-reason"
     # $$ is this still-running session leader, never a stale recorded PID.
-    kill -TERM -- "-$$" 2>/dev/null || :
+    kill -TERM "-$$" 2>/dev/null || :
     sleep 1
-    kill -KILL -- "-$$" 2>/dev/null
+    kill -KILL "-$$" 2>/dev/null
     exit 1
 }
 while running "$worker_pid" || running "$producer_pid"; do
@@ -52,7 +52,7 @@ while running "$worker_pid" || running "$producer_pid"; do
     [ "$stop_requested" = false ] || stop_family stop
     now=$(lua "$process" now) || stop_family inspection
     [ "$now" -lt "$deadline" ] || stop_family timeout
-    sleep 0.05
+    sleep 0.05 2>/dev/null || stop_family inspection
 done
 worker_rc=0; producer_rc=0
 wait "$worker_pid" || worker_rc=$?

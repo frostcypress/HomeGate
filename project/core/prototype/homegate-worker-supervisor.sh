@@ -90,7 +90,7 @@ orphan_quiescence() {
         while :; do
             members "$watchdog_pid"; [ "$count" != 0 ] || break
             now; [ "$moment" -lt "$end_wait" ] || fail 'Orphan worker quiescence is unproven'
-            sleep 0.05
+            sleep 0.05 2>/dev/null || fail 'Worker pacing is unavailable'
         done
     fi
     # A changed boot cannot contain the old kernel processes; no old PID is
@@ -112,7 +112,7 @@ run_job() {
         metadata "$child" "$handle"
         if [ "$group" = "$child" ] && [ "$session" = "$child" ] && [ "$matched" = 1 ]; then break; fi
         now; [ "$moment" -lt "$start_deadline" ] || fail 'Worker session startup is unproven'
-        sleep 0.05
+        sleep 0.05 2>/dev/null || fail 'Worker pacing is unavailable'
     done
     child_birth=$birth
     metadata "$$" none; own_birth=$birth
@@ -133,7 +133,7 @@ run_job() {
         case "$state" in ''|Z|X) break;; esac
         [ "$birth" = "$child_birth" ] || break
         now; [ "$moment" -lt "$final_deadline" ] || fail 'Worker completion is unproven'
-        sleep 0.05
+        sleep 0.05 2>/dev/null || fail 'Worker pacing is unavailable'
     done
     child_rc=0; wait "$child" || child_rc=$?
     # The leader may reach Z before all members finish handling group KILL.
@@ -141,10 +141,10 @@ run_job() {
     while :; do
         members "$child"; [ "$count" != 0 ] || break
         now; [ "$moment" -lt "$final_deadline" ] || fail 'Worker descendants remain active'
-        sleep 0.05
+        sleep 0.05 2>/dev/null || fail 'Worker pacing is unavailable'
     done
     # A second scan catches ordinary fork/exit transitions before ACK.
-    sleep 0.05
+    sleep 0.05 2>/dev/null || fail 'Worker pacing is unavailable'
     members "$child"; [ "$count" = 0 ] || fail 'Worker descendants remain active'
     lease_remove
     check_slots
@@ -164,6 +164,7 @@ case "${1:-}" in
 esac
 budget=${HOMEGATE_WORKER_PROTO_TIMEOUT:-30}
 case "$budget" in [1-9]|[12][0-9]|30) ;; *) fail 'Worker timeout must be 1 to 30 seconds' 2;; esac
+sleep 0.001 >/dev/null 2>&1 || fail 'Worker pacing is unavailable' 2
 ash "$engine" --public-uci status >/dev/null 2>&1 || fail 'Invalid isolated worker store' 2
 owner=$(id -u) || fail 'Unable to identify worker owner'
 boot=$(cat /proc/sys/kernel/random/boot_id) || fail 'Unable to read worker boot identity'

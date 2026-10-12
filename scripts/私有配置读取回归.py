@@ -85,11 +85,11 @@ class Runtime(unittest.TestCase):
     restore_tool=FullRuntime.restore_tool
     preview=FullRuntime.preview
 
-    def snapshot(self,expected=0):
+    def snapshot(self,*commands,expected=0):
         read_fd,write_fd=os.pipe()
         launcher='import os,sys; fd=int(sys.argv[1]); os.dup2(fd,3,inheritable=True); os.close(fd) if fd!=3 else None; os.execv(sys.argv[2],sys.argv[2:])'
         try:
-            process=subprocess.Popen([sys.executable,'-c',launcher,str(write_fd),self.busybox,'ash',str(SCRIPT),'--public-uci','snapshot-read'],
+            process=subprocess.Popen([sys.executable,'-c',launcher,str(write_fd),self.busybox,'ash',str(SCRIPT),'--public-uci',*(commands or ('snapshot-read',))],
                 stdout=subprocess.PIPE,stderr=subprocess.PIPE,env=self.env,pass_fds=(write_fd,))
         finally: os.close(write_fd)
         with os.fdopen(read_fd,'rb') as stream,ThreadPoolExecutor(max_workers=1) as pool:

@@ -110,7 +110,15 @@ class Runtime(unittest.TestCase):
         self.ubus.chmod(0o700)
 
     def daemon_start(self):
-        p=subprocess.Popen([str(self.executable),'daemon']); self.processes.append(p); return p
+        p=subprocess.Popen([str(self.executable),'daemon']); self.processes.append(p)
+        deadline=time.monotonic()+2
+        while True:
+            self.assertIsNone(p.poll(),'Fixture daemon exited before readiness')
+            try: ready=Path('/proc/'+str(p.pid)+'/cmdline').read_bytes()==os.fsencode(self.executable)+b'\0daemon\0'
+            except FileNotFoundError: ready=False
+            if ready: return p
+            if time.monotonic()>deadline: self.fail('Fixture daemon did not reach exec readiness')
+            time.sleep(0.005)
 
     def doc(self,pid=None,running=True):
         instance={'running':running,'command':[str(self.executable),'daemon']}
@@ -126,6 +134,10 @@ class Runtime(unittest.TestCase):
         self.assertTrue((self.store/'pending').exists())
 
     def test_four_independent_states_sample_real_processes_and_bind_journal(self):
+        # Actual unrelated task churn must not become a false daemon restart.
+        noise=subprocess.Popen([sys.executable,'-c','import subprocess\nwhile True: subprocess.run(["/bin/true"],check=True)'],
+                               stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
+        self.processes.append(noise)
         for enabled,running in [(0,0),(0,1),(1,0),(1,1)]:
             self.enable(enabled); p=self.daemon_start() if running else None
             self.query(self.doc(p.pid if p else None,running=bool(running)))
@@ -138,6 +150,7 @@ class Runtime(unittest.TestCase):
             if p: self.assertIsNone(p.poll()); p.terminate(); p.wait(timeout=5)
             self.plan=self.preview(self.business)
         self.assertEqual(set((self.base/'init-calls').read_text().splitlines()),{'enabled'})
+        self.assertIsNone(noise.poll()); noise.terminate(); noise.wait(timeout=5)
 
     def test_known_empty_service_forms_are_stopped(self):
         for doc in [{},{'homegate':{}},{'homegate':{'autostart':False}}]:

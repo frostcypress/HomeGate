@@ -86,6 +86,30 @@ open_store() {
     path_safe "$store" || fail 'Explicit safe prototype directory required' 2
     if [ ! -d "$store" ]; then mkdir "$store" 2>/dev/null || fail 'Unable to create private directory'; fi
     private_dir "$store" || fail 'Store must be private'
+    workers_pending=false
+    if [ -e "$store/worker" ] || [ -L "$store/worker" ]; then
+        private_file "$store/worker" && [ "$(stat -c %s "$store/worker")" -le 512 ] || fail 'Unsafe worker lease'
+        workers_pending=true
+    fi
+    if [ "$public_mode" = true ]; then
+        case "$command" in status|export) ;;
+            *)
+                if [ ! -e "$store/.supervisor.lock" ] && [ ! -L "$store/.supervisor.lock" ]; then
+                    (set -C; : > "$store/.supervisor.lock") 2>/dev/null || :
+                fi
+                private_file "$store/.supervisor.lock" || fail 'Unsafe supervisor lock'
+                # An internal parent may lend its already-held flock through
+                # FD 7. Other callers must acquire a new description of it.
+                if [ "$(stat -L -c '%d:%i:%u:%a:%h' /proc/self/fd/7 2>/dev/null)" != "$(stat -c '%d:%i:%u:%a:%h' "$store/.supervisor.lock")" ]; then
+                    exec 7>>"$store/.supervisor.lock" || fail 'Unable to open supervisor lock'
+                fi
+                flock -n 7 || fail 'Worker supervisor is busy' 4
+                if [ "$workers_pending" = true ]; then
+                    case "$command" in apply-snapshot-read|restore-snapshot-read|apply-authorize|restore-authorize) ;;
+                        *) fail 'Worker quiescence has not been confirmed' 4;; esac
+                fi;;
+        esac
+    fi
     if [ ! -e "$store/.lock" ] && [ ! -L "$store/.lock" ]; then
         (set -C; : > "$store/.lock") 2>/dev/null || :
     fi
@@ -119,7 +143,7 @@ open_store() {
     fi
     journal_read
     if [ "$journal_active" = true ]; then
-        case "$command" in status|export|recover-application|apply-finish|restore-finish|apply-snapshot-read|restore-snapshot-read) ;;
+        case "$command" in status|export|recover-application|apply-finish|restore-finish|apply-snapshot-read|restore-snapshot-read|apply-authorize|restore-authorize) ;;
             *) fail 'Application recovery barrier is active' 4;; esac
     fi
 }
@@ -564,7 +588,7 @@ case "$command" in
     snapshot-read) [ "$#" -eq 0 ] && [ "$public_mode" = true ] || fail 'Private reader requires full schema' 2;;
     recover-application) [ "$#" -eq 0 ] && [ "$public_mode" = true ] || fail 'Recovery requires full schema' 2;;
     rollback-preview) [ "$#" -eq 1 ] && number "$1" 1 32 && [ "$1" = "$value" ] || fail 'Expected generation number' 2;;
-    commit|commit-apply|apply-snapshot-read|restore-snapshot-read) [ "$#" -eq 1 ] && [ "${#1}" -eq 32 ] || fail 'Expected confirmation handle' 2
+    commit|commit-apply|apply-snapshot-read|restore-snapshot-read|apply-authorize|restore-authorize) [ "$#" -eq 1 ] && [ "${#1}" -eq 32 ] || fail 'Expected confirmation handle' 2
         case "$1" in *[!0-9a-f]*) fail 'Invalid confirmation handle' 2;; esac
         confirmation=$1
         if [ "$command" != commit ]; then [ "$public_mode" = true ] || fail 'Application requires full schema' 2; fi
@@ -598,7 +622,7 @@ case "$command" in
         [ ! -e "$store/pending" ] || preview=true
         scope=main-public-v1; [ "$public_mode" = false ] || scope=public-uci-v1
         application_phase=none; [ "$journal_active" = false ] || application_phase=$journal_state
-        printf '{"api_version":1,"prototype":true,"ok":true,"revision":%s,"preview_present":%s,"service_enabled":false,"history_capacity":32,"credential_capacity":%s,"scope":"%s","application_pending":%s,"application_phase":"%s"}\n' "$head_revision" "$preview" "$credential_limit" "$scope" "$journal_active" "$application_phase"
+        printf '{"api_version":1,"prototype":true,"ok":true,"revision":%s,"preview_present":%s,"service_enabled":false,"history_capacity":32,"credential_capacity":%s,"scope":"%s","application_pending":%s,"application_phase":"%s","workers_pending":%s}\n' "$head_revision" "$preview" "$credential_limit" "$scope" "$journal_active" "$application_phase" "$workers_pending"
         ;;
     export)
         need_initialized
@@ -610,14 +634,16 @@ case "$command" in
         # response, terminal, or regular file. Hold the same flock throughout.
         private_snapshot
         ;;
-    apply-snapshot-read|restore-snapshot-read)
+    apply-snapshot-read|restore-snapshot-read|apply-authorize|restore-authorize)
         need_initialized; journal_need
-        if [ "$command" = apply-snapshot-read ]; then
+        if [ "$command" = apply-snapshot-read ] || [ "$command" = apply-authorize ]; then
             [ "$journal_state" = applying ] && [ "$head_revision" = "$journal_target" ] || fail 'Application snapshot is not ready' 5
         else
             [ "$journal_state" = restoring ] && [ "$head_revision" = "$journal_base" ] || fail 'Recovery snapshot is not ready' 5
         fi
-        private_snapshot
+        case "$command" in *-authorize)
+            printf '{"api_version":1,"prototype":true,"ok":true,"revision":%s,"scope":"internal-worker-context"}\n' "$head_revision";;
+            *) private_snapshot;; esac
         ;;
     apply-finish)
         need_initialized; journal_need

@@ -61,4 +61,4 @@ Python 3.12+，Lua 回归另需 lupa==2.8；浏览器回归需 playwright==1.63.
 
 1.3.0-r19 接入固定工作端监督、独立看门期限、私有工作记录和停止/静默核实；只生成隔离派生回执，不执行真实业务。新增 1 项静态审计、18 项真实 Linux 监督用例及全部既有回归通过[本轮 Actions](https://github.com/frostcypress/HomeGate/actions/runs/38205254898)；原生 sh/BusyBox ash 语法通过，业务仍为隔离回执。生产服务/意图基线、全部写入入口和持久路径仍待接入；详见[工作监督合同](docs/工作进程监督.md)。
 
-1.3.0-r20 增加独立服务开机/运行意图与 boot 绑定、双状态观察 ACK 和旧回执隔离；目前只有协议层，没有实际采样或服务启停。新增 16 项 Linux 回归待当前 Actions。详见[服务意图合同](docs/服务意图绑定.md)。
+1.3.0-r20 增加独立服务开机/运行意图与 boot 绑定、双状态观察 ACK 和旧回执隔离；目前只有协议层，没有实际采样或服务启停。新增 16 项服务意图用例及全部既有 Linux/页面/工程回归通过[本轮 Actions](https://github.com/frostcypress/HomeGate/actions/runs/38207827999)；服务状态和观察值为显式夹具。详见[服务意图合同](docs/服务意图绑定.md)。

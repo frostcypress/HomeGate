@@ -374,7 +374,7 @@ journal_read() {
         HGAPPLICATION1) ;;
         HGAPPLICATION2)
             IFS= read -r journal_boot_enabled <&8 && IFS= read -r journal_was_running <&8 &&
-                IFS= read -r journal_intent_boot <&8 || fail 'Incomplete service intent'
+                IFS= read -r journal_intent_boot <&8 && IFS= read -r journal_checksum <&8 || fail 'Incomplete service intent'
             case "$journal_boot_enabled:$journal_was_running" in 0:0|0:1|1:0|1:1) ;; *) fail 'Invalid service intent';; esac;;
         *) fail 'Invalid application journal format';;
     esac
@@ -383,6 +383,8 @@ journal_read() {
     if [ "$journal_format" = HGAPPLICATION2 ]; then
         [ "${#journal_intent_boot}" -eq 36 ] || fail 'Invalid service boot identity'
         case "$journal_intent_boot" in *[!0-9a-f-]*) fail 'Invalid service boot identity';; esac
+        [ "${#journal_checksum}" -eq 64 ] || fail 'Invalid service intent checksum'
+        case "$journal_checksum" in *[!0-9a-f]*) fail 'Invalid service intent checksum';; esac
     fi
     number "$journal_base" 1 32 && [ "$journal_base" = "$value" ] || fail 'Invalid application baseline'
     number "$journal_target" 1 32 && [ "$journal_target" = "$value" ] &&
@@ -417,9 +419,20 @@ journal_binding() {
     [ "${#digest}" -eq 64 ] || fail 'Invalid application store binding'
     case "$digest" in *[!0-9a-f]*) fail 'Invalid application store binding';; esac
 }
-journal_body_write() {
+journal_payload_write() {
     printf '%s\n' "$journal_format" "$journal_base" "$journal_target" "$journal_token" "$1" "$journal_before" "$journal_after" || return 1
     if [ "$journal_format" = HGAPPLICATION2 ]; then printf '%s\n' "$journal_boot_enabled" "$journal_was_running" "$journal_intent_boot"; fi
+}
+journal_body_write() {
+    journal_payload=$(journal_payload_write "$1") || return 1
+    printf '%s\n' "$journal_payload" || return 1
+    if [ "$journal_format" = HGAPPLICATION2 ]; then
+        journal_checksum_value=$(printf '%s\n' "$journal_payload" | sha256sum) || return 1
+        journal_checksum_value=${journal_checksum_value%% *}
+        [ "${#journal_checksum_value}" -eq 64 ] || return 1
+        case "$journal_checksum_value" in *[!0-9a-f]*) return 1;; esac
+        printf '%s\n' "$journal_checksum_value"
+    fi
 }
 journal_write() {
     allocate_scratch

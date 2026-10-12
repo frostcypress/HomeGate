@@ -59,4 +59,6 @@ wait "$worker_pid" || worker_rc=$?
 wait "$producer_pid" || producer_rc=$?
 members=$(lua "$process" group "$$" "$$") || stop_family inspection
 [ "$members" = 0 ] || stop_family descendants
-[ "$worker_rc" -eq 0 ] && [ "$producer_rc" -eq 0 ]
+if [ "$worker_rc" -ne 0 ]; then printf '%s\n' worker-exit > "$store/worker-reason"; exit 1; fi
+if [ "$producer_rc" -ne 0 ]; then printf '%s\n' producer-exit > "$store/worker-reason"; exit 1; fi
+exit 0

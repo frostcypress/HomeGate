@@ -169,12 +169,17 @@ run_job() {
     lease_remove
     check_slots
     timed_out=false
-    if [ -f "$store/worker-reason" ]; then reason=$(cat "$store/worker-reason"); [ "$reason" != timeout ] || timed_out=true; fi
+    failure_reason=worker-exit
+    if [ -f "$store/worker-reason" ]; then
+        reason=$(cat "$store/worker-reason") || fail 'Unable to read worker result'
+        case "$reason" in timeout|stop|inspection|descendants|worker-exit|producer-exit) ;; *) fail 'Invalid worker result';; esac
+        failure_reason=$reason; [ "$reason" != timeout ] || timed_out=true
+    fi
     clean_slots
     [ "$interrupted" -eq 0 ] || fail 'Worker supervision interrupted; recovery required' "$interrupted"
     [ "$child_rc" -eq 0 ] || return 1
-    private_file "$store/runtime" && lua "$process" receipt "$store" "$revision" "$role" 2>/dev/null || return 1
-    fsync "$store/runtime" "$store" 2>/dev/null || return 1
+    if ! private_file "$store/runtime" || ! lua "$process" receipt "$store" "$revision" "$role" 2>/dev/null; then failure_reason=receipt; return 1; fi
+    if ! fsync "$store/runtime" "$store" 2>/dev/null; then failure_reason=receipt-sync; return 1; fi
     return 0
 }
 case "${1:-}" in
@@ -217,6 +222,7 @@ if [ "$command" = run-apply ]; then
         exit 0
     fi
     apply_timed_out=$timed_out
+    apply_failure_reason=$failure_reason
     ash "$engine" --public-uci apply-finish "$handle" failure >/dev/null 2>&1 || fail 'Baseline restoration could not begin'
 else
     result=$(ash "$engine" --public-uci recover-application 2>/dev/null) || fail 'Application recovery could not begin'
@@ -230,7 +236,7 @@ fi
 if run_job restore "$handle"; then
     ash "$engine" --public-uci restore-finish "$handle" success >/dev/null 2>&1 || fail 'Restoration acknowledgement is uncertain'
     if [ "$command" = run-apply ]; then
-        printf '{"api_version":1,"prototype":true,"ok":false,"scope":"isolated-worker-receipt","baseline_restored":true,"application_pending":false,"timed_out":%s}\n' "$apply_timed_out"
+        printf '{"api_version":1,"prototype":true,"ok":false,"scope":"isolated-worker-receipt","baseline_restored":true,"application_pending":false,"timed_out":%s,"failure_reason":"%s"}\n' "$apply_timed_out" "$apply_failure_reason"
         exit 8
     fi
     printf '{"api_version":1,"prototype":true,"ok":true,"scope":"isolated-worker-receipt","baseline_restored":true}\n'

@@ -16,7 +16,7 @@ from project import ROOT, identity
 
 SCRIPT = ROOT / 'project/core/prototype/homegate-config-prototype.sh'
 APPLETS = ('expr', 'stat', 'flock', 'mkdir', 'mv', 'rm', 'id', 'dirname',
-           'cat', 'cp', 'rmdir', 'sha256sum', 'head')
+           'cat', 'cp', 'rmdir', 'sha256sum', 'head', 'ash', 'setsid', 'sleep', 'mkfifo', 'ls')
 
 
 class Static(unittest.TestCase):

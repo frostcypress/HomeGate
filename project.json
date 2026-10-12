@@ -117,7 +117,9 @@
           "actual_service_actions": false,
           "service_worker_supervision": false,
           "production_switch": false,
-          "cold_start": "explicit-barrier-not-implemented"
+          "cold_start": "explicit-barrier-not-implemented",
+          "journal_line_count": 11,
+          "complete_record_checksum": "SHA256-not-MAC"
         }
       },
       "previous_runtime_run": "https://github.com/frostcypress/HomeGate/actions/runs/38205254898",

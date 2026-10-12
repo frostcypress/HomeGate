@@ -33,12 +33,25 @@ elseif arg[1]=="group" and arg[2] and arg[3] and not arg[4] then
     local p=io.popen("ls -1 /proc","r"); if not p then fail() end
     local listing=p:read(65537); local ok=p:close()
     if not listing or #listing>65536 or not ok then fail() end
+    -- Command substitution may retain an ash parent while this probe runs.
+    -- Exclude only this inspection ancestry; it is not a business worker.
+    local ignored={}
+    local self_stat=read("/proc/self/stat",8192)
+    local ancestor=self_stat and self_stat:match("^(%d+) ")
+    if not ancestor then fail() end
+    for i=1,32 do
+        ignored[ancestor]=true
+        local a=inspect(ancestor,"none")
+        if not a or a[2]=="0" then break end
+        ancestor=a[2]
+        if i==32 then fail() end
+    end
     local count=0; local scanned=0
     for pid in listing:gmatch("[^\n]+") do
         if pid:match("^[1-9]%d*$") then
             scanned=scanned+1; if scanned>4096 then fail() end
             local a=inspect(pid,"none")
-            if a and pid~=arg[3] and a[3]==arg[2] and a[4]==arg[2] and a[1]~="Z" and a[1]~="X" then count=count+1 end
+            if a and not ignored[pid] and pid~=arg[3] and a[3]==arg[2] and a[4]==arg[2] and a[1]~="Z" and a[1]~="X" then count=count+1 end
         end
     end
     io.write(count,"\n")

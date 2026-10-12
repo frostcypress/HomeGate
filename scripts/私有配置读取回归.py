@@ -161,7 +161,9 @@ class Runtime(unittest.TestCase):
         self.secret(b'PRIVATE_SENTINEL')
         self.fault('lua','if "snapshot" in sys.argv: sys.exit(1)')
         self.snapshot(expected=1)
-        self.restore_tool('lua')
+        # Lua is the actual Lua 5.1 interpreter, not a BusyBox applet.
+        (self.bin/'lua').unlink()
+        (self.bin/'lua').symlink_to(self.lua)
         frame=self.snapshot()[1]
         self.assertIsNone(self.decode(frame[:-1])[0])
 

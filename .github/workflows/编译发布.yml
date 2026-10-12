@@ -73,7 +73,8 @@ jobs:
           required = ['BUSYBOX', 'ASH', 'ASH_OPTIMIZE_FOR_SIZE', 'ASH_PRINTF', 'ASH_TEST',
                       'FEATURE_SH_MATH', 'EXPR', 'STAT', 'FEATURE_STAT_FORMAT', 'FLOCK',
                       'TR', 'MKDIR', 'MV', 'RM', 'ID', 'DIRNAME', 'CAT', 'CP',
-                      'RMDIR', 'SHA256SUM', 'HEAD', 'FEATURE_FANCY_HEAD', 'FSYNC']
+                      'RMDIR', 'SHA256SUM', 'HEAD', 'FEATURE_FANCY_HEAD', 'FSYNC',
+                      'SETSID', 'SLEEP', 'FEATURE_FANCY_SLEEP', 'MKFIFO', 'LS', 'KILL', 'ASH_BUILTIN_KILL']
           for name in required:
               pattern = r'^# CONFIG_' + name + r' is not set$'
               body, count = re.subn(pattern, 'CONFIG_' + name + '=y', body, flags=re.M)
@@ -91,6 +92,7 @@ jobs:
           python3 scripts/准备UCI解析回归.py
       - name: 验证 Shell 原型语法与真实 BusyBox 执行
         run: |
+          for file in project/core/prototype/*.sh; do busybox ash -n "$file"; done
           build/verify-venv/bin/python scripts/Shell原型回归.py --static
           build/verify-venv/bin/python scripts/Shell原型回归.py --runtime
           build/verify-venv/bin/python scripts/配置事务原型回归.py --static
@@ -102,6 +104,8 @@ jobs:
           build/verify-venv/bin/python scripts/私有配置读取回归.py
           build/verify-venv/bin/python scripts/私有配置读取回归.py --runtime
           build/verify-venv/bin/python scripts/配置应用恢复回归.py --runtime
+          build/verify-venv/bin/python scripts/工作监督回归.py --static
+          build/verify-venv/bin/python scripts/工作监督回归.py --runtime
       - name: 验证安全导出、导航与页面行为
         run: |
           build/verify-venv/bin/python scripts/导航安全回归.py

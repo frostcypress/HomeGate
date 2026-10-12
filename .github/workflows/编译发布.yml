@@ -74,7 +74,7 @@ jobs:
                       'FEATURE_SH_MATH', 'EXPR', 'STAT', 'FEATURE_STAT_FORMAT', 'FLOCK',
                       'TR', 'MKDIR', 'MV', 'RM', 'ID', 'DIRNAME', 'CAT', 'CP',
                       'RMDIR', 'SHA256SUM', 'HEAD', 'FEATURE_FANCY_HEAD', 'FSYNC',
-                      'SETSID', 'SLEEP', 'FEATURE_FANCY_SLEEP', 'FLOAT_DURATION', 'MKFIFO', 'LS', 'KILL', 'ASH_BUILTIN_KILL']
+                      'SETSID', 'SLEEP', 'FEATURE_FANCY_SLEEP', 'FLOAT_DURATION', 'MKFIFO', 'LS', 'KILL']
           for name in required:
               pattern = r'^# CONFIG_' + name + r' is not set$'
               body, count = re.subn(pattern, 'CONFIG_' + name + '=y', body, flags=re.M)

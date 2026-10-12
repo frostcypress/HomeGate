@@ -48,9 +48,10 @@ class Runtime(unittest.TestCase):
     def test_four_independent_boot_run_states_are_bound_without_import_activation(self):
         for boot,running in [(0,0),(0,1),(1,0),(1,1)]:
             result=self.begin(boot,running); rows=self.journal().decode().splitlines()
-            self.assertEqual(len(rows),10); self.assertEqual(rows[0],'HGAPPLICATION2')
+            self.assertEqual(len(rows),11); self.assertEqual(rows[0],'HGAPPLICATION2')
             self.assertEqual(rows[7:9],[str(boot),str(running)])
             self.assertEqual(rows[9],Path('/proc/sys/kernel/random/boot_id').read_text().strip())
+            self.assertEqual(rows[10],hashlib.sha256(('\n'.join(rows[:10])+'\n').encode()).hexdigest())
             state=self.context()
             self.assertEqual((state['boot_enabled'],state['baseline_running'],state['expected_running']),(boot,running,0))
             self.assertTrue(state['same_boot']); self.assertEqual(state['revision'],result['revision'])
@@ -136,7 +137,7 @@ class Runtime(unittest.TestCase):
         self.begin(1,1); original=self.journal(); journal=self.store/'application'
         rows=original.splitlines()
         variants=[original[:-1],original+b'\n',original+b'0\n']
-        for index,value in [(7,b'0'),(8,b'0'),(7,b'01'),(9,b'0'*36),(0,b'HGAPPLICATION1')]:
+        for index,value in [(7,b'0'),(8,b'0'),(7,b'01'),(9,b'0'*36),(0,b'HGAPPLICATION1'),(4,b'applied'),(3,b'0'*32)]:
             changed=list(rows); changed[index]=value; variants.append(b'\n'.join(changed)+b'\n')
         for body in variants:
             journal.write_bytes(body); self.cli('recover-application',expected=1)
@@ -216,6 +217,7 @@ class Runtime(unittest.TestCase):
             manifest=(self.store/('gen-'+revision)/'manifest').read_text().rstrip('\n')
             framed='\n'.join(['HGAPPLICATION2',str(self.store),rows[9],rows[7],rows[8],manifest])+'\n'
             rows[index]=hashlib.sha256(framed.encode()).hexdigest()
+        rows[10]=hashlib.sha256(('\n'.join(rows[:10])+'\n').encode()).hexdigest()
         (self.store/'application').write_text('\n'.join(rows)+'\n')
         self.assertFalse(self.context()['same_boot'])
         self.acknowledge(1,0,expected=7)

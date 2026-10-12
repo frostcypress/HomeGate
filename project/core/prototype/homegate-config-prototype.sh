@@ -8,6 +8,9 @@ export LC_ALL=C
 scratch=
 generation_dir=
 published=false
+keep_candidate=false
+application_transaction=false
+journal_active=false
 public_mode=false
 public_limit=1024
 credential_limit=16
@@ -22,7 +25,7 @@ fail() {
 cleanup() {
     [ -z "$scratch" ] || rm -f "$scratch"
     # Only files allocated by this invocation are removed. No recursive delete.
-    if [ -n "$generation_dir" ] && [ "$published" = false ]; then
+    if [ -n "$generation_dir" ] && [ "$published" = false ] && [ "$keep_candidate" = false ]; then
         for item in "$generation_dir/credentials/"*; do
             [ ! -e "$item" ] || rm -f "$item"
         done
@@ -113,6 +116,11 @@ open_store() {
         validate_generation "$head_revision"
     elif [ "$max_revision" -ne 0 ]; then
         fail 'Interrupted initialization requires explicit recovery'
+    fi
+    journal_read
+    if [ "$journal_active" = true ]; then
+        case "$command" in status|export|recover-application|apply-finish|restore-finish|apply-snapshot-read|restore-snapshot-read) ;;
+            *) fail 'Application recovery barrier is active' 4;; esac
     fi
 }
 slot_valid() {
@@ -261,8 +269,7 @@ seal_generation() {
     generation_manifest "$generation_dir" > "$generation_dir/manifest" || fail 'Unable to seal generation'
     validate_generation "$new_revision"
 }
-publish_generation() {
-    seal_generation
+synchronize_generation() {
     if [ "$public_mode" = true ]; then
         # BusyBox 1.33.2 sync -f ignores syncfs errors. Use checked fsync.
         fsync "$generation_dir/public.conf" "$generation_dir/parent" "$generation_dir/manifest" 2>/dev/null || fail 'Unable to synchronize candidate files'
@@ -272,6 +279,11 @@ publish_generation() {
         done
         fsync "$generation_dir/credentials" "$generation_dir" 2>/dev/null || fail 'Unable to synchronize candidate directories'
     fi
+}
+publish_generation() {
+    seal_generation
+    synchronize_generation
+    [ "$application_transaction" = false ] || journal_begin
     allocate_scratch
     printf '%s\n' "$new_revision" > "$scratch" || fail 'Unable to write current pointer'
     if [ "$public_mode" = true ]; then
@@ -284,6 +296,13 @@ publish_generation() {
     if [ "$public_mode" = true ]; then
         fsync "$store" 2>/dev/null || fail 'Published pointer durability is uncertain' 6
         durability=fsync-barriers-not-device-verified
+    fi
+    if [ "$application_transaction" = true ]; then
+        head_revision=$new_revision
+        journal_write applying
+        rm -f "$store/pending" 2>/dev/null || :
+        printf '{"api_version":1,"prototype":true,"ok":true,"revision":%s,"application_pending":true,"apply_handle":"%s","business_applied":false}\n' "$new_revision" "$journal_token"
+        return
     fi
     printf '{"api_version":1,"prototype":true,"ok":true,"revision":%s,"service_enabled":false,"durability":"%s"}\n' "$new_revision" "$durability"
 }
@@ -313,6 +332,102 @@ digest_file() {
     digest=${digest%% *}
     [ "${#digest}" -eq 64 ] || fail 'Invalid transaction digest'
     case "$digest" in *[!0-9a-f]*) fail 'Invalid transaction digest';; esac
+}
+journal_read() {
+    journal_active=false
+    if [ ! -e "$store/application" ] && [ ! -L "$store/application" ]; then return; fi
+    [ "$public_mode" = true ] || fail 'Application journal requires full schema'
+    read_one "$store/application" 512
+    journal_body=$one
+    exec 8<"$store/application" || fail 'Unable to read application journal'
+    IFS= read -r journal_format <&8 && IFS= read -r journal_base <&8 &&
+        IFS= read -r journal_target <&8 && IFS= read -r journal_token <&8 &&
+        IFS= read -r journal_state <&8 && IFS= read -r journal_before <&8 &&
+        IFS= read -r journal_after <&8 || fail 'Incomplete application journal'
+    if IFS= read -r extra <&8; then fail 'Unexpected application journal data'; fi
+    exec 8<&-
+    [ "$journal_format" = HGAPPLICATION1 ] || fail 'Invalid application journal format'
+    number "$journal_base" 1 32 && [ "$journal_base" = "$value" ] || fail 'Invalid application baseline'
+    number "$journal_target" 1 32 && [ "$journal_target" = "$value" ] &&
+        [ "$journal_target" -gt "$journal_base" ] || fail 'Invalid application candidate'
+    case "$journal_state" in prepared|applying|restoring|applied|restored) ;; *) fail 'Invalid application journal phase';; esac
+    [ "${#journal_token}" -eq 32 ] || fail 'Invalid application handle'
+    case "$journal_token" in *[!0-9a-f]*) fail 'Invalid application handle';; esac
+    [ "${#journal_before}" -eq 64 ] && [ "${#journal_after}" -eq 64 ] || fail 'Invalid application binding'
+    case "$journal_before$journal_after" in *[!0-9a-f]*) fail 'Invalid application binding';; esac
+    framed=$(printf '%s\n' HGAPPLICATION1 "$journal_base" "$journal_target" "$journal_token" "$journal_state" "$journal_before" "$journal_after")
+    [ "$journal_body" = "$framed" ] || fail 'Invalid application journal framing'
+    validate_generation "$journal_base"
+    journal_binding "$journal_base"
+    [ "$digest" = "$journal_before" ] || fail 'Application baseline changed'
+    validate_generation "$journal_target"
+    [ "$validated_parent" = "$journal_base" ] || fail 'Invalid application ancestry'
+    journal_binding "$journal_target"
+    [ "$digest" = "$journal_after" ] || fail 'Application candidate changed'
+    case "$head_revision" in "$journal_base"|"$journal_target") ;; *) fail 'Application pointer is inconsistent';; esac
+    case "$journal_state:$head_revision" in "applied:$journal_target"|"restored:$journal_base") ;;
+        applied:*|restored:*) fail 'Completed application pointer is inconsistent';; esac
+    journal_active=true
+}
+journal_binding() {
+    manifest_body=$(cat "$store/gen-$1/manifest") || fail 'Unable to bind application generation'
+    digest=$(printf '%s\n%s\n' "$store" "$manifest_body" | sha256sum) || fail 'Unable to bind application store'
+    digest=${digest%% *}
+    [ "${#digest}" -eq 64 ] || fail 'Invalid application store binding'
+    case "$digest" in *[!0-9a-f]*) fail 'Invalid application store binding';; esac
+}
+journal_write() {
+    allocate_scratch
+    printf '%s\n' HGAPPLICATION1 "$journal_base" "$journal_target" "$journal_token" "$1" "$journal_before" "$journal_after" > "$scratch" || fail 'Unable to write application intent' 7
+    fsync "$scratch" 2>/dev/null || fail 'Unable to synchronize application intent' 7
+    mv -f "$scratch" "$store/application" || fail 'Unable to publish application intent' 7
+    scratch=
+    # From the first visible journal rename, cleanup must preserve its target,
+    # even if the following directory barrier fails or the process is killed.
+    keep_candidate=true
+    journal_active=true
+    journal_state=$1
+    fsync "$store" 2>/dev/null || fail 'Application intent durability is uncertain' 7
+}
+journal_begin() {
+    [ "$journal_active" = false ] || fail 'Application already pending' 4
+    journal_base=$head_revision; journal_target=$new_revision
+    journal_binding "$journal_base"; journal_before=$digest
+    journal_binding "$journal_target"; journal_after=$digest
+    new_token; journal_token=$token
+    journal_write prepared
+}
+journal_need() {
+    [ "$journal_active" = true ] || fail 'No pending application' 5
+    [ "$confirmation" = "$journal_token" ] || fail 'Application handle changed' 5
+}
+restore_pointer() {
+    allocate_scratch
+    printf '%s\n' "$journal_base" > "$scratch" || fail 'Unable to write recovery pointer' 7
+    fsync "$scratch" 2>/dev/null || fail 'Unable to synchronize recovery pointer' 7
+    mv -f "$scratch" "$store/current" || fail 'Unable to restore recovery pointer' 7
+    scratch=
+    head_revision=$journal_base
+    fsync "$store" 2>/dev/null || fail 'Recovery pointer durability is uncertain' 7
+}
+journal_restore() {
+    journal_write restoring
+    restore_pointer
+    printf '{"api_version":1,"prototype":true,"ok":true,"revision":%s,"restoration_pending":true,"restore_handle":"%s","business_restored":false}\n' "$journal_base" "$journal_token"
+}
+journal_close() {
+    # Recovery can return to the preview's original base. Remove and sync the
+    # old preview before lifting the barrier, so that handle cannot replay.
+    rm -f "$store/pending" || fail 'Unable to invalidate application preview' 7
+    fsync "$store" 2>/dev/null || fail 'Preview invalidation durability is uncertain' 7
+    rm -f "$store/application" || fail 'Unable to close application intent' 7
+    journal_active=false
+    fsync "$store" 2>/dev/null || fail 'Application completion durability is uncertain' 7
+}
+private_snapshot() {
+    [ -p /proc/self/fd/3 ] || fail 'Private reader requires inherited pipe' 2
+    lua "$codec" snapshot "$store/gen-$head_revision" "$head_revision" 2>/dev/null || fail 'Unable to deliver private snapshot'
+    printf '{"api_version":1,"prototype":true,"ok":true,"revision":%s,"scope":"private-business-reader"}\n' "$head_revision"
 }
 baseline_fingerprint() {
     manifest_body=$(cat "$store/gen-$head_revision/manifest" 2>/dev/null) || fail 'Unable to read transaction baseline'
@@ -447,10 +562,17 @@ case "$command" in
     init|status|export|preview|cancel) [ "$#" -eq 0 ] || fail 'Unexpected arguments' 2;;
     migration-preview) [ "$#" -eq 0 ] && [ "$public_mode" = true ] || fail 'Migration requires full schema' 2;;
     snapshot-read) [ "$#" -eq 0 ] && [ "$public_mode" = true ] || fail 'Private reader requires full schema' 2;;
+    recover-application) [ "$#" -eq 0 ] && [ "$public_mode" = true ] || fail 'Recovery requires full schema' 2;;
     rollback-preview) [ "$#" -eq 1 ] && number "$1" 1 32 && [ "$1" = "$value" ] || fail 'Expected generation number' 2;;
-    commit) [ "$#" -eq 1 ] && [ "${#1}" -eq 32 ] || fail 'Expected confirmation handle' 2
+    commit|commit-apply|apply-snapshot-read|restore-snapshot-read) [ "$#" -eq 1 ] && [ "${#1}" -eq 32 ] || fail 'Expected confirmation handle' 2
         case "$1" in *[!0-9a-f]*) fail 'Invalid confirmation handle' 2;; esac
-        confirmation=$1;;
+        confirmation=$1
+        if [ "$command" != commit ]; then [ "$public_mode" = true ] || fail 'Application requires full schema' 2; fi
+        [ "$command" != commit-apply ] || application_transaction=true;;
+    apply-finish|restore-finish) [ "$public_mode" = true ] && [ "$#" -eq 2 ] && [ "${#1}" -eq 32 ] || fail 'Expected application result' 2
+        case "$1" in *[!0-9a-f]*) fail 'Invalid application handle' 2;; esac
+        case "$2" in success|failure) ;; *) fail 'Invalid application result' 2;; esac
+        confirmation=$1; application_result=$2;;
     credential-put|credential-delete) [ "$#" -eq 3 ] && slot_valid "$1" "$2" "$3" || fail 'Expected provider account slot' 2
         credential_name="$1.$2.$3";;
     *) fail 'Unsupported prototype command' 2;;
@@ -475,7 +597,8 @@ case "$command" in
         preview=false
         [ ! -e "$store/pending" ] || preview=true
         scope=main-public-v1; [ "$public_mode" = false ] || scope=public-uci-v1
-        printf '{"api_version":1,"prototype":true,"ok":true,"revision":%s,"preview_present":%s,"service_enabled":false,"history_capacity":32,"credential_capacity":%s,"scope":"%s"}\n' "$head_revision" "$preview" "$credential_limit" "$scope"
+        application_phase=none; [ "$journal_active" = false ] || application_phase=$journal_state
+        printf '{"api_version":1,"prototype":true,"ok":true,"revision":%s,"preview_present":%s,"service_enabled":false,"history_capacity":32,"credential_capacity":%s,"scope":"%s","application_pending":%s,"application_phase":"%s"}\n' "$head_revision" "$preview" "$credential_limit" "$scope" "$journal_active" "$application_phase"
         ;;
     export)
         need_initialized
@@ -485,9 +608,42 @@ case "$command" in
         need_initialized
         # Only an inherited pipe may receive private bytes. Never a path, RPC
         # response, terminal, or regular file. Hold the same flock throughout.
-        [ -p /proc/self/fd/3 ] || fail 'Private reader requires inherited pipe' 2
-        lua "$codec" snapshot "$store/gen-$head_revision" "$head_revision" 2>/dev/null || fail 'Unable to deliver private snapshot'
-        printf '{"api_version":1,"prototype":true,"ok":true,"revision":%s,"scope":"private-business-reader"}\n' "$head_revision"
+        private_snapshot
+        ;;
+    apply-snapshot-read|restore-snapshot-read)
+        need_initialized; journal_need
+        if [ "$command" = apply-snapshot-read ]; then
+            [ "$journal_state" = applying ] && [ "$head_revision" = "$journal_target" ] || fail 'Application snapshot is not ready' 5
+        else
+            [ "$journal_state" = restoring ] && [ "$head_revision" = "$journal_base" ] || fail 'Recovery snapshot is not ready' 5
+        fi
+        private_snapshot
+        ;;
+    apply-finish)
+        need_initialized; journal_need
+        [ "$journal_state" = applying ] && [ "$head_revision" = "$journal_target" ] || fail 'Application acknowledgement is stale' 5
+        if [ "$application_result" = failure ]; then journal_restore
+        else
+            journal_write applied
+            journal_close
+            printf '{"api_version":1,"prototype":true,"ok":true,"revision":%s,"application_pending":false,"worker_acknowledged":true}\n' "$head_revision"
+        fi
+        ;;
+    restore-finish)
+        need_initialized; journal_need
+        [ "$journal_state" = restoring ] && [ "$head_revision" = "$journal_base" ] || fail 'Recovery acknowledgement is stale' 5
+        [ "$application_result" = success ] || fail 'Business restoration remains incomplete' 7
+        journal_write restored
+        journal_close
+        printf '{"api_version":1,"prototype":true,"ok":true,"revision":%s,"application_pending":false,"worker_acknowledged":true}\n' "$head_revision"
+        ;;
+    recover-application)
+        need_initialized
+        [ "$journal_active" = true ] || fail 'No pending application' 5
+        case "$journal_state" in applied|restored)
+            journal_close
+            printf '{"api_version":1,"prototype":true,"ok":true,"revision":%s,"application_pending":false,"worker_acknowledged":true}\n' "$head_revision";;
+            *) journal_restore;; esac
         ;;
     preview)
         need_initialized
@@ -529,7 +685,7 @@ case "$command" in
         plan_kind=rollback; plan_source=$1
         plan_write
         ;;
-    commit)
+    commit|commit-apply)
         need_initialized
         plan_read
         if [ "$plan_kind" = rollback ]; then

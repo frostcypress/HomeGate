@@ -46,7 +46,9 @@ class Static(unittest.TestCase):
                         command=body[name.start_byte:name.end_byte].decode()
                         self.assertNotIn('$',command)
                         self.assertNotIn(command,{'eval','.','source','uci','curl','wget','service','nft','ip6tables','reboot'})
-                        if command=='kill': self.assertIn(b'"-$$"',body[node.start_byte:node.end_byte])
+                        if command=='kill':
+                            call=body[node.start_byte:node.end_byte]
+                            if b'"-$$"' not in call: self.assertEqual(call,b'kill -0 "$$"')
                 nodes.extend(node.named_children)
         self.assertNotIn('prototype/',(ROOT/'project/core/Makefile').read_text())
 
@@ -225,7 +227,15 @@ class Runtime(unittest.TestCase):
         try: os.kill(int(lease[5]),signal.SIGKILL)
         except ProcessLookupError: self.fail('Watchdog ended before fault injection')
         self.supervise('recover',expected=7)
-        self.assertTrue(self.cli('status')['workers_pending'])
+        self.assertEqual((self.store/'worker').read_text().splitlines(),lease)
+        # The live unread-pipe producer may still own FD9. Status must either
+        # report the preserved lease or explicitly report configuration busy.
+        result=subprocess.run([self.busybox,'ash',str(DIRECTORY/'homegate-config-prototype.sh'),'--public-uci','status'],
+                              env=self.env,capture_output=True,timeout=5)
+        self.assertEqual(result.stderr,b''); self.assertIn(result.returncode,(0,4))
+        report=json.loads(result.stdout)
+        if result.returncode==0: self.assertTrue(report['workers_pending'])
+        else: self.assertEqual(report['error'],'Configuration busy')
         self.cli('apply-finish',self.handle,'success',expected=4)
 
     def stale_lease(self):

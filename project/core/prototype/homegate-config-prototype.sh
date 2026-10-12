@@ -621,6 +621,28 @@ ancestor() {
     return 1
 }
 
+sample_service() {
+    # Called after open_store + plan_read hold the configuration flock.
+    # Only fixed production reads; neither publication nor service actions.
+    allocate_scratch
+    result=0
+    setsid ash "$(dirname "$0")/homegate-service-observer-watchdog.sh" "$confirmation" 3>"$scratch" 7>&- 8>&- 9>&- </dev/null >/dev/null 2>&1 || result=$?
+    [ "$result" -eq 0 ] || fail 'Service state is unknown or unstable' 7
+    read_one "$scratch" 64
+    exec 8<"$scratch" || fail 'Unable to read service observation' 7
+    IFS= read -r sample_format <&8 && IFS= read -r request_boot_enabled <&8 &&
+        IFS= read -r request_was_running <&8 && IFS= read -r sample_boot <&8 || fail 'Incomplete service observation' 7
+    if IFS= read -r extra <&8; then fail 'Unexpected service observation' 7; fi
+    exec 8<&-
+    [ "$sample_format" = HGSERVICE1 ] || fail 'Invalid service observation' 7
+    case "$request_boot_enabled:$request_was_running" in 0:0|0:1|1:0|1:1) ;; *) fail 'Invalid service observation' 7;; esac
+    expected=$(printf '%s\n' HGSERVICE1 "$request_boot_enabled" "$request_was_running" "$sample_boot")
+    [ "$one" = "$expected" ] || fail 'Invalid service observation framing' 7
+    clock_now
+    [ "$sample_boot" = "$boot" ] || fail 'Service observation belongs to another boot' 7
+    drop_scratch
+}
+
 [ "$#" -ge 1 ] || fail 'Missing prototype command' 2
 command=$1
 shift
@@ -640,6 +662,10 @@ case "$command" in
     snapshot-read) [ "$#" -eq 0 ] && [ "$public_mode" = true ] || fail 'Private reader requires full schema' 2;;
     recover-application) [ "$#" -eq 0 ] && [ "$public_mode" = true ] || fail 'Recovery requires full schema' 2;;
     rollback-preview) [ "$#" -eq 1 ] && number "$1" 1 32 && [ "$1" = "$value" ] || fail 'Expected generation number' 2;;
+    commit-apply-observed)
+        [ "$public_mode" = true ] && [ "$#" -eq 1 ] && [ "${#1}" -eq 32 ] || fail 'Expected confirmation handle' 2
+        case "$1" in *[!0-9a-f]*) fail 'Invalid confirmation handle' 2;; esac
+        confirmation=$1; application_transaction=true; service_intent_transaction=true;;
     commit-apply-intent)
         [ "$public_mode" = true ] && [ "$#" -eq 3 ] && [ "${#1}" -eq 32 ] || fail 'Expected service intent' 2
         case "$1" in *[!0-9a-f]*) fail 'Invalid confirmation handle' 2;; esac
@@ -791,9 +817,10 @@ case "$command" in
         plan_kind=rollback; plan_source=$1
         plan_write
         ;;
-    commit|commit-apply|commit-apply-intent)
+    commit|commit-apply|commit-apply-intent|commit-apply-observed)
         need_initialized
         plan_read
+        if [ "$command" = commit-apply-observed ]; then sample_service; plan_read; fi
         if [ "$plan_kind" = rollback ]; then
             ancestor "$plan_source" || fail 'Rollback target is not committed ancestry' 5
             validate_generation "$plan_source"

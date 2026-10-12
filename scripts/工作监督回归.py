@@ -127,6 +127,16 @@ class Runtime(unittest.TestCase):
             return json.loads(result.stdout)
 
     def receipt(self): return dict(line.split('=',1) for line in (self.store/'runtime').read_text().splitlines()[1:])
+    def readable_status(self):
+        # The snapshot producer may briefly own the configuration flock.
+        # Retry only the documented busy response, never a validation error.
+        deadline=time.monotonic()+2
+        while True:
+            result=subprocess.run([self.busybox,'ash',str(DIRECTORY/'homegate-config-prototype.sh'),'--public-uci','status'],
+                                  env=self.env,capture_output=True,timeout=5)
+            if result.returncode==4 and time.monotonic()<deadline: time.sleep(0.02); continue
+            self.assertEqual(result.returncode,0,(result.stdout,result.stderr))
+            self.assertEqual(result.stderr,b''); return json.loads(result.stdout)
     def assert_closed(self,revision):
         status=self.cli('status')
         self.assertEqual(status['revision'],revision)
@@ -180,7 +190,7 @@ class Runtime(unittest.TestCase):
         release=self.base/'release'
         self.fake_lua('if sys.argv[1].endswith("homegate-worker-prototype.lua") and sys.argv[2]=="apply":\n    while not os.path.exists('+repr(str(release))+'): time.sleep(0.05)')
         process,lease=self.start_supervisor()
-        self.assertTrue(self.cli('status')['workers_pending'])
+        self.assertTrue(self.readable_status()['workers_pending'])
         self.cli('apply-finish',self.handle,'success',expected=4)
         self.cli('recover-application',expected=4)
         self.supervise('recover',expected=4)

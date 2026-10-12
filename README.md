@@ -63,4 +63,4 @@ Python 3.12+，Lua 回归另需 lupa==2.8；浏览器回归需 playwright==1.63.
 
 1.3.0-r20 增加独立服务开机/运行意图与 boot 绑定、双状态观察 ACK 和旧回执隔离；目前只有协议层，没有实际采样或服务启停。新增 16 项服务意图用例及全部既有 Linux/页面/工程回归通过[本轮 Actions](https://github.com/frostcypress/HomeGate/actions/runs/38207827999)；服务状态和观察值为显式夹具。详见[服务意图合同](docs/服务意图绑定.md)。
 
-1.3.0-r21 增加固定 init/procd/proc 服务采样、同锁意图提交及独立期限监督；13 项 Linux 采样与 2 项静态检查待当前 Actions。端点为明确夹具，未实测路由器、未接入生产启停。详见[固定采样适配器](docs/固定服务采样.md)。
+1.3.0-r21 增加固定 init/procd/proc 服务采样、同锁意图提交及独立期限监督；13 项 Linux 采样、2 项静态及全部既有回归通过[本轮 Actions](https://github.com/frostcypress/HomeGate/actions/runs/38209902644)。端点为明确夹具，未实测路由器、未接入生产启停。详见[固定采样适配器](docs/固定服务采样.md)。

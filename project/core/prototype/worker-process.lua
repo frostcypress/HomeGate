@@ -4,9 +4,10 @@ local function number(s,max)
     if type(s)~="string" or not s:match("^[1-9]%d*$") or #s>9 then fail() end
     local n=tonumber(s); if not n or n>max then fail() end; return n
 end
-local function read(path,limit)
+local function read(path,limit,empty_allowed)
     local f=io.open(path,"rb"); if not f then return nil end
     local s=f:read(limit+1); local ok=f:close()
+    if not s and empty_allowed then s="" end
     if not s or #s>limit or not ok then fail() end
     return s
 end
@@ -20,7 +21,10 @@ local function inspect(pid,token)
     local hit="0"
     if token~="none" then
         if #token~=32 or token:find("[^0-9a-f]") then fail() end
-        local cmdline=read("/proc/"..pid.."/cmdline",8192) or ""
+        -- Exited tasks have an empty cmdline; Lua numeric reads return nil
+        -- at EOF. Their stat identity still suffices to report Z/X safely.
+        local cmdline=""
+        if a[1]~="Z" and a[1]~="X" then cmdline=read("/proc/"..pid.."/cmdline",8192,true) or "" end
         for value in cmdline:gmatch("([^%z]+)%z") do if value==token then hit="1" end end
     end
     return {a[1],a[2],a[3],a[4],a[20],hit}

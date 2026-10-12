@@ -136,7 +136,13 @@ run_job() {
         sleep 0.05
     done
     child_rc=0; wait "$child" || child_rc=$?
-    members "$child"; [ "$count" = 0 ] || fail 'Worker descendants remain active'
+    # The leader may reach Z before all members finish handling group KILL.
+    # Keep the lease and barrier while waiting within the existing deadline.
+    while :; do
+        members "$child"; [ "$count" != 0 ] || break
+        now; [ "$moment" -lt "$final_deadline" ] || fail 'Worker descendants remain active'
+        sleep 0.05
+    done
     # A second scan catches ordinary fork/exit transitions before ACK.
     sleep 0.05
     members "$child"; [ "$count" = 0 ] || fail 'Worker descendants remain active'

@@ -1,4 +1,4 @@
-# HomeGate 1.3.0-r21 规范迁移草稿
+# HomeGate 1.3.0-r22 规范迁移草稿
 
 本目录是按《OpenWrt 通用插件开发标准 V2.0》整理的工作源码。**这不是已完成 Shell/C 核心迁移的可安装发行版。** 目标为 Zyxel Armor G5 (NBG7815) 的 QWRT R26.3.8 / QSDK 12.5、aarch64_cortex-a53、IPK + Lua LuCI。型号与运行库/组件报告已收，SDK 链接兼容与实机验收仍未完成。用户确认按 1.3.0-10 重构，设备上的优化版 1.3.1-1 作废，不要求当前降级。
 
@@ -21,7 +21,7 @@ Python 3.12+，Lua 回归另需 lupa==2.8；浏览器回归需 playwright==1.63.
     python3 scripts/frontend-source-regressions.py
     python3 scripts/native-ui-regressions.py
 
-只修改 VERSION 和 RELEASE，随后运行 python3 scripts/project.py --sync。homegate-version.mk 和独立对照安装/校验脚本的版本默认值均由此同步，禁止手工维护第二套版本。规范版本为 1.3.0-r21；Go 对照接口仍使用旧格式 1.3.0-21，不冒充已统一的新 SDK 安装包。
+只修改 VERSION 和 RELEASE，随后运行 python3 scripts/project.py --sync。homegate-version.mk 和独立对照安装/校验脚本的版本默认值均由此同步，禁止手工维护第二套版本。规范版本为 1.3.0-r22；Go 对照接口仍使用旧格式 1.3.0-22，不冒充已统一的新 SDK 安装包。
 
 修改 Lua Controller/HTM 后运行 sync-frontend.py 和 build-js-views.py；生成副本由 CI 核对。概览不轮询，使用手动刷新。各设置页的旧只读地址保留为兼容入口。
 
@@ -64,3 +64,5 @@ Python 3.12+，Lua 回归另需 lupa==2.8；浏览器回归需 playwright==1.63.
 1.3.0-r20 增加独立服务开机/运行意图与 boot 绑定、双状态观察 ACK 和旧回执隔离；目前只有协议层，没有实际采样或服务启停。新增 16 项服务意图用例及全部既有 Linux/页面/工程回归通过[本轮 Actions](https://github.com/frostcypress/HomeGate/actions/runs/38207827999)；服务状态和观察值为显式夹具。详见[服务意图合同](docs/服务意图绑定.md)。
 
 1.3.0-r21 增加固定 init/procd/proc 服务采样、同锁意图提交及独立期限监督；13 项 Linux 采样、2 项静态及全部既有回归通过[本轮 Actions](https://github.com/frostcypress/HomeGate/actions/runs/38209902644)。端点为明确夹具，未实测路由器、未接入生产启停。详见[固定采样适配器](docs/固定服务采样.md)。
+
+1.3.0-r22 增加源配置绑定、公共 UCI 文件发布/读回及私有原文件恢复，完成确认取自实际服务采样。15 项 Linux 发布与 2 项静态检查待当前 Actions。生产写入固定关闭，Lua 共锁迁移、持久存储、实际启停与新核心业务仍未完成，没有三包。详见[源配置发布协议](docs/源配置发布.md)。

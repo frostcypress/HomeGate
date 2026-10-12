@@ -10,6 +10,7 @@ generation_dir=
 published=false
 keep_candidate=false
 application_transaction=false
+service_intent_transaction=false
 journal_active=false
 public_mode=false
 public_limit=1024
@@ -105,7 +106,7 @@ open_store() {
                 fi
                 flock -n 7 || fail 'Worker supervisor is busy' 4
                 if [ "$workers_pending" = true ]; then
-                    case "$command" in apply-snapshot-read|restore-snapshot-read|apply-authorize|restore-authorize) ;;
+                    case "$command" in apply-snapshot-read|restore-snapshot-read|apply-authorize|restore-authorize|apply-service-snapshot-read|restore-service-snapshot-read|service-intent-read) ;;
                         *) fail 'Worker quiescence has not been confirmed' 4;; esac
                 fi;;
         esac
@@ -143,7 +144,7 @@ open_store() {
     fi
     journal_read
     if [ "$journal_active" = true ]; then
-        case "$command" in status|export|recover-application|apply-finish|restore-finish|apply-snapshot-read|restore-snapshot-read|apply-authorize|restore-authorize) ;;
+        case "$command" in status|export|recover-application|apply-finish|restore-finish|apply-finish-intent|restore-finish-intent|apply-snapshot-read|restore-snapshot-read|apply-authorize|restore-authorize|apply-service-snapshot-read|restore-service-snapshot-read|service-intent-read) ;;
             *) fail 'Application recovery barrier is active' 4;; esac
     fi
 }
@@ -359,6 +360,7 @@ digest_file() {
 }
 journal_read() {
     journal_active=false
+    journal_format=HGAPPLICATION1
     if [ ! -e "$store/application" ] && [ ! -L "$store/application" ]; then return; fi
     [ "$public_mode" = true ] || fail 'Application journal requires full schema'
     read_one "$store/application" 512
@@ -368,9 +370,20 @@ journal_read() {
         IFS= read -r journal_target <&8 && IFS= read -r journal_token <&8 &&
         IFS= read -r journal_state <&8 && IFS= read -r journal_before <&8 &&
         IFS= read -r journal_after <&8 || fail 'Incomplete application journal'
+    case "$journal_format" in
+        HGAPPLICATION1) ;;
+        HGAPPLICATION2)
+            IFS= read -r journal_boot_enabled <&8 && IFS= read -r journal_was_running <&8 &&
+                IFS= read -r journal_intent_boot <&8 || fail 'Incomplete service intent'
+            case "$journal_boot_enabled:$journal_was_running" in 0:0|0:1|1:0|1:1) ;; *) fail 'Invalid service intent';; esac;;
+        *) fail 'Invalid application journal format';;
+    esac
     if IFS= read -r extra <&8; then fail 'Unexpected application journal data'; fi
     exec 8<&-
-    [ "$journal_format" = HGAPPLICATION1 ] || fail 'Invalid application journal format'
+    if [ "$journal_format" = HGAPPLICATION2 ]; then
+        [ "${#journal_intent_boot}" -eq 36 ] || fail 'Invalid service boot identity'
+        case "$journal_intent_boot" in *[!0-9a-f-]*) fail 'Invalid service boot identity';; esac
+    fi
     number "$journal_base" 1 32 && [ "$journal_base" = "$value" ] || fail 'Invalid application baseline'
     number "$journal_target" 1 32 && [ "$journal_target" = "$value" ] &&
         [ "$journal_target" -gt "$journal_base" ] || fail 'Invalid application candidate'
@@ -379,7 +392,7 @@ journal_read() {
     case "$journal_token" in *[!0-9a-f]*) fail 'Invalid application handle';; esac
     [ "${#journal_before}" -eq 64 ] && [ "${#journal_after}" -eq 64 ] || fail 'Invalid application binding'
     case "$journal_before$journal_after" in *[!0-9a-f]*) fail 'Invalid application binding';; esac
-    framed=$(printf '%s\n' HGAPPLICATION1 "$journal_base" "$journal_target" "$journal_token" "$journal_state" "$journal_before" "$journal_after")
+    framed=$(journal_body_write "$journal_state") || fail 'Unable to check application framing'
     [ "$journal_body" = "$framed" ] || fail 'Invalid application journal framing'
     validate_generation "$journal_base"
     journal_binding "$journal_base"
@@ -395,14 +408,22 @@ journal_read() {
 }
 journal_binding() {
     manifest_body=$(cat "$store/gen-$1/manifest") || fail 'Unable to bind application generation'
-    digest=$(printf '%s\n%s\n' "$store" "$manifest_body" | sha256sum) || fail 'Unable to bind application store'
+    if [ "$journal_format" = HGAPPLICATION2 ]; then
+        digest=$(printf '%s\n' HGAPPLICATION2 "$store" "$journal_intent_boot" "$journal_boot_enabled" "$journal_was_running" "$manifest_body" | sha256sum) || fail 'Unable to bind service intent'
+    else
+        digest=$(printf '%s\n%s\n' "$store" "$manifest_body" | sha256sum) || fail 'Unable to bind application store'
+    fi
     digest=${digest%% *}
     [ "${#digest}" -eq 64 ] || fail 'Invalid application store binding'
     case "$digest" in *[!0-9a-f]*) fail 'Invalid application store binding';; esac
 }
+journal_body_write() {
+    printf '%s\n' "$journal_format" "$journal_base" "$journal_target" "$journal_token" "$1" "$journal_before" "$journal_after" || return 1
+    if [ "$journal_format" = HGAPPLICATION2 ]; then printf '%s\n' "$journal_boot_enabled" "$journal_was_running" "$journal_intent_boot"; fi
+}
 journal_write() {
     allocate_scratch
-    printf '%s\n' HGAPPLICATION1 "$journal_base" "$journal_target" "$journal_token" "$1" "$journal_before" "$journal_after" > "$scratch" || fail 'Unable to write application intent' 7
+    journal_body_write "$1" > "$scratch" || fail 'Unable to write application intent' 7
     fsync "$scratch" 2>/dev/null || fail 'Unable to synchronize application intent' 7
     mv -f "$scratch" "$store/application" || fail 'Unable to publish application intent' 7
     scratch=
@@ -415,6 +436,11 @@ journal_write() {
 }
 journal_begin() {
     [ "$journal_active" = false ] || fail 'Application already pending' 4
+    journal_format=HGAPPLICATION1
+    if [ "$service_intent_transaction" = true ]; then
+        journal_format=HGAPPLICATION2; journal_boot_enabled=$request_boot_enabled; journal_was_running=$request_was_running
+        clock_now; journal_intent_boot=$boot
+    fi
     journal_base=$head_revision; journal_target=$new_revision
     journal_binding "$journal_base"; journal_before=$digest
     journal_binding "$journal_target"; journal_after=$digest
@@ -424,6 +450,19 @@ journal_begin() {
 journal_need() {
     [ "$journal_active" = true ] || fail 'No pending application' 5
     [ "$confirmation" = "$journal_token" ] || fail 'Application handle changed' 5
+}
+intent_ack_need() {
+    if [ "$journal_format" = HGAPPLICATION2 ] && [ "$application_result" = success ]; then
+        case "$command" in apply-finish-intent) expected_running=0;; restore-finish-intent) expected_running=$journal_was_running;;
+            *) fail 'Service observations are required' 5;; esac
+        # Imported candidates are always disabled. Preserve boot links but do
+        # not start a previously stopped service or activate imported settings.
+        [ "$observed_boot_enabled" = "$journal_boot_enabled" ] && [ "$observed_running" = "$expected_running" ] || fail 'Service observations do not match intent' 7
+        clock_now
+        [ "$boot" = "$journal_intent_boot" ] || fail 'Service intent requires cold-start reconciliation' 7
+    else
+        case "$command" in *-finish-intent) fail 'No bound service intent' 5;; esac
+    fi
 }
 restore_pointer() {
     allocate_scratch
@@ -588,7 +627,18 @@ case "$command" in
     snapshot-read) [ "$#" -eq 0 ] && [ "$public_mode" = true ] || fail 'Private reader requires full schema' 2;;
     recover-application) [ "$#" -eq 0 ] && [ "$public_mode" = true ] || fail 'Recovery requires full schema' 2;;
     rollback-preview) [ "$#" -eq 1 ] && number "$1" 1 32 && [ "$1" = "$value" ] || fail 'Expected generation number' 2;;
-    commit|commit-apply|apply-snapshot-read|restore-snapshot-read|apply-authorize|restore-authorize) [ "$#" -eq 1 ] && [ "${#1}" -eq 32 ] || fail 'Expected confirmation handle' 2
+    commit-apply-intent)
+        [ "$public_mode" = true ] && [ "$#" -eq 3 ] && [ "${#1}" -eq 32 ] || fail 'Expected service intent' 2
+        case "$1" in *[!0-9a-f]*) fail 'Invalid confirmation handle' 2;; esac
+        case "$2:$3" in 0:0|0:1|1:0|1:1) ;; *) fail 'Invalid service intent' 2;; esac
+        confirmation=$1; request_boot_enabled=$2; request_was_running=$3
+        application_transaction=true; service_intent_transaction=true;;
+    apply-finish-intent|restore-finish-intent)
+        [ "$public_mode" = true ] && [ "$#" -eq 3 ] && [ "${#1}" -eq 32 ] || fail 'Expected service observations' 2
+        case "$1" in *[!0-9a-f]*) fail 'Invalid application handle' 2;; esac
+        case "$2:$3" in 0:0|0:1|1:0|1:1) ;; *) fail 'Invalid service observations' 2;; esac
+        confirmation=$1; observed_boot_enabled=$2; observed_running=$3; application_result=success;;
+    commit|commit-apply|apply-snapshot-read|restore-snapshot-read|apply-authorize|restore-authorize|apply-service-snapshot-read|restore-service-snapshot-read|service-intent-read) [ "$#" -eq 1 ] && [ "${#1}" -eq 32 ] || fail 'Expected confirmation handle' 2
         case "$1" in *[!0-9a-f]*) fail 'Invalid confirmation handle' 2;; esac
         confirmation=$1
         if [ "$command" != commit ]; then [ "$public_mode" = true ] || fail 'Application requires full schema' 2; fi
@@ -622,7 +672,8 @@ case "$command" in
         [ ! -e "$store/pending" ] || preview=true
         scope=main-public-v1; [ "$public_mode" = false ] || scope=public-uci-v1
         application_phase=none; [ "$journal_active" = false ] || application_phase=$journal_state
-        printf '{"api_version":1,"prototype":true,"ok":true,"revision":%s,"preview_present":%s,"service_enabled":false,"history_capacity":32,"credential_capacity":%s,"scope":"%s","application_pending":%s,"application_phase":"%s","workers_pending":%s}\n' "$head_revision" "$preview" "$credential_limit" "$scope" "$journal_active" "$application_phase" "$workers_pending"
+        intent_bound=false; [ "$journal_format" != HGAPPLICATION2 ] || intent_bound=true
+        printf '{"api_version":1,"prototype":true,"ok":true,"revision":%s,"preview_present":%s,"service_enabled":false,"history_capacity":32,"credential_capacity":%s,"scope":"%s","application_pending":%s,"application_phase":"%s","workers_pending":%s,"service_intent_bound":%s}\n' "$head_revision" "$preview" "$credential_limit" "$scope" "$journal_active" "$application_phase" "$workers_pending" "$intent_bound"
         ;;
     export)
         need_initialized
@@ -634,20 +685,35 @@ case "$command" in
         # response, terminal, or regular file. Hold the same flock throughout.
         private_snapshot
         ;;
-    apply-snapshot-read|restore-snapshot-read|apply-authorize|restore-authorize)
+    apply-snapshot-read|restore-snapshot-read|apply-authorize|restore-authorize|apply-service-snapshot-read|restore-service-snapshot-read|service-intent-read)
         need_initialized; journal_need
-        if [ "$command" = apply-snapshot-read ] || [ "$command" = apply-authorize ]; then
+        case "$command:$journal_format" in
+            apply-service-snapshot-read:HGAPPLICATION2|restore-service-snapshot-read:HGAPPLICATION2|service-intent-read:HGAPPLICATION2) ;;
+            apply-snapshot-read:HGAPPLICATION1|restore-snapshot-read:HGAPPLICATION1|apply-authorize:HGAPPLICATION1|restore-authorize:HGAPPLICATION1) ;;
+            *) fail 'Worker type does not match application intent' 5;;
+        esac
+        if [ "$command" = service-intent-read ]; then
+            case "$journal_state:$head_revision" in
+                "applying:$journal_target") expected_running=0;;
+                "restoring:$journal_base") expected_running=$journal_was_running;;
+                *) fail 'Service context is not ready' 5;;
+            esac
+            clock_now; same_boot=false; [ "$boot" != "$journal_intent_boot" ] || same_boot=true
+            printf '{"api_version":1,"prototype":true,"ok":true,"revision":%s,"scope":"internal-service-intent","phase":"%s","boot_enabled":%s,"baseline_running":%s,"expected_running":%s,"same_boot":%s}\n' "$head_revision" "$journal_state" "$journal_boot_enabled" "$journal_was_running" "$expected_running" "$same_boot"
+        elif [ "$command" = apply-snapshot-read ] || [ "$command" = apply-authorize ] || [ "$command" = apply-service-snapshot-read ]; then
             [ "$journal_state" = applying ] && [ "$head_revision" = "$journal_target" ] || fail 'Application snapshot is not ready' 5
         else
             [ "$journal_state" = restoring ] && [ "$head_revision" = "$journal_base" ] || fail 'Recovery snapshot is not ready' 5
         fi
-        case "$command" in *-authorize)
+        case "$command" in service-intent-read) ;;
+            *-authorize)
             printf '{"api_version":1,"prototype":true,"ok":true,"revision":%s,"scope":"internal-worker-context"}\n' "$head_revision";;
             *) private_snapshot;; esac
         ;;
-    apply-finish)
+    apply-finish|apply-finish-intent)
         need_initialized; journal_need
         [ "$journal_state" = applying ] && [ "$head_revision" = "$journal_target" ] || fail 'Application acknowledgement is stale' 5
+        intent_ack_need
         if [ "$application_result" = failure ]; then journal_restore
         else
             journal_write applied
@@ -655,9 +721,10 @@ case "$command" in
             printf '{"api_version":1,"prototype":true,"ok":true,"revision":%s,"application_pending":false,"worker_acknowledged":true}\n' "$head_revision"
         fi
         ;;
-    restore-finish)
+    restore-finish|restore-finish-intent)
         need_initialized; journal_need
         [ "$journal_state" = restoring ] && [ "$head_revision" = "$journal_base" ] || fail 'Recovery acknowledgement is stale' 5
+        intent_ack_need
         [ "$application_result" = success ] || fail 'Business restoration remains incomplete' 7
         journal_write restored
         journal_close
@@ -711,7 +778,7 @@ case "$command" in
         plan_kind=rollback; plan_source=$1
         plan_write
         ;;
-    commit|commit-apply)
+    commit|commit-apply|commit-apply-intent)
         need_initialized
         plan_read
         if [ "$plan_kind" = rollback ]; then

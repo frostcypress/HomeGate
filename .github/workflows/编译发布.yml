@@ -74,17 +74,18 @@ jobs:
                       'FEATURE_SH_MATH', 'EXPR', 'STAT', 'FEATURE_STAT_FORMAT', 'FLOCK',
                       'TR', 'MKDIR', 'MV', 'RM', 'ID', 'DIRNAME', 'CAT', 'CP',
                       'RMDIR', 'SHA256SUM', 'HEAD', 'FEATURE_FANCY_HEAD', 'FSYNC',
-                      'SETSID', 'SLEEP', 'FEATURE_FANCY_SLEEP', 'FEATURE_FLOAT_SLEEP', 'MKFIFO', 'LS', 'KILL', 'ASH_BUILTIN_KILL']
+                      'SETSID', 'SLEEP', 'FEATURE_FANCY_SLEEP', 'FLOAT_DURATION', 'MKFIFO', 'LS', 'KILL', 'ASH_BUILTIN_KILL']
           for name in required:
               pattern = r'^# CONFIG_' + name + r' is not set$'
               body, count = re.subn(pattern, 'CONFIG_' + name + '=y', body, flags=re.M)
               if count == 0:
-                  body += 'CONFIG_' + name + '=y\n'
+                  assert re.search(r'^CONFIG_' + name + r'=y$', body, re.M), 'Unknown or unavailable BusyBox option: ' + name
           file.write_text(body)
           PY
           make -C build/busybox-runtime/busybox-1.33.2 oldconfig < /dev/null
           make -C build/busybox-runtime/busybox-1.33.2 -j2
           build/busybox-runtime/busybox-1.33.2/busybox --list
+          build/busybox-runtime/busybox-1.33.2/busybox sleep 0.001
           echo "$PWD/build/busybox-runtime/busybox-1.33.2" >> "$GITHUB_PATH"
           python3 -m venv build/verify-venv
           build/verify-venv/bin/python -m pip install 'lupa==2.8' 'playwright==1.63.0' 'tree-sitter==0.25.2' 'tree-sitter-bash==0.25.1'

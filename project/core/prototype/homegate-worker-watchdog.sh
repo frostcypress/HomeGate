@@ -23,7 +23,18 @@ exec 6<> "$store/worker-data" || exit 1
 lua "$dir/homegate-worker-prototype.lua" "$role" "$token" <"$store/worker-data" 6>&- 7>&- 8>&- 9>&- >/dev/null 2>&1 &
 worker_pid=$!
 case "$role" in apply) snapshot_command=apply-snapshot-read;; restore) snapshot_command=restore-snapshot-read;; esac
-ash "$dir/homegate-config-prototype.sh" --public-uci "$snapshot_command" "$token" 3>&6 6>&- 8>&- 9>&- </dev/null >/dev/null 2>&1 &
+produce_snapshot() {
+    # Busy (4) occurs before any private frame bytes are written. Retain the
+    # FIFO writer across retries so the consumer cannot mistake a busy reader
+    # for EOF. The independent watchdog bounds and stops this whole family.
+    while :; do
+        result=0
+        ash "$dir/homegate-config-prototype.sh" --public-uci "$snapshot_command" "$token" || result=$?
+        [ "$result" -eq 4 ] || return "$result"
+        sleep 0.05 2>/dev/null || return 1
+    done
+}
+produce_snapshot 3>&6 6>&- 8>&- 9>&- </dev/null >/dev/null 2>&1 &
 producer_pid=$!
 exec 6>&-
 now=$(lua "$process" now) || exit 1

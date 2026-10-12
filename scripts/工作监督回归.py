@@ -296,6 +296,8 @@ class Runtime(unittest.TestCase):
         self.supervise('run','/bin/sh',expected=2)
         for value in ['0','31','2;false','01']:
             self.supervise('run-apply',self.handle,env={**self.env,'HOMEGATE_WORKER_PROTO_TIMEOUT':value},expected=2)
+        for path in ['/etc/homegate','',str(self.store/'../store')]:
+            self.supervise('recover',env={**self.env,'HOMEGATE_CONFIG_PROTO_STORE':path},expected=2)
         self.assertTrue(self.cli('status')['application_pending']); self.assertFalse((self.store/'worker').exists())
 
 if __name__=='__main__':

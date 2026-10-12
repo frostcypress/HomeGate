@@ -185,7 +185,9 @@ esac
 budget=${HOMEGATE_WORKER_PROTO_TIMEOUT:-30}
 case "$budget" in [1-9]|[12][0-9]|30) ;; *) fail 'Worker timeout must be 1 to 30 seconds' 2;; esac
 sleep 0.001 >/dev/null 2>&1 || fail 'Worker pacing is unavailable' 2
-command -v kill >/dev/null 2>&1 || fail 'Worker signalling is unavailable' 2
+# Signal zero probes only our live process; it sends no signal. Do not depend
+# on the optional BusyBox ash "command" builtin in minimal configurations.
+kill -0 "$$" >/dev/null 2>&1 || fail 'Worker signalling is unavailable' 2
 owner=$(id -u) || fail 'Unable to identify worker owner'
 validate_store_path
 # A blocked snapshot producer can still own the configuration flock after

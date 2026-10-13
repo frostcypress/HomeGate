@@ -65,4 +65,4 @@ Python 3.12+，Lua 回归另需 lupa==2.8；浏览器回归需 playwright==1.63.
 
 1.3.0-r21 增加固定 init/procd/proc 服务采样、同锁意图提交及独立期限监督；13 项 Linux 采样、2 项静态及全部既有回归通过[本轮 Actions](https://github.com/frostcypress/HomeGate/actions/runs/38209902644)。端点为明确夹具，未实测路由器、未接入生产启停。详见[固定采样适配器](docs/固定服务采样.md)。
 
-1.3.0-r22 增加源配置绑定、公共 UCI 文件发布/读回及私有原文件恢复，完成确认取自实际服务采样。15 项 Linux 发布与 2 项静态检查待当前 Actions。生产写入固定关闭，Lua 共锁迁移、持久存储、实际启停与新核心业务仍未完成，没有三包。详见[源配置发布协议](docs/源配置发布.md)。
+1.3.0-r22 增加源配置绑定、公共 UCI 文件发布/读回及私有原文件恢复，完成确认取自实际服务采样。15 项 Linux 发布、2 项静态及全部既有回归通过[Actions](https://github.com/frostcypress/HomeGate/actions/runs/38332273913)。生产写入固定关闭，Lua 共锁迁移、持久存储、实际启停与新核心业务仍未完成，没有三包。详见[源配置发布协议](docs/源配置发布.md)。

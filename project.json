@@ -288,5 +288,21 @@
     "target_verified": false,
     "isolated_orphan_recovery": "passed-linux-same-boot-receipt-only",
     "runtime_run": "https://github.com/frostcypress/HomeGate/actions/runs/38365719694"
+  },
+  "fixed_service_actions": {
+    "source": "project/core/prototype/homegate-config-prototype.sh",
+    "supervision": "project/core/prototype/homegate-service-observer-watchdog.sh",
+    "scope": "isolated-persistent-HGAPPLICATION3-import-and-restore",
+    "runtime_checks": "pending-linux-20",
+    "runtime_case_count": 20,
+    "local_checks": "passed-3",
+    "production_install": false,
+    "production_switch": false,
+    "actual_business": false,
+    "cold_start": false,
+    "target_verified": false,
+    "precheck": "bound-schema-generation-dependencies-and-fixed-UCI-parser-only",
+    "boot_links": "preserved",
+    "failed_transition": "persistent-barrier-until-explicit-observed-recovery"
   }
 }

@@ -1,4 +1,4 @@
-# HomeGate 1.3.0-r26 规范迁移草稿
+# HomeGate 1.3.0-r27 规范迁移草稿
 
 本目录是按《OpenWrt 通用插件开发标准 V2.0》整理的工作源码。**这不是已完成 Shell/C 核心迁移的可安装发行版。** 目标为 Zyxel Armor G5 (NBG7815) 的 QWRT R26.3.8 / QSDK 12.5、aarch64_cortex-a53、IPK + Lua LuCI。型号与运行库/组件报告已收，SDK 链接兼容与实机验收仍未完成。用户确认按 1.3.0-10 重构，设备上的优化版 1.3.1-1 作废，不要求当前降级。
 
@@ -21,7 +21,7 @@ Python 3.12+，Lua 回归另需 lupa==2.8；浏览器回归需 playwright==1.63.
     python3 scripts/frontend-source-regressions.py
     python3 scripts/native-ui-regressions.py
 
-只修改 VERSION 和 RELEASE，随后运行 python3 scripts/project.py --sync。homegate-version.mk 和独立对照安装/校验脚本的版本默认值均由此同步，禁止手工维护第二套版本。规范版本为 1.3.0-r26；Go 对照接口仍使用旧格式 1.3.0-26，不冒充已统一的新 SDK 安装包。
+只修改 VERSION 和 RELEASE，随后运行 python3 scripts/project.py --sync。homegate-version.mk 和独立对照安装/校验脚本的版本默认值均由此同步，禁止手工维护第二套版本。规范版本为 1.3.0-r27；Go 对照接口仍使用旧格式 1.3.0-27，不冒充已统一的新 SDK 安装包。
 
 修改 Lua Controller/HTM 后运行 sync-frontend.py 和 build-js-views.py；生成副本由 CI 核对。概览不轮询，使用手动刷新。各设置页的旧只读地址保留为兼容入口。
 
@@ -73,4 +73,8 @@ Python 3.12+，Lua 回归另需 lupa==2.8；浏览器回归需 playwright==1.63.
 
 1.3.0-r25 增加生命周期专用持久空基线初始化、同目录阶段发布及显式恢复；复用实际引擎检查，重复执行不替换锁和身份，不覆盖旧配置；发布同步不确定保留初始化屏障，拒绝网页写入。3 项本地检查通过，23 项 Linux 初始化及全部既有回归通过[Actions](https://github.com/frostcypress/HomeGate/actions/runs/38359802398)。生产门禁固定关闭，旧配置/秘密迁移及独立监督仍待完成；没有三包。详见[持久存储初始化](docs/持久存储初始化.md)。
 
-1.3.0-r26 复用固定监督器并接入持久身份、共享 FD6、独立期限和 HGWORKER2 记录；活动凭据之前保存同 boot 恢复锚点，缺日志时保留原意图并要求受监督恢复 ACK。4 项本地检查通过，23 项 Linux 持久监督及全部既有回归通过[Actions](https://github.com/frostcypress/HomeGate/actions/runs/38365719694)。仅隔离回执业务，生产门禁关闭；真实服务/冷启动/迁移/SDK/三包仍待完成。详见[持久监督恢复](docs/持久监督恢复.md)。
+1.3.0-r27 复用固定监督器并接入持久身份、共享 FD6、独立期限和 HGWORKER2 记录；活动凭据之前保存同 boot 恢复锚点，缺日志时保留原意图并要求受监督恢复 ACK。4 项本地检查通过，23 项 Linux 持久监督及全部既有回归通过[Actions](https://github.com/frostcypress/HomeGate/actions/runs/38365719694)。仅隔离回执业务，生产门禁关闭；真实服务/冷启动/迁移/SDK/三包仍待完成。详见[持久监督恢复](docs/持久监督恢复.md)。
+
+## 固定服务动作阶段
+
+r27 在门禁关闭的持久引擎中增加 service-apply/service-recover，仅绑定 HGAPPLICATION3。固定 UCI 解析/依赖预检后按实测状态停服，再发布受绑定配置；恢复仅按原运行意图启动，开机链接保持不变。命令退出成功仍须观察核实，失败保留写屏障；新增 20 项 Linux 固定服务动作及全部既有回归待当前 Actions。详情见 docs/固定服务动作.md；init/ubus 是隔离夹具，不能冒充 QWRT/procd 实测或业务预检通过。

@@ -17,6 +17,7 @@ projection_transaction=false
 production_writes_enabled=false
 persistent_namespace_enabled=false
 orphan_recovery_enabled=false
+service_actions_enabled=false
 persistent_mode=false
 persistent_fence_present=false
 persistent_fence_pending=false
@@ -267,11 +268,11 @@ open_store() {
         elif [ "$persistent_fence_pending" = true ]; then
             case "$command" in status|export|recover-fence) ;; *) fail 'Persistent fence requires reconciliation' 7;; esac
         fi
-        case "$command" in status|export|recover-application|recover-fence|apply-finish*|restore-finish*|projection-publish|apply-*-read|restore-*-read|apply-authorize|restore-authorize|service-intent-read) ;;
+        case "$command" in status|export|recover-application|recover-fence|service-apply|service-recover|apply-finish*|restore-finish*|projection-publish|apply-*-read|restore-*-read|apply-authorize|restore-authorize|service-intent-read) ;;
             *) persistent_ready;; esac
     fi
     if [ "$journal_active" = true ]; then
-        case "$command" in status|export|recover-application|apply-finish|restore-finish|apply-finish-intent|restore-finish-intent|apply-finish-projection|restore-finish-projection|projection-publish|apply-snapshot-read|restore-snapshot-read|apply-authorize|restore-authorize|apply-service-snapshot-read|restore-service-snapshot-read|service-intent-read) ;;
+        case "$command" in status|export|recover-application|service-apply|service-recover|apply-finish|restore-finish|apply-finish-intent|restore-finish-intent|apply-finish-projection|restore-finish-projection|projection-publish|apply-snapshot-read|restore-snapshot-read|apply-authorize|restore-authorize|apply-service-snapshot-read|restore-service-snapshot-read|service-intent-read) ;;
             *) fail 'Application recovery barrier is active' 4;; esac
     fi
 }
@@ -932,6 +933,50 @@ sample_service() {
     [ "$sample_boot" = "$boot" ] || fail 'Service observation belongs to another boot' 7
     drop_scratch
 }
+service_preflight() {
+    # Schema/generation/dependency precheck only; no claim of DNS/ACME health.
+    projection_need
+    production_source_lock
+    projection_file_state
+    [ ! -e /tmp/.homegate-package-upgrade-state ] && [ ! -L /tmp/.homegate-package-upgrade-state ] || fail 'Package lifecycle is active' 4
+    for file in /etc/init.d/homegate /etc/rc.common /sbin/ubus /sbin/uci /usr/bin/homegate; do
+        [ -f "$file" ] && [ ! -L "$file" ] && [ -x "$file" ] || fail 'Service dependency is unavailable' 7
+        case "$(stat -c '%u:%a:%h' "$file")" in "$owner:700:1"|"$owner:755:1") ;; *) fail 'Unsafe service dependency' 7;; esac
+    done
+    service_action precheck
+    projection_file_state
+}
+service_action() {
+    result=0
+    # Retain shared writer/supervisor locks in the independent watchdog, but
+    # close the configuration lock and private output in the action family.
+    setsid ash "$(dirname "$0")/homegate-service-observer-watchdog.sh" --action "$confirmation" "$1" 3>&- 8>&- 9>&- </dev/null >/dev/null 2>&1 || result=$?
+    [ "$result" -eq 0 ] || fail 'Service command failed or timed out; recovery required' 7
+}
+service_transition() {
+    service_preflight
+    sample_service
+    [ "$request_boot_enabled" = "$journal_boot_enabled" ] || fail 'Service boot intent changed' 7
+    if [ "$request_was_running" = 1 ]; then service_action stop; fi
+    sample_service
+    [ "$request_was_running" = 0 ] && [ "$request_boot_enabled" = "$journal_boot_enabled" ] || fail 'Service did not become quiet' 7
+    # Existing projection validates the exact source/target, publishes while
+    # quiet and fsyncs the file and parent. Never change enable/disable links.
+    projection_publish >/dev/null
+    service_preflight
+    if [ "$projection_role" = restore ] && [ "$journal_was_running" = 1 ]; then
+        service_action start
+    fi
+    saved_command=$command
+    command="$projection_role-finish-projection"
+    application_result=success
+    projection_observe_finish
+    intent_ack_need
+    command=$saved_command
+    if [ "$projection_role" = apply ]; then journal_write applied; else journal_write restored; fi
+    journal_close
+    printf '{"api_version":1,"prototype":true,"ok":true,"scope":"fixed-service-transition","revision":%s,"application_pending":false,"service_observed":true,"business_applied":false}\n' "$head_revision"
+}
 
 [ "$#" -ge 1 ] || fail 'Missing prototype command' 2
 command=$1
@@ -948,6 +993,15 @@ if [ "$command" = version ]; then
 fi
 if [ "$persistent_mode" = true ] && [ "$command" = init ]; then fail 'Persistent bootstrap requires lifecycle migration' 2; fi
 case "$command" in
+    service-apply)
+        [ "$persistent_mode" = true ] && [ "$service_actions_enabled" = true ] && [ "$production_writes_enabled" = true ] || fail 'Service migration is not ready' 2
+        [ "$#" -eq 1 ] && [ "${#1}" -eq 32 ] || fail 'Expected internal application handle' 2
+        case "$1" in *[!0-9a-f]*) fail 'Invalid application handle' 2;; esac
+        confirmation=$1; projection_role=apply;;
+    service-recover)
+        [ "$persistent_mode" = true ] && [ "$service_actions_enabled" = true ] && [ "$production_writes_enabled" = true ] || fail 'Service migration is not ready' 2
+        [ "$#" -eq 0 ] || fail 'Unexpected recovery arguments' 2
+        projection_role=restore;;
     init|status|export|preview|cancel) [ "$#" -eq 0 ] || fail 'Unexpected arguments' 2;;
     writer-check) [ "$#" -eq 0 ] && [ "$persistent_mode" = true ] || fail 'Writer check requires persistent namespace' 2;;
     migration-preview) [ "$#" -eq 0 ] && [ "$public_mode" = true ] || fail 'Migration requires full schema' 2;;
@@ -997,6 +1051,26 @@ case "$command" in
 esac
 open_store
 case "$command" in
+    service-apply)
+        need_initialized
+        service_transition;;
+    service-recover)
+        need_initialized
+        [ "$journal_active" = true ] || fail 'Service journal requires reconciliation' 7
+        confirmation=$journal_token
+        projection_need
+        # Validate context, files and boot before moving the generation pointer.
+        service_preflight
+        case "$journal_state" in applied|restored)
+            terminal_state=$journal_state
+            if [ "$journal_state" = applied ]; then projection_role=apply; journal_state=applying; else journal_state=restoring; fi
+            command="$projection_role-finish-projection"; application_result=success
+            projection_observe_finish; intent_ack_need
+            journal_state=$terminal_state; journal_close
+            printf '{"api_version":1,"prototype":true,"ok":true,"scope":"fixed-service-transition","application_pending":false,"service_observed":true,"business_applied":false}\n'
+            exit 0;; esac
+        journal_restore >/dev/null
+        service_transition;;
     writer-check)
         # open_store already verified readiness while all three locks are held.
         printf '{"api_version":1,"prototype":true,"ok":true,"scope":"persistent-writer-barrier","write_ready":true}\n'

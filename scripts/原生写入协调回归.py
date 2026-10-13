@@ -145,6 +145,9 @@ class Runtime(unittest.TestCase):
         body=body.replace('/tmp/homegate-luci-',self.prefix).replace('/var/run/homegate',str(self.lockdir))
         body=body.replace('PATH=/usr/sbin:/usr/bin:/sbin:/bin','PATH='+str(Path(self.busybox).parent)+':/usr/bin:/bin')
         body=body.replace('exec /usr/bin/lua /usr/libexec/homegate/frontend-write.lua', 'exec '+self.lua+' '+str(self.boot))
+        # Prior native-route tests isolate dispatch only. The r24 persistent
+        # suite replaces this fixed check with the real copied state engine.
+        body=body.replace('/usr/libexec/homegate/config-transaction --persistent writer-check', '/bin/true')
         self.engine.write_text(body); self.engine.chmod(0o700)
         quote=lambda p:json.dumps(str(p))
         self.boot.write_text('''

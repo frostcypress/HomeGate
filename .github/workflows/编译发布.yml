@@ -92,6 +92,10 @@ jobs:
           build/verify-venv/bin/python -m playwright install --with-deps chromium
           python3 scripts/准备UCI解析回归.py
           python3 scripts/准备服务采样回归.py
+      - name: 验证持久事务屏障与异常退出
+        run: |
+          build/verify-venv/bin/python scripts/持久事务屏障回归.py
+          build/verify-venv/bin/python scripts/持久事务屏障回归.py --runtime
       - name: 验证原生写入协调和对照桥接
         run: |
           build/verify-venv/bin/python scripts/原生写入协调回归.py

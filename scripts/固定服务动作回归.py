@@ -144,7 +144,7 @@ os.execv(UCI,[UCI,'-c',str(base/'etc/config'),'-P',str(base/'uci-save'),'-q','sh
     def apply(self,expected=0):return self.cli('service-apply',self.handle,expected=expected)
     def recover(self,expected=0):return self.cli('service-recover',expected=expected)
     def pending(self):
-        self.assertTrue(self.cli('status')['application_pending']); self.writer(7)
+        self.assertTrue(self.cli('status')['application_pending']); self.writer(4)
     def closed(self,revision):
         s=self.cli('status');self.assertEqual(s['revision'],revision);self.assertFalse(s['application_pending']);self.assertFalse(s['persistent_fence_pending']);self.writer()
 

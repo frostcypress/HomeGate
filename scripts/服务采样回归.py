@@ -54,7 +54,10 @@ class Runtime(unittest.TestCase):
     def raw(self,*args,payload=None,expected=0,env=None):
         result=subprocess.run([self.busybox,'ash',str(getattr(self,'engine',SCRIPT)),'--public-uci',*args],
                               input=payload,capture_output=True,env=env or self.env,timeout=12)
-        self.assertEqual(result.returncode,expected,(args,result.stdout,result.stderr))
+        diagnostic=''
+        if result.returncode!=expected and hasattr(self,'observer_diagnostic'):
+            if self.observer_diagnostic.exists(): diagnostic=self.observer_diagnostic.read_text()[:128]
+        self.assertEqual(result.returncode,expected,(args,result.stdout,result.stderr,diagnostic))
         self.assertEqual(result.stderr,b''); self.assertLess(len(result.stdout),300000)
         self.assertNotIn(b'PRIVATE_SENTINEL',result.stdout)
         return result.stdout
@@ -66,6 +69,15 @@ class Runtime(unittest.TestCase):
         backup=fixture.parent.parent/'luci/lua/luasrc/model/homegate'; backup.mkdir(parents=True)
         shutil.copy2(ROOT/'project/luci/lua/luasrc/model/homegate/backup.lua',backup/'backup.lua')
         self.engine=fixture/'homegate-config-prototype.sh'
+        self.observer_diagnostic=self.base/'observer-diagnostic'
+        # Diagnostic exists only in copied test sources; bounded numeric line
+        # and fixed module name, no process metadata or secret reflection.
+        for module in ['homegate-service-observer.lua','worker-process.lua']:
+            file=fixture/module; text=file.read_text()
+            needle='local function fail() os.exit(1) end'
+            self.assertEqual(text.count(needle),1)
+            replacement='local function fail() local f=io.open('+json.dumps(str(self.observer_diagnostic))+',"a"); if f then f:write("'+module+':",debug.getinfo(2,"l").currentline,"\\n"); f:close() end; os.exit(1) end'
+            file.write_text(text.replace(needle,replacement))
         self.init=self.base/'homegate-init'; self.common=self.base/'rc.common'; self.ubus=self.base/'ubus'
         self.common.write_text('#!/bin/sh\nexit 0\n'); self.common.chmod(0o700)
         self.executable=self.base/'homegate'; shutil.copy2(self.daemon,self.executable)
@@ -251,5 +263,7 @@ class Runtime(unittest.TestCase):
 
 if __name__=='__main__':
     p=argparse.ArgumentParser(); p.add_argument('--runtime',action='store_true'); p.add_argument('--static',action='store_true')
-    a=p.parse_args(); result=unittest.TextTestRunner(verbosity=2).run(unittest.defaultTestLoader.loadTestsFromTestCase(Runtime if a.runtime else Static))
+    p.add_argument('--case',choices=['test_four_independent_states_sample_real_processes_and_bind_journal'])
+    a=p.parse_args(); suite=unittest.TestSuite([Runtime(a.case)]) if a.case else unittest.defaultTestLoader.loadTestsFromTestCase(Runtime if a.runtime else Static)
+    result=unittest.TextTestRunner(verbosity=2).run(suite)
     raise SystemExit(not result.wasSuccessful())

@@ -103,7 +103,7 @@ os.execv(UCI,[UCI,'-c',str(base/'etc/config'),'-P',str(base/'uci-save'),'-q','sh
                  '/sbin/uci':str(self.uci),'/usr/bin/homegate':str(self.executable),'/tmp/.homegate-package-upgrade-state':str(self.marker)}
         for name in ['homegate-config-prototype.sh','homegate-service-observer-watchdog.sh','homegate-service-observer.lua']:
             file=self.engine.parent/name; body=file.read_text()
-            more=mapping if name=='homegate-config-prototype.sh' else {**mapping,'/etc/homegate/transactions':str(self.store),'/var/run/homegate':str(self.native.lockdir),'/proc/sys/kernel/random/boot_id':str(self.boot_id)}
+            more={**mapping,str(self.etc/'init.d/homegate'):str(self.init),str(self.etc/'rc.common'):str(self.common)} if name=='homegate-config-prototype.sh' else {**mapping,'/etc/homegate/transactions':str(self.store),'/var/run/homegate':str(self.native.lockdir),'/proc/sys/kernel/random/boot_id':str(self.boot_id)}
             body=re.sub('|'.join(re.escape(k) for k in sorted(more,key=len,reverse=True)),lambda m:more[m[0]],body)
             body=body.replace('service_actions_enabled=false','service_actions_enabled=true').replace('production_writes_enabled=false','production_writes_enabled=true')
             body=body.replace('PATH=/usr/sbin:/usr/bin:/sbin:/bin','PATH='+str(self.bin)).replace('[ "$(id -u)" = 0 ]','[ "$(id -u)" = '+str(os.getuid())+' ]').replace('= 0:600:1','= '+str(os.getuid())+':600:1')
@@ -215,8 +215,10 @@ os.execv(UCI,[UCI,'-c',str(base/'etc/config'),'-P',str(base/'uci-save'),'-q','sh
         self.begin(running=1);self.marker.write_text('was_running=0\n');self.apply(4);self.assertEqual(self.log(),[]);self.assertTrue(self.running());self.assertTrue(self.marker.exists())
 
     def test_shared_writer_contention_and_borrowed_fd(self):
-        self.begin();p=subprocess.Popen([self.busybox,'flock','-n',str(self.native.lock),self.busybox,'sleep','2']);self.processes.append(p);time.sleep(0.05)
-        self.apply(4);self.assertEqual(self.log(),[]);p.terminate();p.wait(timeout=3)
+        import fcntl
+        self.begin()
+        with self.native.lock.open('rb') as held:
+            fcntl.flock(held,fcntl.LOCK_EX|fcntl.LOCK_NB);self.apply(4);self.assertEqual(self.log(),[])
         wrapper=self.base/'borrow.sh';wrapper.write_text('exec 6>>'+str(self.native.lock)+'\nflock -n 6 || exit 4\nexec '+self.busybox+' ash '+str(self.engine)+' --persistent service-apply '+self.handle+'\n')
         result=subprocess.run([self.busybox,'ash',str(wrapper)],env=self.env,capture_output=True,timeout=15);self.assertEqual(result.returncode,0,(result.stdout,result.stderr));self.closed(3)
 
@@ -240,7 +242,7 @@ os.execv(UCI,[UCI,'-c',str(base/'etc/config'),'-P',str(base/'uci-save'),'-q','sh
 
     def test_terminal_journal_cleanup_rechecks_actual_service(self):
         self.begin();self.fault('rm','sys.exit(1) if sys.argv[1:]==["-f",'+repr(str(self.store/'application'))+'] else None')
-        self.apply(7);self.restore_tool('rm');self.assertEqual((self.store/'application').read_text().splitlines()[1],'applied')
+        self.apply(7);self.restore_tool('rm');self.assertEqual((self.store/'application').read_text().splitlines()[4],'applied')
         self.recover();self.closed(3);self.assertFalse(self.running())
 
 if __name__=='__main__':

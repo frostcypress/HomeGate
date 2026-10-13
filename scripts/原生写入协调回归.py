@@ -54,7 +54,7 @@ class Static(unittest.TestCase):
         for f in [MODEL,CONTROLLER,RUNNER]: LuaRuntime().compile(f.read_text(encoding='utf-8'))
         self.assertIn('flock -n 6',SHELL.read_text())
         self.assertIn('LUA_INIT LUA_PATH LUA_CPATH',SHELL.read_text())
-        self.assertEqual(RUNNER.read_text().count(') 6>&-'),2)
+        self.assertEqual(RUNNER.read_text().count('original_exec("exec 6>&-; ("')+RUNNER.read_text().count('original_call("exec 6>&-; ("'),2)
         self.assertNotIn('request.handler',RUNNER.read_text())
 
 class Transport(unittest.TestCase):
@@ -152,7 +152,7 @@ package.cpath='''+quote(ROOT/'build/service-observer/?.so')+'''..';'..package.cp
 local json=require('luci.jsonc')
 local trace,config,lock='''+quote(self.trace)+','+quote(self.config)+','+quote(self.lock)+'''
 local function event(name)
- local check=io.popen('''+quote(self.busybox+' flock -n ')+'''..lock..' /bin/true >/dev/null 2>&1; printf "%s" "$?"')
+ local check=io.popen('exec 6>&-; '..'''+quote(self.busybox+' flock -n ')+'''..lock..' /bin/true >/dev/null 2>&1; printf "%s" "$?"')
  local rc=check:read('*a'); check:close(); assert(rc=='1','lock absent or probe failed')
  local f=assert(io.open(trace,'a')); f:write(name..'\\n'); f:close()
 end
@@ -167,15 +167,15 @@ local cur={
  delete=function() event('delete'); return true end,
  revert=function() event('revert'); return true end,
  commit=function() event('commit');
-   if values.test_pause then os.execute('(sleep 0.6) 6>&-') end
+   if values.test_pause then os.execute('exec 6>&-; sleep 0.6') end
    if values.test_commit_nil then return nil end
    local f=assert(io.open(config,'w')); f:write(json.stringify(values)); f:close(); return true end}
 package.preload['luci.model.uci']=function() return {cursor=function() event('cursor'); return cur end} end
 package.preload['luci.http']=function() return {urlencode=function(s) return (tostring(s):gsub('[^%w_%.~-]',function(c)return string.format('%%%02X',c:byte())end)) end} end
 package.preload['luci.dispatcher']=function() return {context={authtoken='fixture'},build_url=function(...)return '/cgi-bin/luci/'..table.concat({...},'/')end} end
 package.preload['luci.sys']=function() return {
- exec=function(command) event('exec'); return '' end,
- call=function(command) event('call'); return 0 end} end
+ exec=function(command) assert(command:sub(1,12)=='exec 6>&-; ('); event('exec'); return '' end,
+ call=function(command) assert(command:sub(1,12)=='exec 6>&-; ('); event('call'); return 0 end} end
 package.preload['luci.model.homegate.writer']=function() return dofile('''+quote(MODEL)+''') end
 local original_open=io.open
 io.open=function(path,mode)
@@ -237,9 +237,14 @@ dofile('''+quote(RUNNER)+''')
 
     def test_malformed_trailing_and_typed_inputs_refused(self):
         for body in [b'{}',b'{',b'{"route":"basic_apply","form":[]}{}',b'{"route":"basic_apply","form":{"mode":true}}',
-                     b'{"route":"basic_apply","form":{"x":"\\u0000"}}',b'{"route":"basic_apply","form":{"bad-key":"x"}}']:
-            self.run_request(self.request(body=body),2)
+                     b'{"route":"basic_apply","form":{"x":"\\u0000"}}',b'{"route":"basic_apply","form":{"x\\u0000suffix":"text"}}',
+                     b'{"route":"basic_apply","form":{"x":"before\\u0000after"}}',b'{"route":"basic_apply","form":{"bad-key":"x"}}']:
+            with self.subTest(body=body): self.run_request(self.request(body=body),2)
         self.assertEqual(self.trace.read_text(),'')
+        # A literal backslash followed by u0000 is ordinary text, not NUL.
+        report=self.run_request(self.request(form={'mode':'save','https_port':'443','ddns_interval':'300',
+                                                  'proxy_https_port':'10443','unused':r'\u0000'}))
+        self.assertTrue(report['ok'])
 
     def test_private_path_modes_links_and_limits(self):
         p=self.request(); p.chmod(0o644); self.run_request(p,2); p.chmod(0o600)
@@ -270,7 +275,16 @@ dofile('''+quote(RUNNER)+''')
         self.children.append(p); deadline=time.monotonic()+3
         while 'commit' not in self.trace.read_text():
             self.assertLess(time.monotonic(),deadline); time.sleep(0.01)
-        p.kill(); p.wait(timeout=3); self.config.write_text('{}'); self.run_request(self.request())
+        p.kill(); p.wait(timeout=3); self.config.write_text('{}'); request=self.request()
+        # A just-forked launcher may not have executed its FD close yet.
+        # Bound that scheduling window; a lasting inherited lock still fails.
+        deadline=time.monotonic()+2
+        while True:
+            result=subprocess.run([self.busybox,'ash',str(self.engine),str(request)],capture_output=True,timeout=3)
+            if result.returncode!=4: break
+            self.assertLess(time.monotonic(),deadline); time.sleep(0.01)
+        self.assertEqual(result.returncode,0,(result.stdout,result.stderr)); self.assertEqual(result.stderr,b'')
+        self.assertTrue(json.loads(result.stdout)['ok'])
 
     def test_product_shell_gate_cannot_be_enabled_by_environment(self):
         result=subprocess.run([self.busybox,'ash',str(SHELL),str(self.request())],capture_output=True,timeout=2,

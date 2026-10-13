@@ -92,6 +92,10 @@ jobs:
           build/verify-venv/bin/python -m playwright install --with-deps chromium
           python3 scripts/准备UCI解析回归.py
           python3 scripts/准备服务采样回归.py
+      - name: 验证持久独立监督与孤立凭据恢复
+        run: |
+          build/verify-venv/bin/python scripts/持久监督恢复回归.py
+          build/verify-venv/bin/python scripts/持久监督恢复回归.py --runtime
       - name: 验证持久初始化与显式恢复
         run: |
           build/verify-venv/bin/python scripts/持久初始化回归.py

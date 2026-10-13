@@ -36,10 +36,10 @@ class Static(unittest.TestCase):
 
     def test_sync_and_explicit_resume_contract(self):
         body=BOOTSTRAP.read_text()
-        publication=body.rsplit('\nsync_stage\n',1)[1]
+        publication=body.rsplit('\nsync_stage "$stage"\n',1)[1]
         self.assertLess(publication.index('mv "$stage" "$store"'),publication.index('Published bootstrap durability is uncertain'))
         self.assertIn('[ "$action" = resume ]',body)
-        self.assertIn('check_stage\nelse',body)
+        self.assertIn('check_stage "$stage"\nelse',body)
         self.assertIn('existing_store\n    exit 0',body)
 
 class Runtime(PersistentRuntime):
@@ -186,7 +186,24 @@ class Runtime(PersistentRuntime):
     def test_sync_failure_after_publish_retains_store_and_retry_resynchronizes(self):
         self.fault('fsync',"sys.exit(1) if sys.argv[1:]==["+repr(str(self.store))+','+repr(str(self.home))+"] else None")
         self.boot(expected=6); self.assertTrue(self.store.exists()); self.assertFalse(self.stage.exists()); before=self.contents()
-        self.restore_tool('fsync'); self.assertFalse(self.boot()['created']); self.assertEqual(self.contents(),before)
+        self.cli('writer-check',expected=4); self.writer(4)
+        self.restore_tool('fsync'); self.assertFalse(self.boot()['created'])
+        before.pop('bootstrap-pending'); self.assertEqual(self.contents(),before); self.writer()
+
+    def test_corrupt_or_evolved_pending_bootstrap_cannot_clear_barrier(self):
+        self.fault('fsync',"sys.exit(1) if sys.argv[1:]==["+repr(str(self.store))+','+repr(str(self.home))+"] else None")
+        self.boot(expected=6); self.restore_tool('fsync')
+        pending=self.store/'bootstrap-pending'; original=pending.read_bytes()
+        pending.write_bytes(original[:-1]+b'\x00'); self.cli('writer-check',expected=7); self.boot(expected=7)
+        pending.write_bytes(original)
+        extra=self.store/'application'; extra.write_bytes(b'PRIVATE_SENTINEL\n'); extra.chmod(0o600)
+        self.boot(expected=7); self.assertEqual(pending.read_bytes(),original); self.writer(4)
+
+    def test_kill_after_visible_publication_preserves_writer_barrier(self):
+        self.fault('fsync',"if sys.argv[1:]==["+repr(str(self.store))+','+repr(str(self.home))+"]:\n    os.kill(os.getppid(),signal.SIGKILL)\n    sys.exit(0)")
+        self.boot(expected=-signal.SIGKILL); self.restore_tool('fsync')
+        self.assertTrue((self.store/'bootstrap-pending').exists()); self.cli('writer-check',expected=4); self.writer(4)
+        self.boot('resume'); self.assertFalse((self.store/'bootstrap-pending').exists()); self.writer()
 
     def test_kill_before_publish_preserves_sealed_stage(self):
         self.fault('mv',"if sys.argv[1:]==["+repr(str(self.stage))+','+repr(str(self.store))+"]:\n    os.kill(os.getppid(),signal.SIGKILL)\n    sys.exit(0)")

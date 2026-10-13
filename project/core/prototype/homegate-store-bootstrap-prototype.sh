@@ -24,6 +24,13 @@ read_bounded() {
     private_file "$1" && [ "$(stat -c %s "$1")" -le "$2" ] || fail 'Unsafe bootstrap metadata'
     text=$(cat "$1") || fail 'Unable to read bootstrap metadata'
     [ "$(stat -c %s "$1")" -eq "$((${#text} + 1))" ] || fail 'Invalid bootstrap framing'
+    # ash may discard NUL bytes. Compare exact raw bytes with the framed text,
+    # so replacing the final LF by NUL cannot impersonate canonical metadata.
+    raw_sum=$(sha256sum "$1") || fail 'Unable to hash bootstrap metadata'
+    raw_sum=${raw_sum%% *}
+    framed_sum=$(printf '%s\n' "$text" | sha256sum) || fail 'Unable to hash bootstrap framing'
+    framed_sum=${framed_sum%% *}
+    [ "$raw_sum" = "$framed_sum" ] || fail 'Noncanonical bootstrap bytes'
 }
 checksum() {
     sum=$(printf '%s\n' "$1" | sha256sum) || fail 'Unable to hash bootstrap metadata'

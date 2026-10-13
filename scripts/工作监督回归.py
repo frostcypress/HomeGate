@@ -237,8 +237,23 @@ class Runtime(unittest.TestCase):
         process.kill(); process.communicate(timeout=5)
         try: os.kill(int(lease[5]),signal.SIGKILL)
         except ProcessLookupError: self.fail('Watchdog ended before fault injection')
-        self.supervise('recover',expected=7)
+        # A metadata probe already forked by the killed owner may briefly
+        # retain FD8. Busy is a valid refusal; wait only for that lock release,
+        # then require orphan-quiescence failure while its worker remains live.
+        deadline=time.monotonic()+2
+        while True:
+            rejected=subprocess.run([self.busybox,'ash',str(SUPERVISOR),'recover'],env=self.env,capture_output=True,timeout=10)
+            self.assertEqual(rejected.stderr,b'')
+            if rejected.returncode==4 and time.monotonic()<deadline:
+                self.assertEqual(json.loads(rejected.stdout)['error'],'Another supervisor is active')
+                self.assertEqual((self.store/'worker').read_text().splitlines(),lease)
+                self.assertEqual((self.store/'current').read_bytes(),b'3\n')
+                time.sleep(0.02); continue
+            self.assertEqual(rejected.returncode,7,(rejected.stdout,rejected.stderr))
+            self.assertEqual(json.loads(rejected.stdout)['error'],'Orphan worker quiescence is unproven')
+            break
         self.assertEqual((self.store/'worker').read_text().splitlines(),lease)
+        self.assertEqual((self.store/'current').read_bytes(),b'3\n')
         # The live unread-pipe producer may still own FD9. Status must either
         # report the preserved lease or explicitly report configuration busy.
         result=subprocess.run([self.busybox,'ash',str(DIRECTORY/'homegate-config-prototype.sh'),'--public-uci','status'],

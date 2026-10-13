@@ -133,7 +133,8 @@ class Runtime(unittest.TestCase):
     def test_actual_readback_ack_refuses_flags_and_legacy_success(self):
         self.begin(); self.finish(expected=7)
         self.cli('apply-finish',self.handle,'success',expected=5)
-        self.cli('apply-finish-intent',self.handle,'success','1','0',expected=5)
+        self.cli('apply-finish-intent',self.handle,'success','1','0',expected=2)
+        self.cli('apply-finish-intent',self.handle,'1','0',expected=5)
         self.cli('apply-finish-projection',self.handle,'1','0',expected=2)
         self.publish(); self.finish()
         self.assertFalse(self.cli('status')['application_pending'])

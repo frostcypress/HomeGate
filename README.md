@@ -67,4 +67,4 @@ Python 3.12+，Lua 回归另需 lupa==2.8；浏览器回归需 playwright==1.63.
 
 1.3.0-r22 增加源配置绑定、公共 UCI 文件发布/读回及私有原文件恢复，完成确认取自实际服务采样。15 项 Linux 发布、2 项静态及全部既有回归通过[Actions](https://github.com/frostcypress/HomeGate/actions/runs/38332273913)。生产写入固定关闭，Lua 共锁迁移、持久存储、实际启停与新核心业务仍未完成，没有三包。详见[源配置发布协议](docs/源配置发布.md)。
 
-1.3.0-r23 增加 17 个原生 Lua 写处理器的整次请求协调、私有请求传输及固定 Shell flock runner，对照桥接复用原有事务锁。8 项本地检查通过，12 项 Linux 和对照桥接测试待当前 Actions。原生写入及发布生产门禁固定关闭，持久屏障、独立期限及业务恢复尚未接入；没有三包。详见[原生写入协调](docs/原生写入协调.md)。
+1.3.0-r23 增加 17 个原生 Lua 写处理器的整次请求协调、私有请求传输及固定 Shell flock runner，对照桥接复用原有事务锁。8 项本地检查通过，12 项 Linux、对照桥接和全部既有回归通过[Actions](https://github.com/frostcypress/HomeGate/actions/runs/38336189603)。原生写入及发布生产门禁固定关闭，持久屏障、独立期限及业务恢复尚未接入；没有三包。详见[原生写入协调](docs/原生写入协调.md)。

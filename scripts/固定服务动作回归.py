@@ -42,7 +42,7 @@ class Runtime(BootstrapRuntime):
     def setUp(self):
         super().setUp(); self.boot(); self.commit_body(self.business)
         self.config=self.etc/'config'; self.config.mkdir(mode=0o700)
-        self.source=self.config/'homegate'; self.original=self.business.replace(b"option enabled '0'",b"option enabled '1'",1)
+        self.source=self.config/'homegate'; self.original=b'\n'.join(line for line in self.business.split(b'\n') if not line.startswith(b'#')).replace(b"option enabled '0'",b"option enabled '1'",1)
         self.source.write_bytes(self.original); self.source.chmod(0o600)
         self.actions=self.base/'actions'; self.actions.touch(mode=0o600)
         self.flags=self.base/'flags.json'; self.flags.write_text('{}'); self.flags.chmod(0o600)

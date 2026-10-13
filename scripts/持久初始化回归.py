@@ -150,6 +150,12 @@ class Runtime(PersistentRuntime):
         p=self.stage/'.hidden'; p.write_bytes(b'PRIVATE_SENTINEL'); self.boot('resume',expected=7); p.unlink()
         p=self.stage/'gen-1/credentials/.hidden'; p.write_bytes(b'PRIVATE_SENTINEL'); self.boot('resume',expected=7); p.unlink()
         p=self.stage/'identity'; p.write_bytes(identity+b'\n'); self.boot('resume',expected=7); p.write_bytes(identity)
+        p=self.stage/'bootstrap-receipt'; original=p.read_bytes()
+        p.write_bytes(original[:-1]+b'\x00'); self.boot('resume',expected=7); p.write_bytes(original)
+        p=self.stage/'gen-1/public.conf'; original=p.read_bytes()
+        p.write_bytes(original[:-1]+b'\x00')
+        self.boot('resume',expected=7); self.assertFalse(self.store.exists()); p.write_bytes(original)
+        p=self.stage/'identity'
         alias=self.base/'identity-link'; os.link(p,alias); self.boot('resume',expected=7); alias.unlink()
         self.boot('resume')
 

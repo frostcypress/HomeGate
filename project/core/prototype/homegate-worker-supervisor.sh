@@ -3,10 +3,22 @@
 set -u
 umask 077
 export LC_ALL=C
+persistent_supervision_enabled=false
+persistent_mode=false
+engine_mode=--public-uci
+lease_format=HGWORKER1
+if [ "${1:-}" = --persistent ]; then
+    shift
+    [ "$persistent_supervision_enabled" = true ] || { printf '{"api_version":1,"prototype":true,"ok":false,"error":"Persistent supervision is not ready"}\n'; exit 2; }
+    persistent_mode=true; engine_mode=--persistent; lease_format=HGWORKER2
+    PATH=/usr/sbin:/usr/bin:/sbin:/bin; export PATH
+    unset IPKG_INSTROOT INIT_TRACE LUA_INIT LUA_PATH LUA_CPATH HOMEGATE_CONFIG_PROTO_STORE HOMEGATE_WORKER_PROTO_TIMEOUT
+fi
 dir=$(CDPATH= cd "$(dirname "$0")" && pwd) || exit 1
 engine="$dir/homegate-config-prototype.sh"
 process="$dir/worker-process.lua"
 store=${HOMEGATE_CONFIG_PROTO_STORE:-}
+[ "$persistent_mode" = false ] || store=/etc/homegate/transactions
 interrupted=0
 control_open=false
 fail() { printf '{"api_version":1,"prototype":true,"ok":false,"phase":"worker-supervision","error":"%s"}\n' "$1"; exit "${2:-7}"; }
@@ -16,6 +28,30 @@ trap 'exec 5>&- 2>/dev/null || :' EXIT
 private_file() { [ -f "$1" ] && [ ! -L "$1" ] && [ "$(stat -c '%u:%a:%h' "$1")" = "$owner:600:1" ]; }
 private_fifo() { [ -p "$1" ] && [ ! -L "$1" ] && [ "$(stat -c '%u:%a:%h' "$1")" = "$owner:600:1" ]; }
 validate_store_path() {
+    if [ "$persistent_mode" = true ]; then
+        [ "$owner" = 0 ] || fail 'Persistent supervision requires root'
+        for folder in /etc/homegate /etc/homegate/transactions /var/run/homegate; do
+            [ -d "$folder" ] && [ ! -L "$folder" ] && [ "$(stat -c '%u:%a' "$folder")" = "$owner:700" ] || fail 'Unsafe persistent supervisor namespace'
+        done
+        [ -d /etc ] && [ ! -L /etc ] || fail 'Unsafe persistent supervisor parent'
+        case "$(stat -c '%u:%a' /etc)" in "$owner:700"|"$owner:755") ;; *) fail 'Unsafe persistent supervisor parent';; esac
+        private_file "$store/identity" && [ "$(stat -c %s "$store/identity")" -le 512 ] || fail 'Unsafe persistent supervisor identity'
+        exec 4<"$store/identity" || fail 'Unable to inspect store identity'
+        IFS= read -r identity_format <&4 && IFS= read -r identity_slug <&4 && IFS= read -r identity_schema <&4 &&
+            IFS= read -r identity_path <&4 && IFS= read -r store_identity <&4 && IFS= read -r identity_sum <&4 || fail 'Incomplete supervisor identity'
+        if IFS= read -r extra <&4; then fail 'Unexpected supervisor identity'; fi
+        exec 4<&-
+        [ "$identity_format:$identity_slug:$identity_schema:$identity_path" = "HGSTORE1:homegate:public-uci-v1:$store" ] && token_valid "$store_identity" || fail 'Supervisor identity mismatch'
+        identity_payload=$(printf '%s\n' HGSTORE1 homegate public-uci-v1 "$store" "$store_identity")
+        identity_expected=$(printf '%s\n' "$identity_payload" | sha256sum); identity_expected=${identity_expected%% *}
+        identity_bytes=$(printf '%s\n' "$identity_payload" "$identity_expected" | sha256sum)
+        identity_actual=$(sha256sum "$store/identity") || fail 'Unable to verify supervisor identity'
+        [ "${identity_bytes%% *}" = "${identity_actual%% *}" ] || fail 'Invalid supervisor identity bytes'
+        for slot in .lock .supervisor.lock .recovery.lock; do private_file "$store/$slot" || fail 'Lifecycle supervisor locks are missing'; done
+        private_file /var/run/homegate/frontend.lock || fail 'Unsafe shared writer lock'
+        if [ -e "$store/worker" ] || [ -L "$store/worker" ]; then private_file "$store/worker" && [ "$(stat -c %s "$store/worker")" -le 512 ] || fail 'Unsafe persistent worker lease'; fi
+        return
+    fi
     case "$store" in /tmp/homegate-config-prototype-*) ;; *) fail 'Invalid isolated worker store' 2;; esac
     walk=; old_ifs=$IFS; IFS=/; set -f
     for component in $store; do
@@ -32,8 +68,10 @@ validate_store_path() {
     fi
 }
 validate_configuration() {
-    rc=0; ash "$engine" --public-uci status >/dev/null 2>&1 || rc=$?
-    case "$rc" in 0) ;; 4) fail 'Configuration busy' 4;; *) fail 'Invalid isolated worker store' 2;; esac
+    rc=0; ash "$engine" "$engine_mode" status >/dev/null 2>&1 || rc=$?
+    case "$rc" in 0) ;; 4) fail 'Configuration busy' 4;; *)
+        if [ "$persistent_mode" = true ]; then fail 'Invalid persistent worker store' 7; fi
+        fail 'Invalid isolated worker store' 2;; esac
 }
 digits() { case "$1" in ''|*[!0-9]*) return 1;; esac; [ "${#1}" -le "$2" ]; }
 token_valid() { [ "${#1}" -eq 32 ] || return 1; case "$1" in *[!0-9a-f]*) return 1;; esac; }
@@ -74,7 +112,7 @@ lease_read() {
         IFS= read -r lease_budget <&4 || fail 'Incomplete worker lease'
     if IFS= read -r extra <&4; then fail 'Unexpected worker lease data'; fi
     exec 4<&-
-    [ "$format" = HGWORKER1 ] && [ "$lease_store" = "$store_digest" ] || fail 'Worker lease belongs to another store'
+    [ "$format" = "$lease_format" ] && [ "$lease_store" = "$store_digest" ] || fail 'Worker lease belongs to another store'
     [ "${#lease_boot}" -eq 36 ] || fail 'Invalid worker boot identity'
     case "$lease_boot" in *[!0-9a-f-]*) fail 'Invalid worker boot identity';; esac
     digits "$owner_pid" 9 && digits "$watchdog_pid" 9 && digits "$owner_birth" 20 && digits "$watchdog_birth" 20 || fail 'Invalid worker process identity'
@@ -83,8 +121,10 @@ lease_read() {
     token_valid "$lease_token" || fail 'Invalid worker handle'
     case "$lease_role" in apply|restore) ;; *) fail 'Invalid worker role';; esac
     case "$lease_budget" in [1-9]|[12][0-9]|30) ;; *) fail 'Invalid worker budget';; esac
-    expected=$(printf '%s\n' HGWORKER1 "$lease_boot" "$lease_store" "$owner_pid" "$owner_birth" "$watchdog_pid" "$watchdog_birth" "$lease_role" "$lease_token" "$lease_budget")
+    expected=$(printf '%s\n' "$lease_format" "$lease_boot" "$lease_store" "$owner_pid" "$owner_birth" "$watchdog_pid" "$watchdog_birth" "$lease_role" "$lease_token" "$lease_budget")
     [ "$body" = "$expected" ] || fail 'Invalid worker lease framing'
+    lease_expected=$(printf '%s\n' "$expected" | sha256sum); lease_actual=$(sha256sum "$store/worker")
+    [ "${lease_expected%% *}" = "${lease_actual%% *}" ] || fail 'Invalid worker lease bytes'
 }
 lease_remove() {
     rm -f "$store/worker" || fail 'Unable to close worker lease'
@@ -97,6 +137,7 @@ request_stop() {
 }
 orphan_quiescence() {
     lease_read
+    [ "$persistent_mode" = false ] || [ "$lease_boot" = "$boot" ] || fail 'Persistent cold-start worker reconciliation is required'
     if [ "$lease_boot" = "$boot" ]; then
         metadata "$owner_pid" none
         if [ "$birth" = "$owner_birth" ]; then case "$state" in ''|Z|X) ;; *) fail 'Worker supervisor is active' 4;; esac; fi
@@ -119,13 +160,17 @@ orphan_quiescence() {
 run_job() {
     role=$1; handle=$2
     case "$role" in apply) authorize=apply-authorize;; restore) authorize=restore-authorize;; esac
-    authorization=$(ash "$engine" --public-uci "$authorize" "$handle" 2>/dev/null) || fail 'Worker context is not authorized' 5
+    authorization=$(ash "$engine" "$engine_mode" "$authorize" "$handle" 2>/dev/null) || fail 'Worker context is not authorized' 5
     revision=$(printf '%s\n' "$authorization" | lua "$process" revision 2>/dev/null) || fail 'Invalid worker context'
     clean_slots
     mkfifo "$store/worker-start" "$store/worker-data" || fail 'Unable to create private worker pipes'
     exec 5<> "$store/worker-start" || fail 'Unable to open worker startup gate'
     control_open=true
-    setsid ash "$dir/homegate-worker-watchdog.sh" "$role" "$handle" "$budget" <"$store/worker-start" 5>&- 8>&- 9>&- >/dev/null 2>&1 &
+    if [ "$persistent_mode" = true ]; then
+        setsid ash "$dir/homegate-worker-watchdog.sh" --persistent "$role" "$handle" "$budget" <"$store/worker-start" 5>&- 8>&- 9>&- >/dev/null 2>&1 &
+    else
+        setsid ash "$dir/homegate-worker-watchdog.sh" "$role" "$handle" "$budget" <"$store/worker-start" 5>&- 8>&- 9>&- >/dev/null 2>&1 &
+    fi
     child=$!
     now; start_deadline=$((moment + 2))
     while :; do
@@ -138,7 +183,7 @@ run_job() {
     metadata "$$" none; own_birth=$birth
     temporary="$store/.worker.$$"
     (set -C; : > "$temporary") 2>/dev/null || fail 'Unable to allocate worker lease'
-    printf '%s\n' HGWORKER1 "$boot" "$store_digest" "$$" "$own_birth" "$child" "$child_birth" "$role" "$handle" "$budget" > "$temporary" || fail 'Unable to write worker lease'
+    printf '%s\n' "$lease_format" "$boot" "$store_digest" "$$" "$own_birth" "$child" "$child_birth" "$role" "$handle" "$budget" > "$temporary" || fail 'Unable to write worker lease'
     fsync "$temporary" 2>/dev/null || fail 'Unable to synchronize worker lease'
     mv -f "$temporary" "$store/worker" || fail 'Unable to publish worker lease'
     fsync "$store" 2>/dev/null || fail 'Worker startup durability is uncertain'
@@ -188,6 +233,7 @@ case "${1:-}" in
     *) fail 'Unsupported supervisor command' 2;;
 esac
 budget=${HOMEGATE_WORKER_PROTO_TIMEOUT:-30}
+[ "$persistent_mode" = false ] || budget=30
 case "$budget" in [1-9]|[12][0-9]|30) ;; *) fail 'Worker timeout must be 1 to 30 seconds' 2;; esac
 sleep 0.001 >/dev/null 2>&1 || fail 'Worker pacing is unavailable' 2
 # Signal zero probes only our live process; it sends no signal. Do not depend
@@ -199,9 +245,11 @@ validate_store_path
 # outer SIGKILL. Recovery must prove the family quiet before taking that lock.
 [ "$command" = recover ] || validate_configuration
 boot=$(cat /proc/sys/kernel/random/boot_id) || fail 'Unable to read worker boot identity'
-store_digest=$(printf '%s\n' "$store" | sha256sum); store_digest=${store_digest%% *}
+if [ "$persistent_mode" = true ]; then store_digest=$(printf '%s\n' "$store" "$store_identity" | sha256sum)
+else store_digest=$(printf '%s\n' "$store" | sha256sum); fi
+store_digest=${store_digest%% *}
 for file in "$store/.recovery.lock" "$store/.supervisor.lock"; do
-    if [ ! -e "$file" ] && [ ! -L "$file" ]; then (set -C; : > "$file") 2>/dev/null || :; fi
+    if [ "$persistent_mode" = false ] && [ ! -e "$file" ] && [ ! -L "$file" ]; then (set -C; : > "$file") 2>/dev/null || :; fi
     private_file "$file" || fail 'Unsafe worker control lock'
 done
 exec 8>>"$store/.recovery.lock" || fail 'Unable to open worker recovery lock'
@@ -211,21 +259,35 @@ if [ -e "$store/worker" ] || [ -L "$store/worker" ]; then
     [ "$command" = recover ] || fail 'Unfinished worker requires explicit recovery' 4
     orphan_quiescence; stale=true
 fi
+if [ "$persistent_mode" = true ]; then
+    # Orphan stopping precedes this acquisition: the old family may own FD6.
+    # New work holds the same FD6 across authorize, snapshots and final ACK.
+    if [ "$(stat -Lc '%d:%i:%u:%a:%h' /proc/self/fd/6 2>/dev/null)" != "$(stat -c '%d:%i:%u:%a:%h' /var/run/homegate/frontend.lock)" ]; then
+        exec 6>>/var/run/homegate/frontend.lock || fail 'Unable to open shared writer lock'
+    fi
+    flock -n 6 || fail 'Shared writer is busy' 4
+fi
 exec 7>>"$store/.supervisor.lock" || fail 'Unable to open worker supervisor lock'
 flock -n 7 || fail 'Worker group has not released its control lock' 4
 [ "$stale" = false ] || lease_remove
 [ "$command" != recover ] || validate_configuration
 if [ "$command" = run-apply ]; then
     if run_job apply "$handle"; then
-        ash "$engine" --public-uci apply-finish "$handle" success >/dev/null 2>&1 || fail 'Application acknowledgement is uncertain'
+        ash "$engine" "$engine_mode" apply-finish "$handle" success >/dev/null 2>&1 || fail 'Application acknowledgement is uncertain'
         printf '{"api_version":1,"prototype":true,"ok":true,"scope":"isolated-worker-receipt","applied":true}\n'
         exit 0
     fi
     apply_timed_out=$timed_out
     apply_failure_reason=$failure_reason
-    ash "$engine" --public-uci apply-finish "$handle" failure >/dev/null 2>&1 || fail 'Baseline restoration could not begin'
+    ash "$engine" "$engine_mode" apply-finish "$handle" failure >/dev/null 2>&1 || fail 'Baseline restoration could not begin'
 else
-    result=$(ash "$engine" --public-uci recover-application 2>/dev/null) || fail 'Application recovery could not begin'
+    rc=0; result=$(ash "$engine" "$engine_mode" recover-application 2>/dev/null) || rc=$?
+    if [ "$rc" -eq 7 ] && [ "$persistent_mode" = true ]; then
+        # A corrupt or existing journal is rejected by recover-fence as well;
+        # only an absent journal with a matching same-boot anchor can recover.
+        rc=0; result=$(ash "$engine" --persistent recover-fence 2>/dev/null) || rc=$?
+    fi
+    [ "$rc" -eq 0 ] || fail 'Application recovery could not begin'
     handle=$(printf '%s\n' "$result" | lua "$process" ticket 2>/dev/null) || fail 'Invalid recovery context'
     if [ "$handle" = completed ]; then
         clean_slots
@@ -234,7 +296,7 @@ else
     fi
 fi
 if run_job restore "$handle"; then
-    ash "$engine" --public-uci restore-finish "$handle" success >/dev/null 2>&1 || fail 'Restoration acknowledgement is uncertain'
+    ash "$engine" "$engine_mode" restore-finish "$handle" success >/dev/null 2>&1 || fail 'Restoration acknowledgement is uncertain'
     if [ "$command" = run-apply ]; then
         printf '{"api_version":1,"prototype":true,"ok":false,"scope":"isolated-worker-receipt","baseline_restored":true,"application_pending":false,"timed_out":%s,"failure_reason":"%s"}\n' "$apply_timed_out" "$apply_failure_reason"
         exit 8
@@ -242,5 +304,5 @@ if run_job restore "$handle"; then
     printf '{"api_version":1,"prototype":true,"ok":true,"scope":"isolated-worker-receipt","baseline_restored":true}\n'
     exit 0
 fi
-ash "$engine" --public-uci restore-finish "$handle" failure >/dev/null 2>&1 || :
+ash "$engine" "$engine_mode" restore-finish "$handle" failure >/dev/null 2>&1 || :
 fail 'Baseline worker restoration remains incomplete'

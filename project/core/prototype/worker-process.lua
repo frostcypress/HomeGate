@@ -80,7 +80,7 @@ elseif arg[1]=="ticket" and not arg[2] then
     else fail() end
 elseif arg[1]=="receipt" and arg[2] and arg[3] and arg[4] and not arg[5] then
     number(arg[3],32); if arg[4]~="apply" and arg[4]~="restore" then fail() end
-    if not arg[2]:match("^/tmp/homegate%-config%-prototype%-") then fail() end
+    if arg[2]~="/etc/homegate/transactions" and not arg[2]:match("^/tmp/homegate%-config%-prototype%-") then fail() end
     local body=read(arg[2].."/runtime",256)
     local dir=arg[0]:match("^(.*)/[^/]+$"); if not dir then fail() end
     local codec=assert(loadfile(dir.."/../../luci/lua/luasrc/model/homegate/backup.lua"))()

@@ -4,8 +4,18 @@
 set -u
 umask 077
 export LC_ALL=C
+persistent_worker_enabled=false
+persistent_mode=false
+engine_mode=--public-uci
+if [ "${1:-}" = --persistent ]; then
+    shift; [ "$persistent_worker_enabled" = true ] || exit 2
+    persistent_mode=true; engine_mode=--persistent
+    PATH=/usr/sbin:/usr/bin:/sbin:/bin; export PATH
+    unset IPKG_INSTROOT INIT_TRACE LUA_INIT LUA_PATH LUA_CPATH HOMEGATE_CONFIG_PROTO_STORE HOMEGATE_WORKER_PROTO_TIMEOUT
+fi
 dir=$(CDPATH= cd "$(dirname "$0")" && pwd) || exit 1
 store=${HOMEGATE_CONFIG_PROTO_STORE:-}
+[ "$persistent_mode" = false ] || store=/etc/homegate/transactions
 role=${1:-}; token=${2:-}; budget=${3:-}
 case "$role" in apply|restore) ;; *) exit 1;; esac
 case "$token" in *[!0-9a-f]*) exit 1;; esac
@@ -19,8 +29,12 @@ IFS= read -r start || exit 1
 [ "$start" = START ] || exit 1
 stop_requested=false
 trap 'stop_requested=true' TERM INT
-exec 6<> "$store/worker-data" || exit 1
-lua "$dir/homegate-worker-prototype.lua" "$role" "$token" <"$store/worker-data" 6>&- 7>&- 8>&- 9>&- >/dev/null 2>&1 &
+exec 4<> "$store/worker-data" || exit 1
+if [ "$persistent_mode" = true ]; then
+    lua "$dir/homegate-worker-prototype.lua" --persistent "$role" "$token" <"$store/worker-data" 4>&- 6>&- 7>&- 8>&- 9>&- >/dev/null 2>&1 &
+else
+    lua "$dir/homegate-worker-prototype.lua" "$role" "$token" <"$store/worker-data" 4>&- 6>&- 7>&- 8>&- 9>&- >/dev/null 2>&1 &
+fi
 worker_pid=$!
 case "$role" in apply) snapshot_command=apply-snapshot-read;; restore) snapshot_command=restore-snapshot-read;; esac
 produce_snapshot() {
@@ -29,14 +43,14 @@ produce_snapshot() {
     # for EOF. The independent watchdog bounds and stops this whole family.
     while :; do
         result=0
-        ash "$dir/homegate-config-prototype.sh" --public-uci "$snapshot_command" "$token" || result=$?
+        ash "$dir/homegate-config-prototype.sh" "$engine_mode" "$snapshot_command" "$token" || result=$?
         [ "$result" -eq 4 ] || return "$result"
         sleep 0.05 2>/dev/null || return 1
     done
 }
-produce_snapshot 3>&6 6>&- 8>&- 9>&- </dev/null >/dev/null 2>&1 &
+produce_snapshot 3>&4 4>&- 8>&- 9>&- </dev/null >/dev/null 2>&1 &
 producer_pid=$!
-exec 6>&-
+exec 4>&-
 now=$(lua "$process" now) || exit 1
 deadline=$((now + budget))
 running() {

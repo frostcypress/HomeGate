@@ -16,6 +16,7 @@ projection_transaction=false
 # No CLI argument or environment variable can enable production publication.
 production_writes_enabled=false
 persistent_namespace_enabled=false
+orphan_recovery_enabled=false
 persistent_mode=false
 persistent_fence_present=false
 persistent_fence_pending=false
@@ -264,9 +265,9 @@ open_store() {
         if [ "$journal_active" = true ]; then
             [ "$persistent_fence_pending" = true ] && [ "$fence_base:$fence_target:$fence_token" = "$journal_base:$journal_target:$journal_token" ] || fail 'Application and persistent fence mismatch' 7
         elif [ "$persistent_fence_pending" = true ]; then
-            case "$command" in status|export) ;; *) fail 'Persistent fence requires reconciliation' 7;; esac
+            case "$command" in status|export|recover-fence) ;; *) fail 'Persistent fence requires reconciliation' 7;; esac
         fi
-        case "$command" in status|export|recover-application|apply-finish*|restore-finish*|projection-publish|apply-*-read|restore-*-read|apply-authorize|restore-authorize|service-intent-read) ;;
+        case "$command" in status|export|recover-application|recover-fence|apply-finish*|restore-finish*|projection-publish|apply-*-read|restore-*-read|apply-authorize|restore-authorize|service-intent-read) ;;
             *) persistent_ready;; esac
     fi
     if [ "$journal_active" = true ]; then
@@ -489,11 +490,13 @@ digest_file() {
 journal_read() {
     journal_active=false
     journal_format=HGAPPLICATION1
-    if [ ! -e "$store/application" ] && [ ! -L "$store/application" ]; then return; fi
+    journal_file="$store/application"
+    case "${1:-}" in '') ;; anchor) journal_file="$store/application-anchor";; *) fail 'Invalid internal journal selector' 7;; esac
+    if [ ! -e "$journal_file" ] && [ ! -L "$journal_file" ]; then return; fi
     [ "$public_mode" = true ] || fail 'Application journal requires full schema'
-    read_one "$store/application" 512
+    read_one "$journal_file" 512
     journal_body=$one
-    exec 8<"$store/application" || fail 'Unable to read application journal'
+    exec 8<"$journal_file" || fail 'Unable to read application journal'
     IFS= read -r journal_format <&8 && IFS= read -r journal_base <&8 &&
         IFS= read -r journal_target <&8 && IFS= read -r journal_token <&8 &&
         IFS= read -r journal_state <&8 && IFS= read -r journal_before <&8 &&
@@ -579,6 +582,62 @@ journal_write() {
     journal_state=$1
     fsync "$store" 2>/dev/null || fail 'Application intent durability is uncertain' 7
 }
+persistent_anchor_write() {
+    [ "$persistent_mode" = true ] || return
+    clock_now
+    allocate_scratch
+    journal_body_write prepared > "$scratch" || fail 'Unable to write recovery anchor' 7
+    fsync "$scratch" 2>/dev/null || fail 'Unable to synchronize recovery anchor' 7
+    mv -f "$scratch" "$store/application-anchor" || fail 'Unable to publish recovery anchor' 7
+    scratch=
+    fsync "$store" 2>/dev/null || fail 'Recovery anchor durability is uncertain' 7
+    digest_file "$store/application-anchor"
+    anchor_payload=$(printf '%s\n' HGRECOVERY1 "$store_identity" "$boot" "$digest")
+    anchor_checksum=$(printf '%s\n' "$anchor_payload" | sha256sum) || fail 'Unable to bind recovery anchor' 7
+    anchor_checksum=${anchor_checksum%% *}
+    allocate_scratch
+    printf '%s\n' "$anchor_payload" "$anchor_checksum" > "$scratch" || fail 'Unable to write recovery anchor binding' 7
+    fsync "$scratch" 2>/dev/null || fail 'Unable to synchronize recovery anchor binding' 7
+    mv -f "$scratch" "$store/application-anchor-meta" || fail 'Unable to publish recovery anchor binding' 7
+    scratch=
+    fsync "$store" 2>/dev/null || fail 'Recovery anchor binding durability is uncertain' 7
+}
+persistent_anchor_restore() {
+    [ "$journal_active" = false ] && [ "$persistent_fence_pending" = true ] || fail 'Orphan fence recovery is not applicable' 5
+    clock_now
+    private_file "$store/application-anchor" && [ "$(stat -c %s "$store/application-anchor")" -le 512 ] || fail 'Missing safe recovery anchor' 7
+    digest_file "$store/application-anchor"
+    anchor_payload=$(printf '%s\n' HGRECOVERY1 "$store_identity" "$boot" "$digest")
+    anchor_checksum=$(printf '%s\n' "$anchor_payload" | sha256sum) || fail 'Unable to bind recovery anchor' 7
+    anchor_checksum=${anchor_checksum%% *}
+    anchor_expected=$(printf '%s\n' "$anchor_payload" "$anchor_checksum" | sha256sum) || fail 'Unable to check recovery anchor binding' 7
+    private_file "$store/application-anchor-meta" && [ "$(stat -c %s "$store/application-anchor-meta")" -le 256 ] || fail 'Missing safe recovery anchor binding' 7
+    digest_file "$store/application-anchor-meta"
+    [ "$digest" = "${anchor_expected%% *}" ] || fail 'Recovery anchor identity or boot changed' 7
+    journal_read anchor
+    [ "$journal_active" = true ] && [ "$journal_state" = prepared ] || fail 'Invalid recovery anchor phase' 7
+    [ "$fence_base:$fence_target:$fence_token" = "$journal_base:$journal_target:$journal_token" ] || fail 'Recovery anchor does not match active fence' 7
+    anchor_canonical=$(journal_body_write prepared | sha256sum) || fail 'Unable to check recovery anchor framing' 7
+    digest_file "$store/application-anchor"
+    [ "$digest" = "${anchor_canonical%% *}" ] || fail 'Invalid recovery anchor bytes' 7
+    # No guessed format or service intent: journal_read validates the original
+    # HGAPPLICATION1/2/3 and immutable generations before restoring a pointer.
+    journal_restore
+}
+persistent_anchor_bind() {
+    [ "$persistent_mode" = true ] || return
+    clock_now
+    private_file "$store/application-anchor" && [ "$(stat -c %s "$store/application-anchor")" -le 512 ] || fail 'Missing bound recovery anchor' 7
+    anchor_expected=$(journal_body_write prepared | sha256sum) || fail 'Unable to check bound recovery anchor' 7
+    digest_file "$store/application-anchor"
+    [ "$digest" = "${anchor_expected%% *}" ] || fail 'Recovery anchor does not match journal' 7
+    anchor_payload=$(printf '%s\n' HGRECOVERY1 "$store_identity" "$boot" "$digest")
+    anchor_checksum=$(printf '%s\n' "$anchor_payload" | sha256sum); anchor_checksum=${anchor_checksum%% *}
+    anchor_expected=$(printf '%s\n' "$anchor_payload" "$anchor_checksum" | sha256sum) || fail 'Unable to check anchor identity' 7
+    private_file "$store/application-anchor-meta" && [ "$(stat -c %s "$store/application-anchor-meta")" -le 256 ] || fail 'Missing bound recovery identity' 7
+    digest_file "$store/application-anchor-meta"
+    [ "$digest" = "${anchor_expected%% *}" ] || fail 'Recovery identity or boot changed' 7
+}
 journal_begin() {
     [ "$journal_active" = false ] || fail 'Application already pending' 4
     journal_format=HGAPPLICATION1
@@ -592,6 +651,7 @@ journal_begin() {
     journal_binding "$journal_target"; journal_after=$digest
     new_token; journal_token=$token
     if [ "$persistent_mode" = true ]; then
+        persistent_anchor_write
         fence_base=$journal_base; fence_target=$journal_target; fence_token=$journal_token
         persistent_fence_write active
         persistent_fence_pending=true
@@ -601,6 +661,7 @@ journal_begin() {
 journal_need() {
     [ "$journal_active" = true ] || fail 'No pending application' 5
     [ "$confirmation" = "$journal_token" ] || fail 'Application handle changed' 5
+    persistent_anchor_bind
 }
 intent_ack_need() {
     if [ "$journal_format" != HGAPPLICATION1 ] && [ "$application_result" = success ]; then
@@ -892,6 +953,8 @@ case "$command" in
     migration-preview) [ "$#" -eq 0 ] && [ "$public_mode" = true ] || fail 'Migration requires full schema' 2;;
     snapshot-read) [ "$#" -eq 0 ] && [ "$public_mode" = true ] || fail 'Private reader requires full schema' 2;;
     recover-application) [ "$#" -eq 0 ] && [ "$public_mode" = true ] || fail 'Recovery requires full schema' 2;;
+    recover-fence)
+        [ "$#" -eq 0 ] && [ "$persistent_mode" = true ] && [ "$orphan_recovery_enabled" = true ] || fail 'Orphan recovery is not ready' 2;;
     rollback-preview) [ "$#" -eq 1 ] && number "$1" 1 32 && [ "$1" = "$value" ] || fail 'Expected generation number' 2;;
     commit-apply-projection|commit-apply-observed)
         [ "$public_mode" = true ] && [ "$#" -eq 1 ] && [ "${#1}" -eq 32 ] || fail 'Expected confirmation handle' 2
@@ -1025,10 +1088,15 @@ case "$command" in
     recover-application)
         need_initialized
         [ "$journal_active" = true ] || fail 'No pending application' 5
+        persistent_anchor_bind
         case "$journal_state" in applied|restored)
             journal_close
             printf '{"api_version":1,"prototype":true,"ok":true,"revision":%s,"application_pending":false,"worker_acknowledged":true}\n' "$head_revision";;
             *) journal_restore;; esac
+        ;;
+    recover-fence)
+        need_initialized
+        persistent_anchor_restore
         ;;
     preview)
         need_initialized

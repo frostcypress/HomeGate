@@ -1,9 +1,17 @@
 -- Isolated derived-state receipt, NOT DNS/ACME/proxy/firewall/service apply.
 local function fail() os.exit(1) end
+local persistent_worker_enabled=false
+local persistent_mode=false
+if arg[1]=="--persistent" then
+    if not persistent_worker_enabled then fail() end
+    persistent_mode=true
+    arg[1],arg[2],arg[3]=arg[2],arg[3],arg[4]; arg[4]=nil
+end
 local dir=arg[0]:match("^(.*)/[^/]+$")
 if not dir or (arg[1]~="apply" and arg[1]~="restore") or not arg[2] or #arg[2]~=32 or arg[2]:find("[^0-9a-f]") or arg[3] then fail() end
 local store=os.getenv("HOMEGATE_CONFIG_PROTO_STORE")
-if not store or not store:match("^/tmp/homegate%-config%-prototype%-") then fail() end
+if persistent_mode then store="/etc/homegate/transactions"
+elseif not store or not store:match("^/tmp/homegate%-config%-prototype%-") then fail() end
 local codec=assert(loadfile(dir.."/../../luci/lua/luasrc/model/homegate/backup.lua"))()
 local reader=assert(loadfile(dir.."/private-snapshot.lua"))()
 local snapshot=reader.read(io.stdin,codec)

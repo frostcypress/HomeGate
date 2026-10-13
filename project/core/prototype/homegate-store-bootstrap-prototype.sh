@@ -58,8 +58,8 @@ check_identity() {
     payload=$(printf '%s\n' HGBOOTSTRAP1 "$store" "$store_id")
     checksum "$payload"
     [ "$text" = "$(printf '%s\n' "$payload" "$sum")" ] || fail 'Invalid bootstrap receipt'
-    private_file "$1/.lock" && private_file "$1/.supervisor.lock" || fail 'Unsafe bootstrap locks'
-    [ "$(stat -c %s "$1/.lock")" -eq 0 ] && [ "$(stat -c %s "$1/.supervisor.lock")" -eq 0 ] || fail 'Invalid bootstrap locks'
+    private_file "$1/.lock" && private_file "$1/.supervisor.lock" && private_file "$1/.recovery.lock" || fail 'Unsafe bootstrap locks'
+    [ "$(stat -c %s "$1/.lock")" -eq 0 ] && [ "$(stat -c %s "$1/.supervisor.lock")" -eq 0 ] && [ "$(stat -c %s "$1/.recovery.lock")" -eq 0 ] || fail 'Invalid bootstrap locks'
 }
 check_stage() {
     checked=$1
@@ -67,7 +67,7 @@ check_stage() {
     # Include hidden entries. Never follow a supplied checksum manifest or path.
     for item in "$checked/"* "$checked/".[!.]* "$checked/"..?*; do
         present "$item" || continue
-        case "${item##*/}" in identity|bootstrap-receipt|bootstrap-pending|.lock|.supervisor.lock|current|gen-1) ;; *) fail 'Unexpected bootstrap stage entry';; esac
+        case "${item##*/}" in identity|bootstrap-receipt|bootstrap-pending|.lock|.supervisor.lock|.recovery.lock|current|gen-1) ;; *) fail 'Unexpected bootstrap stage entry';; esac
     done
     for item in "$checked/gen-1/"* "$checked/gen-1/".[!.]* "$checked/gen-1/"..?*; do
         present "$item" || continue
@@ -90,7 +90,7 @@ check_stage() {
 }
 sync_stage() {
     checked=$1
-    fsync "$checked/identity" "$checked/bootstrap-receipt" "$checked/bootstrap-pending" "$checked/.lock" "$checked/.supervisor.lock" "$checked/current" \
+    fsync "$checked/identity" "$checked/bootstrap-receipt" "$checked/bootstrap-pending" "$checked/.lock" "$checked/.supervisor.lock" "$checked/.recovery.lock" "$checked/current" \
         "$checked/gen-1/public.conf" "$checked/gen-1/parent" "$checked/gen-1/manifest" 2>/dev/null || fail 'Unable to synchronize bootstrap files'
     fsync "$checked/gen-1/credentials" "$checked/gen-1" "$checked" "$parent" 2>/dev/null || fail 'Unable to synchronize bootstrap directories'
 }
@@ -154,7 +154,7 @@ else
     printf '%s\n' 0 > "$stage/gen-1/parent" || fail 'Unable to create bootstrap ancestry'
     (cd "$stage/gen-1" && sha256sum public.conf parent) > "$stage/gen-1/manifest" || fail 'Unable to seal bootstrap generation'
     printf '%s\n' 1 > "$stage/current" || fail 'Unable to create bootstrap pointer'
-    (set -C; : > "$stage/.lock" && : > "$stage/.supervisor.lock") 2>/dev/null || fail 'Unable to create bootstrap locks'
+    (set -C; : > "$stage/.lock" && : > "$stage/.supervisor.lock" && : > "$stage/.recovery.lock") 2>/dev/null || fail 'Unable to create bootstrap locks'
     head -c 16 /dev/urandom > "$stage/.random" || fail 'Unable to obtain store randomness'
     private_file "$stage/.random" && [ "$(stat -c %s "$stage/.random")" -eq 16 ] || fail 'Insufficient store randomness'
     random_digest=$(sha256sum "$stage/.random") || fail 'Unable to hash store randomness'

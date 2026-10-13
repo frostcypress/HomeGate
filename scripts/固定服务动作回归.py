@@ -56,7 +56,7 @@ from pathlib import Path
 base=Path(BASE); flags=json.loads((base/'flags.json').read_text()); action=sys.argv[1]
 assert len(sys.argv)==2 and action in ['enabled','start','stop']
 if action=='enabled': sys.exit(0 if (base/'enabled').read_text()=='1' else 1)
-with (base/'actions').open('a') as f: f.write(json.dumps({'action':action,'group':os.getpgrp(),'env':{k:os.environ.get(k) for k in ['HOMEGATE_PACKAGE_UPGRADE_STATE','PROCD_DEBUG','INIT_TRACE']}})+'\\n')
+with (base/'actions').open('a') as f: f.write(json.dumps({'action':action,'group':os.getpgrp(),'parent':os.getppid(),'env':{k:os.environ.get(k) for k in ['HOMEGATE_PACKAGE_UPGRADE_STATE','PROCD_DEBUG','INIT_TRACE']}})+'\\n')
 if flags.get(action+'_hang'):
  signal.signal(signal.SIGTERM,signal.SIG_IGN)
  while True: time.sleep(0.1)
@@ -123,6 +123,9 @@ os.execv(UCI,[UCI,'-c',str(base/'etc/config'),'-P',str(base/'uci-save'),'-q','sh
             except ProcessLookupError:pass
         # Groups came only from this fixture's fixed init action entries.
         for entry in self.log():
+            # Direct fixture init calls share the runner group; never signal it.
+            # Only init children of their own setsid watchdog leader qualify.
+            if entry['group']!=entry['parent'] or entry['group']==os.getpgrp():continue
             try:os.killpg(entry['group'],signal.SIGKILL)
             except ProcessLookupError:pass
         super().tearDown()

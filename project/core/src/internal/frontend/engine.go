@@ -255,6 +255,21 @@ func (e Engine) Run(ctx context.Context, request Request) (result Result) {
 			return 1
 		})
 	}
+	// The existing bridge already acquired Begin before loading any cursor.
+	// Invoke the same wrapped rules without re-entering native transport/flock.
+	preload("luci.model.homegate.writer", map[string]lua.LGFunction{
+		"run": func(L *lua.LState) int {
+			if !entry.Write || L.CheckString(1) != request.Route {
+				L.RaiseError("Invalid writer dispatch")
+				return 0
+			}
+			fn := L.CheckFunction(2)
+			if err := L.CallByParam(lua.P{Fn: fn, NRet: 0, Protect: true}); err != nil {
+				L.RaiseError("Writer dispatch failed")
+			}
+			return 0
+		},
+	}, nil)
 	preload("luci.http", map[string]lua.LGFunction{
 		"formvalue": func(L *lua.LState) int {
 			value, ok := request.Form[L.CheckString(1)]

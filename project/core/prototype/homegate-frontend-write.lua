@@ -9,6 +9,18 @@ local f = io.open(arg[1], "rb")
 if not f then fail() end
 local raw = f:read(2097153); local closed = f:close()
 if not closed or type(raw) ~= "string" or #raw == 0 or #raw > 2097152 then fail() end
+-- Older jsonc bindings use C strings and can silently truncate decoded NUL.
+-- Inspect actual escape tokens before decoding; escaped backslashes are text.
+if raw:find("%z") then fail() end
+local offset = 1
+while offset <= #raw do
+    if raw:sub(offset,offset) == "\\" then
+        if raw:sub(offset+1,offset+5) == "u0000" then fail() end
+        offset = offset + 2
+    else
+        offset = offset + 1
+    end
+end
 -- The official incremental parser rejects a second document/trailing content.
 local parser = jsonc.new()
 local parsed, request
@@ -57,8 +69,10 @@ http.header = function() error("unexpected response") end
 http.prepare_content = function() error("unexpected response") end
 local sys = require("luci.sys")
 local original_exec, original_call = sys.exec, sys.call
-sys.exec = function(command) return original_exec("(" .. command .. ") 6>&-") end
-sys.call = function(command) return original_call("(" .. command .. ") 6>&-") end
+-- Close in the launcher shell itself, before it forks a command/subshell.
+-- A redirection on parentheses alone leaves the waiting shell holding FD6.
+sys.exec = function(command) return original_exec("exec 6>&-; (" .. command .. ")") end
+sys.call = function(command) return original_call("exec 6>&-; (" .. command .. ")") end
 local ok = pcall(function()
     require("luci.controller.homegate")[handler]()
 end)

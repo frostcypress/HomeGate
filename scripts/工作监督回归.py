@@ -27,7 +27,7 @@ class Static(unittest.TestCase):
             # these two fixed descriptor operators, preserving byte offsets;
             # native sh -n and real BusyBox ash validate the actual operators.
             self.assertEqual(body.count(b'<>'),1)
-            parsed=body.replace(b'exec 5<> ',b'exec 5>> ').replace(b'exec 6<> ',b'exec 6>> ')
+            parsed=body.replace(b'exec 5<> ',b'exec 5>> ').replace(b'exec 4<> ',b'exec 4>> ')
             self.assertNotIn(b'<>',parsed)
             tree=parser.parse(parsed)
             check=[tree.root_node]; errors=[]

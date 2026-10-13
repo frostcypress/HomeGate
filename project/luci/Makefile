@@ -76,6 +76,7 @@ define Package/luci-app-homegate/install
 	$(INSTALL_DATA) ./lua/luasrc/controller/homegate.lua $(1)/usr/lib/lua/luci/controller/homegate.lua
 	$(INSTALL_DIR) $(1)/usr/lib/lua/luci/model/homegate
 	$(INSTALL_DATA) ./lua/luasrc/model/homegate/backup.lua $(1)/usr/lib/lua/luci/model/homegate/backup.lua
+	$(INSTALL_DATA) ./lua/luasrc/model/homegate/writer.lua $(1)/usr/lib/lua/luci/model/homegate/writer.lua
 	$(INSTALL_DIR) $(1)/usr/lib/lua/luci/view/homegate
 	$(INSTALL_DATA) ./lua/luasrc/view/homegate/*.htm $(1)/usr/lib/lua/luci/view/homegate/
 	$(CP) ./common/root/* $(1)/

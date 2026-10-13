@@ -31,7 +31,7 @@ class Static(unittest.TestCase):
         s=(PROTO/'homegate-config-prototype.sh').read_text().split('service_transition() {',1)[1].split('command=${1:-}',1)[0]
         self.assertLess(s.index('projection_observe_finish'),s.index('journal_write applied'))
         self.assertLess(s.index('journal_write applied'),s.index('journal_close'))
-        self.assertIn('business_applied\\":false',s.replace('"','\\"'))
+        self.assertIn('"business_applied":false',s)
 
 class Runtime(BootstrapRuntime):
     @classmethod
@@ -42,7 +42,7 @@ class Runtime(BootstrapRuntime):
     def setUp(self):
         super().setUp(); self.boot(); self.commit_body(self.business)
         self.config=self.etc/'config'; self.config.mkdir(mode=0o700)
-        self.source=self.config/'homegate'; self.original=self.business
+        self.source=self.config/'homegate'; self.original=self.business.replace(b"option enabled '0'",b"option enabled '1'",1)
         self.source.write_bytes(self.original); self.source.chmod(0o600)
         self.actions=self.base/'actions'; self.actions.touch(mode=0o600)
         self.flags=self.base/'flags.json'; self.flags.write_text('{}'); self.flags.chmod(0o600)
@@ -70,7 +70,7 @@ if action=='stop' and not flags.get('stop_noop') and (base/'daemon.pid').exists(
   if dead: break
   time.sleep(0.005)
  (base/'daemon.pid').unlink()
-if action=='start' and not flags.get('start_noop'):
+if action=='start' and not flags.get('start_noop') and "option enabled '1'" in (base/'etc/config/homegate').read_text():
  p=subprocess.Popen([str(base/'homegate'),'daemon'],stdin=subprocess.DEVNULL,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,close_fds=True,start_new_session=True)
  (base/'daemon.pid').write_text(str(p.pid)); time.sleep(0.03)
 sys.exit(flags.get(action+'_exit',0))

@@ -15,13 +15,24 @@ projection_transaction=false
 # Native Lua writers, the persistent namespace and lifecycle still need migration.
 # No CLI argument or environment variable can enable production publication.
 production_writes_enabled=false
+persistent_namespace_enabled=false
+persistent_mode=false
+persistent_fence_present=false
+persistent_fence_pending=false
 projection_scratch=
 journal_active=false
 public_mode=false
 public_limit=1024
 credential_limit=16
-if [ "${1:-}" = --public-uci ]; then
+if [ "${1:-}" = --persistent ]; then
+    persistent_mode=true; public_mode=true; public_limit=262144; credential_limit=192; shift
+elif [ "${1:-}" = --public-uci ]; then
     public_mode=true; public_limit=262144; credential_limit=192; shift
+fi
+if [ "$persistent_mode" = true ]; then
+    PATH=/usr/sbin:/usr/bin:/sbin:/bin
+    export PATH
+    unset IPKG_INSTROOT INIT_TRACE LUA_INIT LUA_PATH LUA_CPATH
 fi
 codec=$(dirname "$0")/config-codec.lua
 fail() {
@@ -87,11 +98,101 @@ read_one() {
     # Equality below also rejects missing newline and multiple trailing newlines.
     [ "$(stat -c %s "$1")" -eq "$((${#one} + 1))" ] || fail 'Invalid metadata framing'
 }
+persistent_open() {
+    # Migration/lifecycle must establish this namespace; a web request cannot
+    # create directories, initialize identity, or replace existing lock files.
+    [ "$persistent_namespace_enabled" = true ] || fail 'Persistent namespace is not ready' 2
+    [ "$owner" = 0 ] || fail 'Persistent namespace requires root' 7
+    [ -d /etc ] && [ ! -L /etc ] || fail 'Unsafe persistent parent' 7
+    case "$(stat -c '%u:%a' /etc 2>/dev/null)" in "$owner:755"|"$owner:700") ;; *) fail 'Unsafe persistent parent' 7;; esac
+    private_dir /etc/homegate && private_dir /etc/homegate/transactions || fail 'Unsafe persistent namespace' 7
+    store=/etc/homegate/transactions
+    read_one "$store/identity" 512
+    identity_body=$one
+    exec 8<"$store/identity" || fail 'Unable to read store identity' 7
+    IFS= read -r identity_format <&8 && IFS= read -r identity_slug <&8 &&
+        IFS= read -r identity_schema <&8 && IFS= read -r identity_path <&8 &&
+        IFS= read -r store_identity <&8 && IFS= read -r identity_checksum <&8 || fail 'Incomplete store identity' 7
+    if IFS= read -r extra <&8; then fail 'Unexpected store identity data' 7; fi
+    exec 8<&-
+    [ "$identity_format:$identity_slug:$identity_schema:$identity_path" = "HGSTORE1:homegate:public-uci-v1:$store" ] || fail 'Store identity mismatch' 7
+    [ "${#store_identity}" -eq 32 ] || fail 'Invalid store identity' 7
+    case "$store_identity" in *[!0-9a-f]*) fail 'Invalid store identity' 7;; esac
+    identity_payload=$(printf '%s\n' HGSTORE1 homegate public-uci-v1 "$store" "$store_identity")
+    identity_expected=$(printf '%s\n' "$identity_payload" | sha256sum) || fail 'Unable to verify store identity' 7
+    identity_expected=${identity_expected%% *}
+    [ "$identity_body" = "$(printf '%s\n' "$identity_payload" "$identity_expected")" ] || fail 'Invalid store identity framing' 7
+    private_file "$store/.lock" && private_file "$store/.supervisor.lock" || fail 'Persistent locks require lifecycle initialization' 7
+    private_dir /var/run/homegate && private_file /var/run/homegate/frontend.lock || fail 'Unsafe shared writer lock' 7
+    if [ "$(stat -Lc '%d:%i:%u:%a:%h' /proc/self/fd/6 2>/dev/null)" != "$(stat -c '%d:%i:%u:%a:%h' /var/run/homegate/frontend.lock)" ]; then
+        exec 6>>/var/run/homegate/frontend.lock || fail 'Unable to open shared writer lock' 7
+    fi
+    flock -n 6 || fail 'Shared writer is busy' 4
+}
+persistent_fence_payload() {
+    printf '%s\n' HGWRITEFENCE1 "$store_identity" "$fence_base" "$fence_target" "$fence_token" "$1"
+}
+persistent_fence_body() {
+    fence_payload=$(persistent_fence_payload "$1") || return 1
+    fence_checksum=$(printf '%s\n' "$fence_payload" | sha256sum) || return 1
+    fence_checksum=${fence_checksum%% *}
+    printf '%s\n' "$fence_payload" "$fence_checksum"
+}
+persistent_fence_read() {
+    [ "$persistent_mode" = true ] || return
+    if [ ! -e "$store/write-fence" ] && [ ! -L "$store/write-fence" ]; then return; fi
+    read_one "$store/write-fence" 512
+    fence_body=$one
+    exec 8<"$store/write-fence" || fail 'Unable to read persistent fence' 7
+    IFS= read -r fence_format <&8 && IFS= read -r fence_identity <&8 &&
+        IFS= read -r fence_base <&8 && IFS= read -r fence_target <&8 &&
+        IFS= read -r fence_token <&8 && IFS= read -r fence_state <&8 &&
+        IFS= read -r fence_digest <&8 || fail 'Incomplete persistent fence' 7
+    if IFS= read -r extra <&8; then fail 'Unexpected persistent fence data' 7; fi
+    exec 8<&-
+    [ "$fence_format:$fence_identity" = "HGWRITEFENCE1:$store_identity" ] || fail 'Persistent fence identity mismatch' 7
+    number "$fence_base" 1 32 && [ "$fence_base" = "$value" ] || fail 'Invalid fence baseline' 7
+    number "$fence_target" 1 32 && [ "$fence_target" = "$value" ] && [ "$fence_target" -gt "$fence_base" ] || fail 'Invalid fence candidate' 7
+    [ "${#fence_token}" -eq 32 ] || fail 'Invalid fence handle' 7
+    case "$fence_token" in *[!0-9a-f]*) fail 'Invalid fence handle' 7;; esac
+    case "$fence_state" in active|settled-applied|settled-restored) ;; *) fail 'Invalid fence state' 7;; esac
+    [ "$fence_body" = "$(persistent_fence_body "$fence_state")" ] || fail 'Invalid persistent fence framing' 7
+    validate_generation "$fence_base"; validate_generation "$fence_target"
+    [ "$validated_parent" = "$fence_base" ] || fail 'Persistent fence ancestry mismatch' 7
+    persistent_fence_present=true
+    [ "$fence_state" != active ] || persistent_fence_pending=true
+}
+persistent_fence_write() {
+    allocate_scratch
+    persistent_fence_body "$1" > "$scratch" || fail 'Unable to write persistent fence' 7
+    fsync "$scratch" 2>/dev/null || fail 'Unable to synchronize persistent fence' 7
+    mv -f "$scratch" "$store/write-fence" || fail 'Unable to publish persistent fence' 7
+    scratch=
+    # A visible active fence retains the sealed target even on directory-sync
+    # failure or SIGKILL before the application journal appears.
+    keep_candidate=true
+    fence_state=$1; persistent_fence_present=true
+    fsync "$store" 2>/dev/null || fail 'Persistent fence durability is uncertain' 7
+}
+persistent_ready() {
+    [ "$persistent_mode" = true ] || return
+    [ "$journal_active" = false ] && [ "$persistent_fence_pending" = false ] || fail 'Persistent recovery barrier is active' 4
+    # A settled receipt replaces the active fence only AFTER pending/application
+    # removal was durably confirmed. Re-sync it before allowing another writer;
+    # uncertainty about the final rename must never be inferred as readiness.
+    if [ "$persistent_fence_present" = true ]; then
+        fsync "$store/write-fence" "$store" 2>/dev/null || fail 'Persistent completion durability is uncertain' 7
+    fi
+    need_initialized
+}
 open_store() {
     store=${HOMEGATE_CONFIG_PROTO_STORE:-}
     owner=$(id -u) || fail 'Unable to identify owner'
-    path_safe "$store" || fail 'Explicit safe prototype directory required' 2
-    if [ ! -d "$store" ]; then mkdir "$store" 2>/dev/null || fail 'Unable to create private directory'; fi
+    if [ "$persistent_mode" = true ]; then persistent_open
+    else
+        path_safe "$store" || fail 'Explicit safe prototype directory required' 2
+        if [ ! -d "$store" ]; then mkdir "$store" 2>/dev/null || fail 'Unable to create private directory'; fi
+    fi
     private_dir "$store" || fail 'Store must be private'
     workers_pending=false
     if [ -e "$store/worker" ] || [ -L "$store/worker" ]; then
@@ -130,6 +231,7 @@ open_store() {
         number "$(stat -c %s "$existing")" 0 "$((public_limit + 512))" || fail 'Oversized abandoned private file'
         abandoned_count=$((abandoned_count + 1))
         [ "$abandoned_count" -lt 32 ] || fail 'Prototype temporary capacity reached' 4
+        [ "$persistent_mode" = false ] || fail 'Abandoned persistent transaction requires reconciliation' 7
     done
     head_revision=0
     max_revision=0
@@ -138,6 +240,7 @@ open_store() {
         index=${existing##*/gen-}
         number "$index" 1 32 && [ "$index" = "$value" ] || fail 'Invalid generation name'
         private_dir "$existing" || fail 'Unsafe generation directory'
+        [ "$persistent_mode" = false ] || validate_generation "$index"
         [ "$index" -le "$max_revision" ] || max_revision=$index
     done
     if [ -e "$store/current" ] || [ -L "$store/current" ]; then
@@ -148,7 +251,17 @@ open_store() {
     elif [ "$max_revision" -ne 0 ]; then
         fail 'Interrupted initialization requires explicit recovery'
     fi
+    persistent_fence_read
     journal_read
+    if [ "$persistent_mode" = true ]; then
+        if [ "$journal_active" = true ]; then
+            [ "$persistent_fence_pending" = true ] && [ "$fence_base:$fence_target:$fence_token" = "$journal_base:$journal_target:$journal_token" ] || fail 'Application and persistent fence mismatch' 7
+        elif [ "$persistent_fence_pending" = true ]; then
+            case "$command" in status|export) ;; *) fail 'Persistent fence requires reconciliation' 7;; esac
+        fi
+        case "$command" in status|export|recover-application|apply-finish*|restore-finish*|projection-publish|apply-*-read|restore-*-read|apply-authorize|restore-authorize|service-intent-read) ;;
+            *) persistent_ready;; esac
+    fi
     if [ "$journal_active" = true ]; then
         case "$command" in status|export|recover-application|apply-finish|restore-finish|apply-finish-intent|restore-finish-intent|apply-finish-projection|restore-finish-projection|projection-publish|apply-snapshot-read|restore-snapshot-read|apply-authorize|restore-authorize|apply-service-snapshot-read|restore-service-snapshot-read|service-intent-read) ;;
             *) fail 'Application recovery barrier is active' 4;; esac
@@ -471,6 +584,11 @@ journal_begin() {
     journal_binding "$journal_base"; journal_before=$digest
     journal_binding "$journal_target"; journal_after=$digest
     new_token; journal_token=$token
+    if [ "$persistent_mode" = true ]; then
+        fence_base=$journal_base; fence_target=$journal_target; fence_token=$journal_token
+        persistent_fence_write active
+        persistent_fence_pending=true
+    fi
     journal_write prepared
 }
 journal_need() {
@@ -512,6 +630,11 @@ journal_close() {
     rm -f "$store/application" || fail 'Unable to close application intent' 7
     journal_active=false
     fsync "$store" 2>/dev/null || fail 'Application completion durability is uncertain' 7
+    if [ "$persistent_mode" = true ]; then
+        case "$journal_state" in applied|restored) ;; *) fail 'Nonterminal persistent completion' 7;; esac
+        persistent_fence_write "settled-$journal_state"
+        persistent_fence_pending=false
+    fi
 }
 private_snapshot() {
     [ -p /proc/self/fd/3 ] || fail 'Private reader requires inherited pipe' 2
@@ -635,10 +758,13 @@ ancestor() {
 }
 
 production_source_lock() {
-    # Existing Go bridge writers use this same flock. Native Lua writers do
-    # not yet all participate; the fixed production publication gate stays off.
+    # Preserve a trusted borrowed descriptor. Opening a new description while
+    # the native parent still holds FD6 would contend with that same parent.
+    # Native/persistent gates remain off until lifecycle and business migrate.
     private_dir /var/run/homegate && private_file /var/run/homegate/frontend.lock || fail 'Unsafe legacy writer lock' 7
-    exec 6>>/var/run/homegate/frontend.lock || fail 'Unable to open legacy writer lock' 7
+    if [ "$(stat -Lc '%d:%i:%u:%a:%h' /proc/self/fd/6 2>/dev/null)" != "$(stat -c '%d:%i:%u:%a:%h' /var/run/homegate/frontend.lock)" ]; then
+        exec 6>>/var/run/homegate/frontend.lock || fail 'Unable to open legacy writer lock' 7
+    fi
     flock -n 6 || fail 'Legacy configuration writer is busy' 4
 }
 projection_source_check() {
@@ -752,8 +878,10 @@ if [ "$command" = version ]; then
     printf '{"api_version":1,"prototype":true,"ok":true,"version":"%s-r%s","phase":"config-transaction"}\n' "$version" "$value"
     exit 0
 fi
+if [ "$persistent_mode" = true ] && [ "$command" = init ]; then fail 'Persistent bootstrap requires lifecycle migration' 2; fi
 case "$command" in
     init|status|export|preview|cancel) [ "$#" -eq 0 ] || fail 'Unexpected arguments' 2;;
+    writer-check) [ "$#" -eq 0 ] && [ "$persistent_mode" = true ] || fail 'Writer check requires persistent namespace' 2;;
     migration-preview) [ "$#" -eq 0 ] && [ "$public_mode" = true ] || fail 'Migration requires full schema' 2;;
     snapshot-read) [ "$#" -eq 0 ] && [ "$public_mode" = true ] || fail 'Private reader requires full schema' 2;;
     recover-application) [ "$#" -eq 0 ] && [ "$public_mode" = true ] || fail 'Recovery requires full schema' 2;;
@@ -799,6 +927,10 @@ case "$command" in
 esac
 open_store
 case "$command" in
+    writer-check)
+        # open_store already verified readiness while all three locks are held.
+        printf '{"api_version":1,"prototype":true,"ok":true,"scope":"persistent-writer-barrier","write_ready":true}\n'
+        ;;
     init)
         [ "$head_revision" -eq 0 ] || fail 'Store already initialized' 4
         begin_generation
@@ -819,7 +951,7 @@ case "$command" in
         scope=main-public-v1; [ "$public_mode" = false ] || scope=public-uci-v1
         application_phase=none; [ "$journal_active" = false ] || application_phase=$journal_state
         intent_bound=false; [ "$journal_format" = HGAPPLICATION1 ] || intent_bound=true
-        printf '{"api_version":1,"prototype":true,"ok":true,"revision":%s,"preview_present":%s,"service_enabled":false,"history_capacity":32,"credential_capacity":%s,"scope":"%s","application_pending":%s,"application_phase":"%s","workers_pending":%s,"service_intent_bound":%s}\n' "$head_revision" "$preview" "$credential_limit" "$scope" "$journal_active" "$application_phase" "$workers_pending" "$intent_bound"
+        printf '{"api_version":1,"prototype":true,"ok":true,"revision":%s,"preview_present":%s,"service_enabled":false,"history_capacity":32,"credential_capacity":%s,"scope":"%s","application_pending":%s,"application_phase":"%s","workers_pending":%s,"service_intent_bound":%s,"persistent_namespace":%s,"persistent_fence_pending":%s}\n' "$head_revision" "$preview" "$credential_limit" "$scope" "$journal_active" "$application_phase" "$workers_pending" "$intent_bound" "$persistent_mode" "$persistent_fence_pending"
         ;;
     export)
         need_initialized

@@ -92,6 +92,11 @@ jobs:
           build/verify-venv/bin/python -m playwright install --with-deps chromium
           python3 scripts/准备UCI解析回归.py
           python3 scripts/准备服务采样回归.py
+      - name: 验证原生写入协调和对照桥接
+        run: |
+          build/verify-venv/bin/python scripts/原生写入协调回归.py
+          build/verify-venv/bin/python scripts/原生写入协调回归.py --runtime
+          (cd project/core/src && go test ./internal/frontend)
       - name: 定位固定服务四状态采样
         run: build/verify-venv/bin/python scripts/服务采样回归.py --runtime --case test_four_independent_states_sample_real_processes_and_bind_journal
       - name: 验证源配置发布与恢复

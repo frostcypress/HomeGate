@@ -37,9 +37,15 @@ lock=$lock_dir/frontend.lock
 exec 6>>"$lock" || fail 7
 [ "$(stat -Lc '%d:%i:%u:%a:%h' /proc/self/fd/6)" = "$(stat -c '%d:%i:%u:%a:%h' "$lock")" ] || fail 7
 flock -n 6 || fail 4
-# Configuration cursors and controller code are loaded only after this point.
-# Keep the inherited lock in the Lua owner; its synchronous core calls close 6.
 unset IPKG_INSTROOT INIT_TRACE LUA_INIT LUA_PATH LUA_CPATH
 PATH=/usr/sbin:/usr/bin:/sbin:/bin
 export PATH
+# Keep FD6 through the check and controller. All persistent transaction writers
+# acquire the same lock first, so there is no gap between check and cursor load.
+# The fixed helper remains uninstalled and its persistent gate is also closed.
+/usr/libexec/homegate/config-transaction --persistent writer-check >/dev/null 2>&1
+barrier_result=$?
+case "$barrier_result" in 0) ;; 4) fail 4;; *) fail 7;; esac
+# Configuration cursors and controller code are loaded only after this point.
+# Keep the inherited lock in the Lua owner; its synchronous core calls close 6.
 exec /usr/bin/lua /usr/libexec/homegate/frontend-write.lua "$request"

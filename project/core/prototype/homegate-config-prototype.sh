@@ -128,6 +128,13 @@ persistent_open() {
         exec 6>>/var/run/homegate/frontend.lock || fail 'Unable to open shared writer lock' 7
     fi
     flock -n 6 || fail 'Shared writer is busy' 4
+    if [ -e "$store/bootstrap-pending" ] || [ -L "$store/bootstrap-pending" ]; then
+        private_file "$store/bootstrap-pending" && [ "$(stat -c %s "$store/bootstrap-pending")" -le 64 ] || fail 'Unsafe bootstrap barrier' 7
+        pending_expected=$(printf '%s\n' HGBOOTSTRAP-PENDING1 "$store_identity" | sha256sum) || fail 'Unable to check bootstrap barrier' 7
+        pending_actual=$(sha256sum "$store/bootstrap-pending") || fail 'Unable to read bootstrap barrier' 7
+        [ "${pending_expected%% *}" = "${pending_actual%% *}" ] || fail 'Invalid bootstrap barrier' 7
+        fail 'Lifecycle initialization is not settled' 4
+    fi
 }
 persistent_fence_payload() {
     printf '%s\n' HGWRITEFENCE1 "$store_identity" "$fence_base" "$fence_target" "$fence_token" "$1"

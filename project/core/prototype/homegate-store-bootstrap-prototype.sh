@@ -62,37 +62,55 @@ check_identity() {
     [ "$(stat -c %s "$1/.lock")" -eq 0 ] && [ "$(stat -c %s "$1/.supervisor.lock")" -eq 0 ] || fail 'Invalid bootstrap locks'
 }
 check_stage() {
-    private_dir "$stage" && private_dir "$stage/gen-1" && private_dir "$stage/gen-1/credentials" || fail 'Unsafe bootstrap stage'
+    checked=$1
+    private_dir "$checked" && private_dir "$checked/gen-1" && private_dir "$checked/gen-1/credentials" || fail 'Unsafe bootstrap stage'
     # Include hidden entries. Never follow a supplied checksum manifest or path.
-    for item in "$stage/"* "$stage/".[!.]* "$stage/"..?*; do
+    for item in "$checked/"* "$checked/".[!.]* "$checked/"..?*; do
         present "$item" || continue
-        case "${item##*/}" in identity|bootstrap-receipt|.lock|.supervisor.lock|current|gen-1) ;; *) fail 'Unexpected bootstrap stage entry';; esac
+        case "${item##*/}" in identity|bootstrap-receipt|bootstrap-pending|.lock|.supervisor.lock|current|gen-1) ;; *) fail 'Unexpected bootstrap stage entry';; esac
     done
-    for item in "$stage/gen-1/"* "$stage/gen-1/".[!.]* "$stage/gen-1/"..?*; do
+    for item in "$checked/gen-1/"* "$checked/gen-1/".[!.]* "$checked/gen-1/"..?*; do
         present "$item" || continue
         case "${item##*/}" in public.conf|parent|manifest|credentials) ;; *) fail 'Unexpected bootstrap generation entry';; esac
     done
-    for item in "$stage/gen-1/credentials/"* "$stage/gen-1/credentials/".[!.]* "$stage/gen-1/credentials/"..?*; do
+    for item in "$checked/gen-1/credentials/"* "$checked/gen-1/credentials/".[!.]* "$checked/gen-1/credentials/"..?*; do
         present "$item" && fail 'Bootstrap credentials must be empty'
     done
-    check_identity "$stage"
-    read_bounded "$stage/current" 3; [ "$text" = 1 ] || fail 'Invalid bootstrap current pointer'
-    read_bounded "$stage/gen-1/parent" 3; [ "$text" = 0 ] || fail 'Invalid bootstrap ancestry'
-    read_bounded "$stage/gen-1/public.conf" 262144
+    check_identity "$checked"
+    read_bounded "$checked/bootstrap-pending" 64
+    [ "$text" = "$(printf '%s\n' HGBOOTSTRAP-PENDING1 "$store_id")" ] || fail 'Invalid bootstrap barrier'
+    read_bounded "$checked/current" 3; [ "$text" = 1 ] || fail 'Invalid bootstrap current pointer'
+    read_bounded "$checked/gen-1/parent" 3; [ "$text" = 0 ] || fail 'Invalid bootstrap ancestry'
+    read_bounded "$checked/gen-1/public.conf" 262144
     canonical=$(defaults) || fail 'Unable to check bootstrap defaults'
     [ "$text" = "$canonical" ] || fail 'Bootstrap defaults mismatch'
-    read_bounded "$stage/gen-1/manifest" 512
-    expected=$(cd "$stage/gen-1" && sha256sum public.conf parent) || fail 'Unable to check bootstrap generation'
+    read_bounded "$checked/gen-1/manifest" 512
+    expected=$(cd "$checked/gen-1" && sha256sum public.conf parent) || fail 'Unable to check bootstrap generation'
     [ "$text" = "$expected" ] || fail 'Bootstrap integrity mismatch'
 }
 sync_stage() {
-    fsync "$stage/identity" "$stage/bootstrap-receipt" "$stage/.lock" "$stage/.supervisor.lock" "$stage/current" \
-        "$stage/gen-1/public.conf" "$stage/gen-1/parent" "$stage/gen-1/manifest" 2>/dev/null || fail 'Unable to synchronize bootstrap files'
-    fsync "$stage/gen-1/credentials" "$stage/gen-1" "$stage" "$parent" 2>/dev/null || fail 'Unable to synchronize bootstrap directories'
+    checked=$1
+    fsync "$checked/identity" "$checked/bootstrap-receipt" "$checked/bootstrap-pending" "$checked/.lock" "$checked/.supervisor.lock" "$checked/current" \
+        "$checked/gen-1/public.conf" "$checked/gen-1/parent" "$checked/gen-1/manifest" 2>/dev/null || fail 'Unable to synchronize bootstrap files'
+    fsync "$checked/gen-1/credentials" "$checked/gen-1" "$checked" "$parent" 2>/dev/null || fail 'Unable to synchronize bootstrap directories'
+}
+settle_bootstrap() {
+    # Publication and parent-directory durability were confirmed while FD6 was
+    # held. A missing marker after uncertain removal is safe; its reappearance
+    # after reboot blocks writers again and requires validated lifecycle retry.
+    rm -f "$store/bootstrap-pending" || fail 'Unable to settle bootstrap barrier'
+    fsync "$store" 2>/dev/null || fail 'Bootstrap settlement durability is uncertain' 6
 }
 existing_store() {
     private_dir "$store" || fail 'Unsafe existing store'
     check_identity "$store"
+    if present "$store/bootstrap-pending"; then
+        # Only the complete pristine baseline can clear an initialization fence;
+        # application journals, evolved generations or hidden extras refuse.
+        check_stage "$store"
+        sync_stage "$store"
+        settle_bootstrap
+    fi
     # Keep FD6 across the checker. Active recovery is never cleared by bootstrap.
     "$engine" --persistent writer-check >/dev/null 2>&1
     result=$?
@@ -126,7 +144,7 @@ if present "$store"; then
 fi
 if present "$stage"; then
     [ "$action" = resume ] || fail 'Interrupted bootstrap requires explicit resume'
-    check_stage
+    check_stage "$stage"
 else
     [ "$action" = bootstrap ] || fail 'No bootstrap stage to resume'
     mkdir "$stage" 2>/dev/null || fail 'Unable to allocate bootstrap stage'
@@ -148,12 +166,14 @@ else
     payload=$(printf '%s\n' HGBOOTSTRAP1 "$store" "$store_id")
     checksum "$payload"
     printf '%s\n' "$payload" "$sum" > "$stage/bootstrap-receipt" || fail 'Unable to write bootstrap receipt'
-    check_stage
+    printf '%s\n' HGBOOTSTRAP-PENDING1 "$store_id" > "$stage/bootstrap-pending" || fail 'Unable to write bootstrap barrier'
+    check_stage "$stage"
 fi
-sync_stage
+sync_stage "$stage"
 ! present "$store" || fail 'Store appeared during bootstrap'
 mv "$stage" "$store" 2>/dev/null || fail 'Unable to publish bootstrap directory'
 # No cleanup on failure or signal: retain incomplete stage or published store.
 fsync "$store" "$parent" 2>/dev/null || fail 'Published bootstrap durability is uncertain' 6
+settle_bootstrap
 "$engine" --persistent writer-check >/dev/null 2>&1 || fail 'Published bootstrap validation failed'
 printf '{"api_version":1,"prototype":true,"ok":true,"phase":"store-bootstrap","created":true,"baseline_ready":true,"legacy_migrated":false,"production_ready":false}\n'

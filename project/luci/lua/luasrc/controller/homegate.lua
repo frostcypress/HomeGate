@@ -439,7 +439,7 @@ local function upsert_section(cur, stype, id, values)
 end
 
 local function commit(cur)
-    if cur:commit("homegate") == false then
+    if cur:commit("homegate") ~= true then
         return false, "UCI commit failed"
     end
     return true
@@ -1405,7 +1405,7 @@ function action_public_account_apply()
     })
     if not ok then cur:revert("homegate"); return redirect_page("public", nil, err) end
     if values.secret ~= "" then cur:set("homegate", id, "secret", values.secret) end
-    if not cur:commit("homegate") then cur:revert("homegate"); return redirect_page("public", nil, "Failed to save DNS account") end
+    if not commit(cur) then cur:revert("homegate"); return redirect_page("public", nil, "Failed to save DNS account") end
     -- Saving credentials is an immediate helper action inside Add/Edit Public
     -- Service. Resume the same workflow instead of forcing the user to reopen it.
     return redirect_page("public", "DNS account saved; primary domains can now be detected", nil, {
@@ -2156,7 +2156,8 @@ function action_wol_action()
         local host = get_section(cur, id, "wol_host")
         if not host then return redirect_page("wol", nil, "WOL host not found") end
         cur:set("homegate", "main", "last_wol_host", id)
-        cur:commit("homegate")
+        local ok, err = commit(cur)
+        if not ok then return redirect_page("wol", nil, err) end
         if action_core("wol " .. id) then return redirect_page("wol", "Wake packet sent") end
         return redirect_page("wol", nil, "Wake-on-LAN failed; check HomeGate logs")
     elseif op == "delete" then
@@ -2494,4 +2495,24 @@ function api_logs()
     http().prepare_content("text/plain; charset=UTF-8")
     http().write(table.concat(lines, "\n"))
     if #lines > 0 then http().write("\n") end
+end
+
+-- Wrap complete mutating handlers, before any cursor is opened. Read-only POST
+-- export/import-preview/diagnostic handlers retain their original execution.
+local native_write_routes = {
+    basic_apply="action_basic_apply", public_apply="action_public_apply",
+    public_account_apply="action_public_account_apply", certificate_apply="action_public_certificate_apply",
+    public_action="action_public_action", access_update="action_access_update",
+    access_clear_all="action_access_clear_all", access_clear_entry="action_access_clear_entry",
+    access_clear_denied="action_access_clear_denied", access_delete_all="action_access_delete_all",
+    access_delete_entry="action_access_delete_entry", access_delete_rule="action_access_delete_rule",
+    wol_apply="action_wol_apply", wol_action="action_wol_action",
+    maintenance_apply="action_maintenance_apply", log_clear="action_log_clear",
+    config_reset="action_config_reset"
+}
+for route, name in pairs(native_write_routes) do
+    local route_name, original = route, _M[name]
+    _M[name] = function()
+        return require("luci.model.homegate.writer").run(route_name, original)
+    end
 end

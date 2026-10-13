@@ -110,12 +110,15 @@ local function sample()
     local body,status=raw:match('^(.*)\nHGSAMPLE%-EXIT:(%d+)\n$')
     if not body or status~='0' then fail() end
     local running,pid=parse(body)
-    local listing_raw=capture('ls -1 /proc; printf "\\nHGSAMPLE-EXIT:%s\\n" "$?"',65568)
+    -- BusyBox ls stats entries and may fail on unrelated disappearing tasks.
+    -- Fixed shell expansion lists names without statting every process first.
+    local listing_raw=capture('printf "%s\\n" /proc/[0-9]*; printf "\\nHGSAMPLE-EXIT:%s\\n" "$?"',65568)
     local listing,list_status=listing_raw:match('^(.*)\nHGSAMPLE%-EXIT:(%d+)\n$')
     if not listing or #listing>65536 or list_status~='0' then fail() end
     local inspected=0; local identity; local matching=0
-    for p in listing:gmatch('[^\n]+') do
-        if p:match('^[1-9]%d*$') then
+    for entry in listing:gmatch('[^\n]+') do
+        local p=entry:match('^/proc/([1-9]%d*)$'); if not p then fail() end
+        do
             inspected=inspected+1; if inspected>4096 or #p>9 then fail() end
             local command,birth=process(p)
             if command=='/usr/bin/homegate\0daemon\0' then
@@ -125,6 +128,7 @@ local function sample()
             elseif p==pid then fail() end
         end
     end
+    if inspected==0 then fail() end
     if (running==1 and (matching~=1 or not identity)) or (running==0 and matching~=0) then fail() end
     return enabled=='0\n' and 1 or 0,running,identity or 'none'
 end

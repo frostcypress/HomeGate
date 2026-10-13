@@ -35,9 +35,11 @@ if arg[1]=="info" and arg[2] and arg[3] and not arg[4] then
 elseif arg[1]=="group" and arg[2] and arg[3] and not arg[4] then
     number(arg[2],999999999); if arg[3]~="0" then number(arg[3],999999999) end
     -- Fixed command, no caller-controlled shell text or paths.
-    local p=io.popen("ls -1 /proc","r"); if not p then fail() end
-    local listing=p:read(65537); local ok=p:close()
-    if not listing or #listing>65536 or not ok then fail() end
+    local p=io.popen('printf "%s\\n" /proc/[0-9]*; printf "\\nHGPROC-EXIT:%s\\n" "$?"',"r"); if not p then fail() end
+    local raw=p:read(65569); local ok=p:close()
+    if not raw or #raw>65568 or not ok then fail() end
+    local listing,status=raw:match('^(.*)\nHGPROC%-EXIT:(%d+)\n$')
+    if not listing or #listing>65536 or status~='0' then fail() end
     -- Command substitution may retain an ash parent while this probe runs.
     -- Exclude only this inspection ancestry; it is not a business worker.
     local ignored={}
@@ -52,13 +54,15 @@ elseif arg[1]=="group" and arg[2] and arg[3] and not arg[4] then
         if i==32 then fail() end
     end
     local count=0; local scanned=0
-    for pid in listing:gmatch("[^\n]+") do
-        if pid:match("^[1-9]%d*$") then
+    for entry in listing:gmatch("[^\n]+") do
+        local pid=entry:match("^/proc/([1-9]%d*)$"); if not pid then fail() end
+        do
             scanned=scanned+1; if scanned>4096 then fail() end
             local a=inspect(pid,"none")
             if a and not ignored[pid] and pid~=arg[3] and a[3]==arg[2] and a[4]==arg[2] and a[1]~="Z" and a[1]~="X" then count=count+1 end
         end
     end
+    if scanned==0 then fail() end
     io.write(count,"\n")
 elseif arg[1]=="now" and not arg[2] then
     local body=read("/proc/uptime",128); local s=body and body:match("^(%d+)%.")

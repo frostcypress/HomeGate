@@ -92,6 +92,8 @@ jobs:
           build/verify-venv/bin/python -m playwright install --with-deps chromium
           python3 scripts/准备UCI解析回归.py
           python3 scripts/准备服务采样回归.py
+      - name: 定位固定服务四状态采样
+        run: build/verify-venv/bin/python scripts/服务采样回归.py --runtime --case test_four_independent_states_sample_real_processes_and_bind_journal
       - name: 验证 Shell 原型语法与真实 BusyBox 执行
         run: |
           for file in project/core/prototype/*.sh; do busybox ash -n "$file"; done

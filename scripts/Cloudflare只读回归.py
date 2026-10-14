@@ -40,7 +40,7 @@ class Static(PrivateCodec):
         self.assertEqual(request,b'url = "https://api.cloudflare.com/client/v4/zones?page=1&per_page=1"\nrequest = "GET"\nheader = "Authorization: Bearer PRIVATE_SENTINEL\\"\\\\# $(echo x)"\n')
 
     def test_missing_binary_and_multiline_credentials_never_make_requests(self):
-        for token in [None,b'PRIVATE_SENTINEL\x00',b'PRIVATE_SENTINEL\xff',b'PRIVATE_SENTINEL\nurl = "https://bad.test"']:
+        for token in [None,b'   ',b'PRIVATE_SENTINEL\x00',b'PRIVATE_SENTINEL\xff',b'PRIVATE_SENTINEL\nurl = "https://bad.test"']:
             self.setUp();ok,public,request=self.request(token);self.assertFalse(ok);self.assertEqual(request,b'');self.assertNotIn(b'PRIVATE_SENTINEL',public);self.assertIn(b'authentication',public)
 
     def test_wrong_generation_account_and_truncated_private_frame_refused(self):

@@ -98,8 +98,11 @@ class Runtime(ReceiptRuntime):
         self.records();old=self.job();self.fault('fsync','from pathlib import Path\nif sys.argv[1:]==['+repr(str(self.store))+'] and Path('+repr(str(self.archive))+').exists():sys.exit(1)')
         self.recovery_call(expected=7,job=old);self.assertFalse(self.journal.exists());self.writer(4);self.restore_tool('fsync');self.recovery_call(job=old);self.writer()
     def test_settled_rename_uncertainty_requires_successful_resync_before_writer(self):
-        self.records();old=self.job();self.fault('fsync','from pathlib import Path\nif sys.argv[1:]==['+repr(str(self.store))+'] and Path('+repr(str(self.ledger))+').exists() and "\\nsettled\\n" in Path('+repr(str(self.ledger))+').read_text():sys.exit(1)')
-        self.recovery_call(expected=7,job=old);self.writer(4);self.restore_tool('fsync');self.writer();self.recovery_call(job=old)
+        self.records();old=self.job();self.fault('fsync','from pathlib import Path\nif '+repr(str(self.store))+' in sys.argv[1:] and Path('+repr(str(self.ledger))+').exists() and "\\nsettled\\n" in Path('+repr(str(self.ledger))+').read_text():sys.exit(1)')
+        self.recovery_call(expected=7,job=old)
+        probe=subprocess.run([str(self.bin/'fsync'),str(self.ledger),str(self.archive),str(self.store)],env=self.env,capture_output=True,timeout=5)
+        self.assertEqual((probe.returncode,probe.stdout,probe.stderr),(1,b'',b''));self.writer(4)
+        self.restore_tool('fsync');self.writer();self.recovery_call(job=old)
     def test_tampered_archive_or_ledger_blocks_writers_even_with_new_gate_closed(self):
         self.records();self.recovery_call();self.recovery.write_text(self.recovery.read_text().replace('dns_settlement_enabled=true','dns_settlement_enabled=false'))
         self.writer();self.ledger.write_bytes(b'corrupt\n');self.writer(4);self.cli('writer-check',expected=4)

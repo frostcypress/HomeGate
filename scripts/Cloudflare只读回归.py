@@ -22,6 +22,7 @@ class Static(PrivateCodec):
         for flag in ['--disable --config','--proto \'=https\'','--proxy \'\'','--noproxy \'*\'','--connect-timeout 3','--max-time 10','--cacert /etc/ssl/certs/ca-certificates.crt']:
             self.assertIn(flag,body)
         self.assertNotRegex(body,r'--(insecure|location|retry)\b')
+        self.assertIn('exec 5<&0',(PROTO/'homegate-service-observer-watchdog.sh').read_text());self.assertIn('0<&5 5<&-',(PROTO/'homegate-service-observer-watchdog.sh').read_text())
         self.assertNotIn('os.getenv',(PROTO/'cloudflare-codec.lua').read_text())
         self.lua.compile((PROTO/'cloudflare-codec.lua').read_bytes())
 
@@ -92,7 +93,7 @@ class Runtime(BootstrapRuntime):
         self.thread=threading.Thread(target=self.server.serve_forever,daemon=True);self.thread.start()
         self.endpoint='https://127.0.0.1:'+str(self.server.server_port)+'/client/v4/zones?page=1&per_page=1'
         self.curl=self.base/'curl';shutil.copy2(self.real_curl,self.curl);self.curl.chmod(0o700)
-        self.watchdog_pid=self.base/'watchdog.pid';self.processes=[];self.known_groups=[]
+        self.watchdog_pid=self.base/'watchdog.pid';self.diagnostic=self.base/'numeric-diagnostic';self.processes=[];self.known_groups=[]
         mapping={'/etc/homegate/transactions':str(self.store),'/var/run/homegate':str(self.native.lockdir),'/usr/bin/curl':str(self.curl),'/etc/ssl/certs/ca-certificates.crt':str(self.ca_dir/'ca.pem')}
         for name in ['homegate-cloudflare-read.sh','homegate-cloudflare-worker.sh','homegate-service-observer-watchdog.sh','cloudflare-codec.lua']:
             file=self.engine.parent/name;body=file.read_text();body=body.replace('dns_read_enabled=false','dns_read_enabled=true')
@@ -107,6 +108,14 @@ class Runtime(BootstrapRuntime):
                 body=body.replace('action=cloudflare-check; budget=30','action=cloudflare-check; budget=2')
                 needle='sleep 0.001 >/dev/null 2>&1 || exit 1'
                 body=body.replace(needle,'printf "%s\\n" "$$" > '+str(self.watchdog_pid)+'\n'+needle)
+            # Copied fixture sources only: numeric/module diagnostics, never data.
+            if name=='cloudflare-codec.lua':
+                body=body.replace("local json=require('luci.jsonc')","local json=require('luci.jsonc')\nlocal real_exit=os.exit; os.exit=function(n) local f=io.open("+json.dumps(str(self.diagnostic))+",'a'); if f then f:write('codec:',debug.getinfo(2,'l').currentline,'\\n');f:close() end;real_exit(n) end")
+            elif name=='homegate-cloudflare-worker.sh':
+                counter=[0]
+                def diagnose(m):
+                    counter[0]+=1;return "{ printf 'worker:"+str(counter[0])+"\\n' >> "+str(self.diagnostic)+"; exit 1; }"
+                body=re.sub(r'\bexit 1\b',diagnose,body)
             file.write_text(body)
         self.reader=self.engine.parent/'homegate-cloudflare-read.sh'
 
@@ -137,7 +146,8 @@ class Runtime(BootstrapRuntime):
 
     def check(self,expected=0,account='dns_a',env=None):
         p=subprocess.run([self.busybox,'ash',str(self.reader),account],env=env or self.env,capture_output=True,timeout=12)
-        self.assertEqual(p.returncode,expected,(p.stdout,p.stderr));self.assertEqual(p.stderr,b'');self.assertNotIn(b'PRIVATE_SENTINEL',p.stdout)
+        diag=self.diagnostic.read_text()[:128] if self.diagnostic.exists() else ''
+        self.assertEqual(p.returncode,expected,(p.stdout,p.stderr,diag));self.assertEqual(p.stderr,b'');self.assertNotIn(b'PRIVATE_SENTINEL',p.stdout)
         data=json.loads(p.stdout);self.assertEqual(data['ok'],expected==0);return data
 
     def unchanged(self):

@@ -56,7 +56,7 @@ jobs:
       - name: 安装 BusyBox、语法解析与页面回归依赖
         run: |
           sudo apt-get update
-          sudo apt-get install --no-install-recommends -y build-essential lua5.1 liblua5.1-0-dev libjson-c-dev
+          sudo apt-get install --no-install-recommends -y build-essential lua5.1 liblua5.1-0-dev libjson-c-dev libssl-dev
           mkdir -p build/busybox-runtime
           curl --fail --location --connect-timeout 15 --max-time 120 \
             https://busybox.net/downloads/busybox-1.33.2.tar.bz2 \
@@ -92,6 +92,11 @@ jobs:
           build/verify-venv/bin/python -m playwright install --with-deps chromium
           python3 scripts/准备UCI解析回归.py
           python3 scripts/准备服务采样回归.py
+          python3 scripts/准备curl回归.py
+      - name: 验证 Cloudflare 私有凭据与受限 HTTPS 请求
+        run: |
+          build/verify-venv/bin/python scripts/Cloudflare只读回归.py
+          build/verify-venv/bin/python scripts/Cloudflare只读回归.py --runtime
       - name: 验证固定服务预检启停与观察恢复
         run: |
           build/verify-venv/bin/python scripts/固定服务动作回归.py

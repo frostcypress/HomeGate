@@ -46,28 +46,9 @@ if arg[1]=='page' then
         if not integer(k,1,#doc.result) or type(v)~='table' or type(v.id)~='string' or #v.id~=32 or v.id:find('[^0-9a-f]') or ids[v.id] then invalid() end
         local zone=name(v.name);if not zone then invalid() end;ids[v.id]=true;lines[k]=v.id..':'..zone..'\n'
     end
-    local info=doc.result_info
-    if info~=nil then
-        if type(info)~='table' or types.result_info~='object' then invalid() end
-        for key,expected in pairs({page=page,per_page=50,count=#lines}) do
-            if info[key]~=nil and info[key]~=expected then invalid() end
-        end
-        if info.total_pages~=nil then
-            if not integer(info.total_pages,0,1000) then invalid('pagination_limit') end
-            if pages~=-1 and pages~=info.total_pages then invalid('pagination_changed') end;pages=info.total_pages
-        elseif pages~=-1 then invalid('pagination_changed') end
-        if info.total_count~=nil then
-            if not integer(info.total_count,0,50000) then invalid('pagination_limit') end
-            if count~=-1 and count~=info.total_count then invalid('pagination_changed') end;count=info.total_count
-        elseif count~=-1 then invalid('pagination_changed') end
-    elseif pages~=-1 or count~=-1 then invalid('pagination_changed') end
-    rows=rows+#lines;if rows>50000 or (count~=-1 and rows>count) then invalid('pagination_limit') end
-    local done
-    if pages==-1 then done=#lines<50
-    elseif pages==0 then if page~=1 or #lines~=0 then invalid() end;done=true
-    else if page>pages or (#lines==0 and page<pages) then invalid() end;done=page==pages end
-    if done and count~=-1 and rows~=count then invalid('pagination_changed') end
-    if not done and page==1000 then invalid('pagination_limit') end
+    local next_state,code=shared.pagination({page=page,pages=pages,count=count,rows=rows},doc,types,50,1000,50000)
+    if not next_state then invalid(code) end
+    pages,count,rows=next_state.pages,next_state.count,next_state.rows;local done=next_state.done
     -- Only validated names/IDs are appended; provider metadata never persists.
     local f=io.open('/proc/self/fd/4','ab');if not f or not f:write(table.concat(lines)) or not f:close() then os.exit(1) end
     f=io.open('/proc/self/fd/5','wb')

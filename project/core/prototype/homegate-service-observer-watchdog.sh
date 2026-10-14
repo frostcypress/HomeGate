@@ -5,6 +5,7 @@ umask 077
 export LC_ALL=C
 service_actions_enabled=false
 dns_read_enabled=false
+dns_records_enabled=false
 action=observe
 budget=5
 if [ "${1:-}" = --cloudflare-check ]; then
@@ -12,7 +13,7 @@ if [ "${1:-}" = --cloudflare-check ]; then
     [ "$dns_read_enabled" = true ] && { [ "$#" -eq 4 ] || [ "$#" -eq 5 ]; } || exit 2
     action=cloudflare-check; budget=30
     dns_account=$2; dns_revision=$3; dns_job=$4
-    dns_mode=${5:-check}; case "$dns_mode" in check|zones) ;; *) exit 2;; esac
+    dns_mode=${5:-check}; case "$dns_mode" in check|zones) ;; records) [ "$dns_records_enabled" = true ] || exit 2;; *) exit 2;; esac
     case "$dns_account" in ''|*[!a-zA-Z0-9_-]*) exit 2;; esac
     [ "${#dns_account}" -le 64 ] || exit 2
     case "$dns_revision:$dns_job" in *[!0-9:]*) exit 2;; esac

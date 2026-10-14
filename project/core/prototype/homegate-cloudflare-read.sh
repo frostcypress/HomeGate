@@ -1,15 +1,26 @@
 #!/bin/sh
-# Fixed read-only business coordinator. Not installed; no DNS record mutation.
+# Fixed private DNS coordinator. Not installed; both production gates closed.
 set -u
 umask 077
 export LC_ALL=C
 dns_read_enabled=false
-fail() { printf '{"api_version":1,"prototype":true,"ok":false,"phase":"dns-provider","error":"Cloudflare reader is unavailable"}\n'; exit "${1:-7}"; }
+dns_records_enabled=false
+effect=none
+fail() {
+    if [ "${mode:-check}" = records ]; then
+        required=false;[ "$effect" != unknown ] || required=true
+        printf '{"api_version":1,"prototype":true,"ok":false,"phase":"dns-provider","effect":"%s","reconciliation_required":%s,"error":"Cloudflare operation is unavailable"}\n' "$effect" "$required"
+    else printf '{"api_version":1,"prototype":true,"ok":false,"phase":"dns-provider","error":"Cloudflare reader is unavailable"}\n'; fi
+    exit "${1:-7}"
+}
 [ "$dns_read_enabled" = true ] || fail 2
-[ "$#" -eq 1 ] || { [ "$#" -eq 2 ] && [ "$2" = --zones ]; } || fail 2
+[ "$#" -eq 1 ] || { [ "$#" -eq 2 ] && { [ "$2" = --zones ] || [ "$2" = --records ]; }; } || fail 2
 account=$1
 mode=check; codec=cloudflare-codec.lua
-if [ "$#" -eq 2 ]; then mode=zones; codec=cloudflare-zones.lua; fi
+if [ "$#" -eq 2 ]; then
+    case "$2" in --zones) mode=zones; codec=cloudflare-zones.lua;;
+        --records) mode=records;codec=cloudflare-records.lua;[ "$dns_records_enabled" = true ] || fail 2;; esac
+fi
 case "$account" in ''|*[!a-zA-Z0-9_-]*) fail 2;; esac
 [ "${#account}" -le 64 ] || fail 2
 PATH=/usr/sbin:/usr/bin:/sbin:/bin; export PATH
@@ -39,17 +50,33 @@ work=/var/run/homegate/.dns-check-$job
 mkdir "$work" 2>/dev/null || fail
 (set -C; : > "$work/request" && : > "$work/result" && : > "$work/zones" && : > "$work/state") 2>/dev/null || fail
 private_dir "$work" && private_file "$work/request" && private_file "$work/result" || fail
+if [ "$mode" = records ]; then
+    (set -C; : > "$work/input" && : > "$work/context" && : > "$work/attempt") 2>/dev/null || fail
+    # Original operation input has a separate inherited reader. The watchdog
+    # bounds its consumption; the private snapshot remains on FD0.
+    exec 4<&0 || fail
+fi
 result=0
 # Only the private frame uses FD3; engine's public receipt goes to /dev/null.
 # The independent consumer watchdog retains FD6/7, but not the configuration lock.
 ash "$dir/homegate-config-prototype.sh" --persistent snapshot-read 3>&1 8>&- 9>&- >/dev/null 2>/dev/null |
     setsid ash "$dir/homegate-service-observer-watchdog.sh" --cloudflare-check "$ticket" "$account" "$revision" "$job" "$mode" 3>"$work/result" 8>&- 9>&- >/dev/null 2>/dev/null || result=$?
+exec 4>&-
+if [ "$mode" = records ] && [ -s "$work/attempt" ]; then effect=unknown; fi
 # The whole pipeline has ended. Unknown descendants retain the watchdog locks;
 # the same-session watchdog must prove quiescence before returning success.
 if [ "$result" -eq 0 ] || [ "$result" -eq 1 ]; then
+    if [ "$mode" = records ]; then exec 9<"$work/attempt" || fail; fi
     lua "$dir/$codec" result "$account" "$revision" "$result" < "$work/result" 2>/dev/null > "$work/zones" || result=7
+    exec 9<&-
 fi
 # Delete only this invocation's allocated slots, after the pipeline is quiet.
 case "$result" in 0|1) exec 5<"$work/zones" || fail;; esac
+if [ "$mode" = records ] && [ "$effect" = unknown ] && [ "$result" -ne 0 ]; then
+    # Keep only this job's private same-boot evidence. DNS orphan guard blocks
+    # another request until explicit reconciliation (not implemented/installed).
+    case "$result" in 1) cat <&5 || fail; exec 5<&-; exit 1;; *) fail;; esac
+fi
+if [ "$mode" = records ]; then rm -f "$work/input" "$work/context" "$work/attempt" 2>/dev/null || fail; fi
 rm -f "$work/request" "$work/result" "$work/zones" "$work/state" 2>/dev/null && rmdir "$work" 2>/dev/null || fail
 case "$result" in 0|1) cat <&5 || fail; exec 5<&-; exit "$result";; *) fail;; esac

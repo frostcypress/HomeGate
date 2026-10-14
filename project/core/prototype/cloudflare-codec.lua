@@ -75,7 +75,42 @@ local function envelope(raw,fail)
     if not doc.success then return fail((code=='10000' or code=='9109') and 'authentication' or 'invalid_request',false,code) end
     return doc,types
 end
-if ...=='library' then return {parse=parse,envelope=envelope} end
+local function credential(snapshot,wanted)
+    local found
+    for _,s in ipairs(snapshot.configuration) do if s.kind=='dns_account' and s.name==wanted then found=s end end
+    if not found then return nil,'not_found','' end
+    if found.values.provider~='cloudflare' then return nil,'unsupported','' end
+    local token=snapshot.credentials['cloudflare.'..wanted..'.secret']
+    if type(token)~='string' or #token==0 or token:match('^ *$') then return nil,'authentication','credentials_missing' end
+    if #token>4096 or token:find('[^ -~]') then return nil,'authentication','invalid_credentials' end
+    return token
+end
+local function quote(s) return s:gsub('\\','\\\\'):gsub('"','\\"') end
+local function pagination(s,doc,types,per,max_pages,max_rows)
+    local function number(n,low,high) return type(n)=='number' and n==math.floor(n) and n>=low and n<=high end
+    local pages,count,rows=s.pages,s.count,s.rows;local items=#doc.result;local info=doc.result_info
+    if info~=nil then
+        if type(info)~='table' or types.result_info~='object' then return nil,'invalid_response' end
+        for k,v in pairs({page=s.page,per_page=per,count=items}) do if info[k]~=nil and info[k]~=v then return nil,'invalid_response' end end
+        if info.total_pages~=nil then
+            if not number(info.total_pages,0,max_pages) then return nil,'pagination_limit' end
+            if pages~=-1 and pages~=info.total_pages then return nil,'pagination_changed' end;pages=info.total_pages
+        elseif pages~=-1 then return nil,'pagination_changed' end
+        if info.total_count~=nil then
+            if not number(info.total_count,0,max_rows) then return nil,'pagination_limit' end
+            if count~=-1 and count~=info.total_count then return nil,'pagination_changed' end;count=info.total_count
+        elseif count~=-1 then return nil,'pagination_changed' end
+    elseif pages~=-1 or count~=-1 then return nil,'pagination_changed' end
+    rows=rows+items;if rows>max_rows or (count~=-1 and rows>count) then return nil,'pagination_limit' end
+    local done
+    if pages==-1 then done=items<per
+    elseif pages==0 then if s.page~=1 or items~=0 then return nil,'invalid_response' end;done=true
+    else if s.page>pages or (items==0 and s.page<pages) then return nil,'invalid_response' end;done=s.page==pages end
+    if done and count~=-1 and rows~=count then return nil,'pagination_changed' end
+    if not done and s.page==max_pages then return nil,'pagination_limit' end
+    return {pages=pages,count=count,rows=rows,done=done}
+end
+if ...=='library' then return {parse=parse,envelope=envelope,credential=credential,quote=quote,pagination=pagination} end
 if arg[1]=='nonce' and not arg[2] then
     local body=io.stdin:read(38)
     if not body or #body~=37 or body:sub(9,9)~='-' or body:sub(14,14)~='-' or body:sub(19,19)~='-' or body:sub(24,24)~='-' then os.exit(1) end
@@ -92,15 +127,9 @@ if arg[1]=='request' then
     local reader=assert(loadfile(dir..'/private-snapshot.lua'))()
     local snapshot=reader.read(io.stdin,codec)
     if not snapshot or snapshot.revision~=tonumber(revision) then reject('invalid_request',false) end
-    local found
-    for _,s in ipairs(snapshot.configuration) do if s.kind=='dns_account' and s.name==account then found=s end end
-    if not found then reject('not_found',false) end
-    if found.values.provider~='cloudflare' then reject('unsupported',false) end
-    local token=snapshot.credentials['cloudflare.'..account..'.secret']
-    if type(token)~='string' or #token==0 then reject('authentication',false,'credentials_missing') end
-    if #token>4096 or token:find('[^ -~]') then reject('authentication',false,'invalid_credentials') end
-    if token:match('^ *$') then reject('authentication',false,'credentials_missing') end
-    token=token:gsub('\\','\\\\'):gsub('"','\\"')
+    local token,kind,code=credential(snapshot,account)
+    if not token then reject(kind,false,code) end
+    token=quote(token)
     local url='https://api.cloudflare.com/client/v4/zones?page=1&per_page=5'
     local body='request = "GET"\nheader = "Authorization: Bearer '..token..'"\n'
     if arg[4]~='zones' then body='url = "'..url..'"\n'..body end

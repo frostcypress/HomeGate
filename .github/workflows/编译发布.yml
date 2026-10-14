@@ -93,6 +93,10 @@ jobs:
           python3 scripts/准备UCI解析回归.py
           python3 scripts/准备服务采样回归.py
           python3 scripts/准备curl回归.py
+      - name: 验证 Cloudflare 完整区域分页与失败隔离
+        run: |
+          build/verify-venv/bin/python scripts/Cloudflare区域回归.py
+          build/verify-venv/bin/python scripts/Cloudflare区域回归.py --runtime
       - name: 验证 Cloudflare 私有凭据与受限 HTTPS 请求
         run: |
           build/verify-venv/bin/python scripts/Cloudflare只读回归.py

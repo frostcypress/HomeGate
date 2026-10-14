@@ -81,4 +81,4 @@ r27 在门禁关闭的持久引擎中增加 service-apply/service-recover，仅�
 
 ## Cloudflare 私有只读业务阶段
 
-r28 增加与旧 ValidateCredentials 同方向的区域读取校验：持久同代快照、受限临时 curl 配置、固定 HTTPS/系统 CA、独立超时和有界响应；令牌不进入 argv 或由应用加入环境，原始供应商消息不公开。新增 20 项 Linux、5 项本地及全部既有回归待当前 Actions。详情见 docs/Cloudflare私有只读.md。只访问隔离 HTTPS 夹具，未用真实账号验证，也未迁移完整区域发现、AAAA/TXT 或其他三家服务商。生产门禁关闭，没有三包。
+r28 增加与旧 ValidateCredentials 同方向的区域读取校验：持久同代快照、受限临时 curl 配置、固定 HTTPS/系统 CA、独立超时和有界响应；令牌不进入 argv 或由应用加入环境，原始供应商消息不公开。新增 20 项 Linux、5 项本地及全部既有回归通过[Actions](https://github.com/frostcypress/HomeGate/actions/runs/38503054242)。详情见 docs/Cloudflare私有只读.md。只访问隔离 HTTPS 夹具，未用真实账号验证，也未迁移完整区域发现、AAAA/TXT 或其他三家服务商。生产门禁关闭，没有三包。

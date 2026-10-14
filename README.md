@@ -89,4 +89,4 @@ r28 增加与旧 ValidateCredentials 同方向的区域读取校验：持久同�
 
 ## Cloudflare 配置绑定记录操作阶段 r30
 
-在同代私有快照、固定 curl/TLS、共锁和独立监督内增加 AAAA/TXT 幂等写入与按值删除。操作绑定 DDNS 规则或证书中的域名；不接受调用者提供的 URL/记录 ID/类型/TTL。TXT 保留其他值，AAAA 用 PATCH 保留现有代理/注释等字段，完整记录分页后决策，删除前复核、变更后回读。写请求发出后失败返回 unknown、禁止自动重试并保留私有同启动期证据，后续 DNS 拒绝直到明确核对。30 项新增 Linux、5 项本地及全部既有回归待当前 Actions。仅本地 HTTPS 模拟数据库，生产记录门禁固定关闭；没有真实 DNS 变更、完整 DDNS/ACME 调度、持久业务回执/冷启动、SDK 三包/目标 ABI/实机结论。详情见 docs/Cloudflare记录操作.md。
+在同代私有快照、固定 curl/TLS、共锁和独立监督内增加 AAAA/TXT 幂等写入与按值删除。操作绑定 DDNS 规则或证书中的域名；不接受调用者提供的 URL/记录 ID/类型/TTL。TXT 保留其他值，AAAA 用 PATCH 保留现有代理/注释等字段，完整记录分页后决策，删除前复核、变更后回读。写请求发出后失败返回 unknown、禁止自动重试并保留私有同启动期证据，后续 DNS 拒绝直到明确核对。30 项新增 Linux、5 项本地及全部既有回归通过[Actions](https://github.com/frostcypress/HomeGate/actions/runs/38525973506)。仅本地 HTTPS 模拟数据库，生产记录门禁固定关闭；没有真实 DNS 变更、完整 DDNS/ACME 调度、持久业务回执/冷启动、SDK 三包/目标 ABI/实机结论。详情见 docs/Cloudflare记录操作.md。

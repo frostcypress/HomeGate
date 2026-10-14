@@ -3,11 +3,16 @@ local json=require('luci.jsonc')
 local dir=arg[0]:match('^(.*)/[^/]+$');if not dir then os.exit(1) end
 local shared=assert(loadfile(dir..'/cloudflare-codec.lua'))('library')
 local plan=assert(loadfile(dir..'/cloudflare-record-plan.lua'))()
+local reconcile=assert(loadfile(dir..'/cloudflare-reconcile-plan.lua'))()
 local codec=assert(loadfile(dir..'/../../luci/lua/luasrc/model/homegate/backup.lua'))()
 local account,revision=arg[2],arg[3]
 if type(account)~='string' or #account<1 or #account>64 or not account:match('^[a-zA-Z0-9_-]+$') or type(revision)~='string' or not revision:match('^[1-9]%d*$') or tonumber(revision)>32 or arg[5] then os.exit(1) end
 local c
+local reconciling=arg[1]=='reconcile-begin' or arg[1]=='reconcile-response' or arg[1]=='reconcile-result'
 local function report(kind,retry,code,result,effect,affected)
+    if reconciling then
+        return string.format('{"api_version":1,"prototype":true,"ok":%s,"phase":"dns-provider","provider":"cloudflare","account":"%s","configuration_revision":%s,"check_scope":"record-reconciliation","error_kind":"%s","retryable":false,"provider_code":"%s","observation":"%s","effect":"unknown","reconciliation_required":true}',tostring(kind==''),account,revision,kind,code or '',result)..'\n'
+    end
     return string.format('{"api_version":1,"prototype":true,"ok":%s,"phase":"dns-provider","provider":"cloudflare","account":"%s","configuration_revision":%s,"check_scope":"record-operation","error_kind":"%s","retryable":%s,"provider_code":"%s","result":"%s","effect":"%s","affected":%d,"reconciliation_required":%s}',tostring(kind==''),account,revision,kind,tostring(retry),code or '',result,effect,affected,tostring(effect=='unknown'))..'\n'
 end
 local function write(fd,body)
@@ -20,7 +25,7 @@ end
 local function fail(kind,retry,code)
     local attempted=c and c.attempted
     if attempted then retry=false end
-    write(3,report(kind,retry,code,'failed',attempted and 'unknown' or 'none',c and c.affected or 0));os.exit(1)
+    write(3,report(kind,retry,code,reconciling and 'incomplete' or 'failed',attempted and 'unknown' or 'none',c and c.affected or 0));os.exit(1)
 end
 local function invalid(code) fail('temporary',true,code or 'invalid_response') end
 local function valid_id(s) return type(s)=='string' and #s==32 and not s:find('[^0-9a-f]') end
@@ -51,6 +56,7 @@ local function issue()
         elseif c.stage=='delete' then method='DELETE' end
     end
     if method~='GET' then
+        if reconciling then invalid('read_only_violation') end
         c.attempted=true
         -- Same-boot uncertainty marker, before issuing any mutation. No retry.
         write(9,'HGCFATTEMPT1\n')
@@ -81,17 +87,27 @@ if arg[1]=='input' and not arg[4] then
     local raw=io.stdin:read(4097);local q=raw and shared.parse(raw)
     if not q or #raw>4096 or codec.json(q)..'\n'~=raw then fail('invalid_request',false,'invalid_operation') end
     write(5,raw);io.write('HGDNSINPUT1\n')
-elseif arg[1]=='begin' and not arg[4] then
+elseif (arg[1]=='begin' or arg[1]=='reconcile-begin') and not arg[4] then
     local reader=assert(loadfile(dir..'/private-snapshot.lua'))()
     local snapshot=reader.read(io.stdin,codec)
-    local q=shared.parse(read(8,4096));local kind,code
-    c,kind,code=plan.bind(snapshot,account,revision,q)
+    local q,kind,code
+    if reconciling then
+        local raw=read(5,8388608);local original=json.parse(raw)
+        if not original or codec.json(original)..'\n'~=raw then fail('invalid_request',false,'invalid_context') end
+        c,code=reconcile.restore(snapshot,account,revision,original,plan)
+        if not c then fail('invalid_request',false,code) end
+    else
+        q=shared.parse(read(8,4096));c,kind,code=plan.bind(snapshot,account,revision,q)
+        if c then c.request=q end
+    end
     if not c then fail(kind,false,code) end
     c.token,kind,code=shared.credential(snapshot,account)
     if not c.token then fail(kind,false,code) end
-    c.delete_ids={};c.position=1;c.matched=false;reset('zones');issue()
-elseif arg[1]=='response' and not arg[4] then
+    if not reconciling then c.delete_ids={} end
+    c.position=1;c.matched=false;reset('zones');issue()
+elseif (arg[1]=='response' or arg[1]=='reconcile-response') and not arg[4] then
     load_context()
+    if reconciling and (c.reconciliation~=true or c.attempted or (c.stage~='zones' and c.stage~='records')) then invalid('invalid_context') end
     local raw=io.stdin:read(65537);local absent=false
     local doc,types=shared.envelope(raw,function(kind,retry,code)
         if kind=='not_found' and (c.stage=='confirm-delete' or c.stage=='verify-delete') then absent=true;return end
@@ -106,11 +122,13 @@ elseif arg[1]=='response' and not arg[4] then
             if type(r)~='table' or not valid_id(r.id) or c.ids[r.id] then invalid() end
             c.ids[r.id]=true
             if c.stage=='zones' then
-                if plan.name(r.name)~=c.zone or (c.zone_id and c.zone_id~=r.id) then fail('invalid_zone',false,'ambiguous_zone') end;c.zone_id=r.id
+                if plan.name(r.name)~=c.zone or (c.zone_id and c.zone_id~=r.id) or (reconciling and c.expected_zone_id~=r.id) then fail('invalid_zone',false,'ambiguous_zone') end;c.zone_id=r.id
             else
                 local rec=plan.record(c,r);if not rec then invalid('record_scope_mismatch') end
                 if not c.first_id then c.first_id=rec.id;c.first_key=rec.key end
-                if rec.match then c.matched=true;if c.operation=='delete' then c.delete_ids[#c.delete_ids+1]=rec.id end end
+                if reconciling then
+                    reconcile.observe(c,rec)
+                elseif rec.match then c.matched=true;if c.operation=='delete' then c.delete_ids[#c.delete_ids+1]=rec.id end end
             end
         end
         local p,code=shared.pagination(c,doc,types,per,1000,per*1000);if not p then invalid(code) end
@@ -118,6 +136,7 @@ elseif arg[1]=='response' and not arg[4] then
         if not p.done then c.page=c.page+1;issue();return end
         if c.stage=='zones' then
             if not c.zone_id then fail('invalid_zone',false,'zone_not_found') end;reset('records');issue()
+        elseif reconciling then finish(reconcile.result(c))
         elseif c.operation=='upsert' then
             if c.matched then finish('unchanged')
             else c.stage=c.type=='AAAA' and c.first_id and 'confirm-update' or 'create';issue() end
@@ -144,6 +163,16 @@ elseif arg[1]=='response' and not arg[4] then
             c.result=c.stage=='create' and 'created' or 'updated';c.new_id=rec.id;c.stage='verify-upsert';issue()
         end
     end
+elseif arg[1]=='reconcile-result' then
+    if arg[4]~='0' and arg[4]~='1' then os.exit(1) end
+    local raw=io.stdin:read(4097);local doc=raw and shared.parse(raw)
+    local kinds={['']=true,authentication=true,not_found=true,unsupported=true,invalid_request=true,invalid_zone=true,temporary=true,network_unavailable=true,timeout=true,rate_limit=true}
+    local observations={['desired-present']=true,['desired-absent']=true,['planned-targets-absent']=true,['planned-targets-present']=true,conflict=true,incomplete=true}
+    if not doc or #raw>4096 or doc.ok~=(arg[4]=='0') or not kinds[doc.error_kind] or not observations[doc.observation] or
+        type(doc.provider_code)~='string' or #doc.provider_code>32 or not doc.provider_code:match('^[a-zA-Z0-9_-]*$') or
+        (doc.ok and (doc.error_kind~='' or doc.observation=='incomplete')) or (not doc.ok and (doc.error_kind=='' or doc.observation~='incomplete')) or read(9,64)~='' then os.exit(1) end
+    local expected=report(doc.error_kind,false,doc.provider_code,doc.observation,'unknown',0)
+    if raw~=expected then os.exit(1) end;io.write(expected)
 elseif arg[1]=='result' then
     if arg[4]~='0' and arg[4]~='1' then os.exit(1) end
     local raw=io.stdin:read(4097);local doc=raw and shared.parse(raw)

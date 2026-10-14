@@ -5,6 +5,7 @@ umask 077
 export LC_ALL=C
 dns_read_enabled=false
 dns_records_enabled=false
+dns_reconcile_enabled=false
 effect=none
 fail() {
     if [ "${mode:-check}" = records ]; then
@@ -14,12 +15,20 @@ fail() {
     exit "${1:-7}"
 }
 [ "$dns_read_enabled" = true ] || fail 2
-[ "$#" -eq 1 ] || { [ "$#" -eq 2 ] && { [ "$2" = --zones ] || [ "$2" = --records ]; }; } || fail 2
+[ "$#" -eq 1 ] || { [ "$#" -eq 2 ] && { [ "$2" = --zones ] || [ "$2" = --records ]; }; } || { [ "$#" -eq 4 ] && [ "$2" = --reconcile ] && [ "$4" = --confirm ]; } || fail 2
 account=$1
 mode=check; codec=cloudflare-codec.lua
 if [ "$#" -eq 2 ]; then
     case "$2" in --zones) mode=zones; codec=cloudflare-zones.lua;;
         --records) mode=records;codec=cloudflare-records.lua;[ "$dns_records_enabled" = true ] || fail 2;; esac
+fi
+if [ "$#" -eq 4 ]; then
+    mode=reconcile;codec=cloudflare-records.lua
+    [ "$dns_records_enabled" = true ] && [ "$dns_reconcile_enabled" = true ] || fail 2
+    old_job=$3
+    case "$old_job" in ''|0*|*[!0-9]*) fail 2;; esac
+    [ "${#old_job}" -le 9 ] && [ "$old_job" -ge 2 ] || fail 2
+    old_work=/var/run/homegate/.dns-check-$old_job
 fi
 case "$account" in ''|*[!a-zA-Z0-9_-]*) fail 2;; esac
 [ "${#account}" -le 64 ] || fail 2
@@ -42,19 +51,30 @@ state=$?; case "$state" in 0) ;; 4) fail 4;; *) fail;; esac
 revision=$(lua "$dir/cloudflare-codec.lua" context < /etc/homegate/transactions/current 2>/dev/null) || fail
 # Never silently collect an orphan request or unlink possibly live files.
 for orphan in /var/run/homegate/.dns-check-*; do
+    if [ "$mode" = reconcile ] && [ "$orphan" = "$old_work" ]; then continue; fi
     [ ! -e "$orphan" ] && [ ! -L "$orphan" ] || fail 4
 done
+if [ "$mode" = reconcile ]; then
+    private_dir "$old_work" || fail
+    for slot in request result zones state input context attempt; do private_file "$old_work/$slot" || fail; done
+    [ "$(cat "$old_work/attempt" 2>/dev/null)" = HGCFATTEMPT1 ] || fail
+    [ "$(stat -c '%s' "$old_work/attempt" 2>/dev/null)" = 13 ] || fail
+fi
 ticket=$(lua "$dir/cloudflare-codec.lua" nonce < /proc/sys/kernel/random/uuid 2>/dev/null) || fail
 job=$$
 work=/var/run/homegate/.dns-check-$job
 mkdir "$work" 2>/dev/null || fail
 (set -C; : > "$work/request" && : > "$work/result" && : > "$work/zones" && : > "$work/state") 2>/dev/null || fail
 private_dir "$work" && private_file "$work/request" && private_file "$work/result" || fail
-if [ "$mode" = records ]; then
+if [ "$mode" = records ] || [ "$mode" = reconcile ]; then
     (set -C; : > "$work/input" && : > "$work/context" && : > "$work/attempt") 2>/dev/null || fail
     # Original operation input has a separate inherited reader. The watchdog
     # bounds its consumption; the private snapshot remains on FD0.
-    exec 4<&0 || fail
+    if [ "$mode" = records ]; then exec 4<&0 || fail
+    else
+        [ "$(stat -c '%s' "$old_work/context" 2>/dev/null)" -le 8388608 ] || fail
+        cat "$old_work/context" > "$work/context" || fail
+    fi
 fi
 result=0
 # Only the private frame uses FD3; engine's public receipt goes to /dev/null.
@@ -66,8 +86,10 @@ if [ "$mode" = records ] && [ -s "$work/attempt" ]; then effect=unknown; fi
 # The whole pipeline has ended. Unknown descendants retain the watchdog locks;
 # the same-session watchdog must prove quiescence before returning success.
 if [ "$result" -eq 0 ] || [ "$result" -eq 1 ]; then
-    if [ "$mode" = records ]; then exec 9<"$work/attempt" || fail; fi
-    lua "$dir/$codec" result "$account" "$revision" "$result" < "$work/result" 2>/dev/null > "$work/zones" || result=7
+    result_mode=result
+    if [ "$mode" = records ] || [ "$mode" = reconcile ]; then exec 9<"$work/attempt" || fail; fi
+    [ "$mode" != reconcile ] || result_mode=reconcile-result
+    lua "$dir/$codec" "$result_mode" "$account" "$revision" "$result" < "$work/result" 2>/dev/null > "$work/zones" || result=7
     exec 9<&-
 fi
 # Delete only this invocation's allocated slots, after the pipeline is quiet.
@@ -77,6 +99,6 @@ if [ "$mode" = records ] && [ "$effect" = unknown ] && [ "$result" -ne 0 ]; then
     # another request until explicit reconciliation (not implemented/installed).
     case "$result" in 1) cat <&5 || fail; exec 5<&-; exit 1;; *) fail;; esac
 fi
-if [ "$mode" = records ]; then rm -f "$work/input" "$work/context" "$work/attempt" 2>/dev/null || fail; fi
+if [ "$mode" = records ] || [ "$mode" = reconcile ]; then rm -f "$work/input" "$work/context" "$work/attempt" 2>/dev/null || fail; fi
 rm -f "$work/request" "$work/result" "$work/zones" "$work/state" 2>/dev/null && rmdir "$work" 2>/dev/null || fail
 case "$result" in 0|1) cat <&5 || fail; exec 5<&-; exit "$result";; *) fail;; esac

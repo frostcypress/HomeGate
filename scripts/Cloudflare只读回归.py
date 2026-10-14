@@ -72,9 +72,14 @@ class Runtime(BootstrapRuntime):
         outer=self
         class Handler(http.server.BaseHTTPRequestHandler):
             def log_message(self,*args):pass
-            def do_GET(self):
-                outer.calls.append({'method':'GET','path':self.path,'authorization':self.headers.get('Authorization')})
-                status,response=outer.response(self.path) if callable(outer.response) else (outer.http_status,outer.response)
+            def reply(self,method):
+                request={'method':method,'path':self.path,'authorization':self.headers.get('Authorization')}
+                if method!='GET':
+                    size=int(self.headers.get('Content-Length','0'));assert 0<=size<=32768
+                    request['body']=self.rfile.read(size)
+                outer.calls.append(request)
+                if hasattr(outer,'record_http'):status,response=outer.record_http(method,self.path,request.get('body',b''))
+                else:status,response=outer.response(self.path) if callable(outer.response) else (outer.http_status,outer.response)
                 body=response if isinstance(response,bytes) else json.dumps(response).encode()
                 time.sleep(outer.delay)
                 try:
@@ -89,6 +94,10 @@ class Runtime(BootstrapRuntime):
                         self.wfile.write(b'0\r\n\r\n')
                     else:self.wfile.write(body)
                 except (BrokenPipeError,ConnectionResetError,ssl.SSLError):pass
+            def do_GET(self):self.reply('GET')
+            def do_POST(self):self.reply('POST')
+            def do_PATCH(self):self.reply('PATCH')
+            def do_DELETE(self):self.reply('DELETE')
         self.server=http.server.ThreadingHTTPServer(('127.0.0.1',0),Handler);self.server.daemon_threads=True
         context=ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER);context.load_cert_chain(str(self.ca_dir/'ca.pem'),str(self.ca_dir/'key.pem'))
         self.server.socket=context.wrap_socket(self.server.socket,server_side=True)

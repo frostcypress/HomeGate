@@ -16,7 +16,7 @@ cleanup() { if [ "$TTY_HIDDEN" = 1 ];then stty echo </dev/tty 2>/dev/null || tru
 trap cleanup EXIT
 trap 'exit 130' HUP INT TERM
 FAILED=0
-EXPECTED_VERSION=${HOMEGATE_VERIFY_EXPECTED_VERSION:-1.3.0-29}
+EXPECTED_VERSION=${HOMEGATE_VERIFY_EXPECTED_VERSION:-1.3.0-30}
 record() { printf '%s\n' "$*" | tee -a "$LOG"; }
 run() {
  name=$1; shift

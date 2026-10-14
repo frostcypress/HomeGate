@@ -14,7 +14,7 @@ curl 的首个选项为 --disable，固定 HTTPS 协议、禁用重定向和代�
 
 本地 5 项通过：实际 Lua 5.1 私有帧/编码、缺秘密/二进制/换行/代次/账户拒绝、固定门禁/语法与 TLS 参数。初次本地数据检查因 Windows 中文路径不能由 Lua C loadfile 打开而失败，夹具改为注入已加载的真实配置/读取模块后通过；产品路径校验未放宽。
 
-20 项新增 Linux 及全部既有回归待当前 Actions。Linux 使用复制路径/UID/gate、官方 BusyBox 1.33.2、Lua51/jsonc、真实管道/锁/进程/HTTPS 和真实 curl 7.83.1；curl 官方 archive SHA256 固定 `2cb9c2356e7263a1272fd1435ef7cdebf2cd21400ec287b068396deb705c22c4`，来源 https://curl.se/download/curl-7.83.1.tar.xz。宿主构建链接宿主 OpenSSL，不是 QWRT OpenSSL ABI 构建；构建只供测试，未替换目标系统 curl。自签名证书仅作为本地夹具的明确 CA；没有使用真实 Cloudflare 账号，没有访问公网 API 或修改 DNS 记录。
+20 项 Linux 及全部既有回归通过[Actions](https://github.com/frostcypress/HomeGate/actions/runs/38503054242)；实际源码 `b37eb5a719cacd373f7bbabe387dfa379e83f526`，64 个关键文件逐字节核对，SDK/发布跳过。Linux 使用复制路径/UID/gate、官方 BusyBox 1.33.2、Lua51/jsonc、真实管道/锁/进程/HTTPS 和真实 curl 7.83.1；curl 官方 archive SHA256 固定 `2cb9c2356e7263a1272fd1435ef7cdebf2cd21400ec287b068396deb705c22c4`，来源 https://curl.se/download/curl-7.83.1.tar.xz。宿主构建链接宿主 OpenSSL，不是 QWRT OpenSSL ABI 构建；构建只供测试，未替换目标系统 curl。自签名证书仅作为本地夹具的明确 CA；没有使用真实 Cloudflare 账号，没有访问公网 API 或修改 DNS 记录。
 
 20 用例覆盖成功/空列表、错误分类、消息反射、恶意/重复/转义键、错误结果类型、重定向、TLS CA、curlrc/代理/环境、声明大小/chunked 上限、真正 curl 超时、凭据权限/argv、共享锁/未完成事务、错误依赖、源门禁/参数、虚假工作成功和调用者丢失。生产门禁/全部业务/ABI/三包/设备资源尚未完成，详细记录/当前三份 MD/完整 ZIP 仅本地。
 

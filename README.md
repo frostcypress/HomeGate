@@ -1,4 +1,4 @@
-# HomeGate 1.3.0-r30 规范迁移草稿
+# HomeGate 1.3.0-r31 规范迁移草稿
 
 本目录是按《OpenWrt 通用插件开发标准 V2.0》整理的工作源码。**这不是已完成 Shell/C 核心迁移的可安装发行版。** 目标为 Zyxel Armor G5 (NBG7815) 的 QWRT R26.3.8 / QSDK 12.5、aarch64_cortex-a53、IPK + Lua LuCI。型号与运行库/组件报告已收，SDK 链接兼容与实机验收仍未完成。用户确认按 1.3.0-10 重构，设备上的优化版 1.3.1-1 作废，不要求当前降级。
 
@@ -21,7 +21,7 @@ Python 3.12+，Lua 回归另需 lupa==2.8；浏览器回归需 playwright==1.63.
     python3 scripts/frontend-source-regressions.py
     python3 scripts/native-ui-regressions.py
 
-只修改 VERSION 和 RELEASE，随后运行 python3 scripts/project.py --sync。homegate-version.mk 和独立对照安装/校验脚本的版本默认值均由此同步，禁止手工维护第二套版本。规范版本为 1.3.0-r30；Go 对照接口仍使用旧格式 1.3.0-30，不冒充已统一的新 SDK 安装包。
+只修改 VERSION 和 RELEASE，随后运行 python3 scripts/project.py --sync。homegate-version.mk 和独立对照安装/校验脚本的版本默认值均由此同步，禁止手工维护第二套版本。规范版本为 1.3.0-r31；Go 对照接口仍使用旧格式 1.3.0-31，不冒充已统一的新 SDK 安装包。
 
 修改 Lua Controller/HTM 后运行 sync-frontend.py 和 build-js-views.py；生成副本由 CI 核对。概览不轮询，使用手动刷新。各设置页的旧只读地址保留为兼容入口。
 
@@ -90,3 +90,7 @@ r28 增加与旧 ValidateCredentials 同方向的区域读取校验：持久同�
 ## Cloudflare 配置绑定记录操作阶段 r30
 
 在同代私有快照、固定 curl/TLS、共锁和独立监督内增加 AAAA/TXT 幂等写入与按值删除。操作绑定 DDNS 规则或证书中的域名；不接受调用者提供的 URL/记录 ID/类型/TTL。TXT 保留其他值，AAAA 用 PATCH 保留现有代理/注释等字段，完整记录分页后决策，删除前复核、变更后回读。写请求发出后失败返回 unknown、禁止自动重试并保留私有同启动期证据，后续 DNS 拒绝直到明确核对。30 项新增 Linux、5 项本地及全部既有回归通过[Actions](https://github.com/frostcypress/HomeGate/actions/runs/38525973506)。仅本地 HTTPS 模拟数据库，生产记录门禁固定关闭；没有真实 DNS 变更、完整 DDNS/ACME 调度、持久业务回执/冷启动、SDK 三包/目标 ABI/实机结论。详情见 docs/Cloudflare记录操作.md。
+
+## Cloudflare 未知操作只读核对阶段 r31
+
+明确确认原同启动期工作编号后，核对原账户/配置代次/资源/区域身份，以固定 GET 完整分页读取记录。返回所需值是否存在、原计划删除目标是否仍在及值冲突；不把当前观察认定为原变更归属或历史结果。保留原私有证据及 DNS 阻塞，不重试变更、不自动收集。6 本地通过、16 Linux 与全部既有回归待当前 Actions。持久回执/跨重启恢复、生产授权界面、SDK 三包和实机仍未完成；新增门禁固定关闭。详见 docs/Cloudflare未知操作核对.md。

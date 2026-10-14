@@ -392,5 +392,25 @@
     "confirmation": "mutation response plus fixed target readback/absence; no claim of provider compare-and-swap atomicity",
     "runtime_run": "https://github.com/frostcypress/HomeGate/actions/runs/38525973506",
     "tested_revision": "1.3.0-r30"
+  },
+  "cloudflare_record_reconciliation": {
+    "source": "project/core/prototype/homegate-cloudflare-read.sh",
+    "mode": "fixed account --reconcile numeric-job --confirm",
+    "scope": "explicit-same-boot-read-only-observation-of-original-bound-operation",
+    "runtime_checks": "pending-current-linux",
+    "runtime_case_count": 16,
+    "local_checks": "passed-6",
+    "production_install": false,
+    "production_switch": false,
+    "actual_business": false,
+    "live_provider_verified": false,
+    "target_verified": false,
+    "three_packages": false,
+    "persistent_business_receipts": false,
+    "cold_start_recovery": false,
+    "evidence_collection": false,
+    "automatic_mutation_retry": false,
+    "confirmation": "fixed flag required; future official authenticated UI not implemented",
+    "result": "complete scoped GET pagination; observations retain effect unknown and original private evidence; no ownership or remote history claim"
   }
 }

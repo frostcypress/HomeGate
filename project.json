@@ -447,5 +447,33 @@
     "completion": "retain durable barrier even when DNS change confirmed; future authorized settlement required",
     "runtime_run": "https://github.com/frostcypress/HomeGate/actions/runs/38534399617",
     "tested_revision": "1.3.0-r32"
+  },
+  "dns_receipt_recovery": {
+    "source": "project/core/prototype/homegate-dns-recovery.sh",
+    "scope": "isolated-terminal-binding-confirmed-archival-cross-boot-read-only-observation",
+    "runtime_checks": "pending-current-linux",
+    "runtime_case_count": 22,
+    "local_checks": "passed-3",
+    "prototype_terminal_receipts": true,
+    "prototype_confirmed_collection": true,
+    "prototype_cross_boot_read": true,
+    "archive_capacity": 1,
+    "production_install": false,
+    "production_switch": false,
+    "actual_business": false,
+    "live_provider_verified": false,
+    "target_verified": false,
+    "three_packages": false,
+    "automatic_unknown_settlement": false,
+    "automatic_collection": false,
+    "official_authorized_ui": false,
+    "production_cold_start": false,
+    "device_reboot_verified": false,
+    "device_power_loss_verified": false,
+    "resource_budget_verified": false,
+    "settlement": "canonical confirmed success must match last durable mutation checkpoint and counts; retain barrier until explicit collection",
+    "collection": "fixed account/job + --confirm; preserve files by rename to bounded private archive; collecting/settled ledger and resync fence",
+    "cross_boot": "same store/current generation/manifest binding, fresh private credentials, GET only; unknown results cannot be collected",
+    "recovery_limits": "corrupt/incomplete checkpoint/terminal scratch is fenced; no automatic repair, archive purge or whole plugin cold-start migration"
   }
 }

@@ -69,6 +69,7 @@ if arg[1]=='request' then
     local token=snapshot.credentials['cloudflare.'..account..'.secret']
     if type(token)~='string' or #token==0 then reject('authentication',false,'credentials_missing') end
     if #token>4096 or token:find('[^ -~]') then reject('authentication',false,'invalid_credentials') end
+    if token:match('^ *$') then reject('authentication',false,'credentials_missing') end
     token=token:gsub('\\','\\\\'):gsub('"','\\"')
     local body='url = "https://api.cloudflare.com/client/v4/zones?page=1&per_page=1"\nrequest = "GET"\nheader = "Authorization: Bearer '..token..'"\n'
     local f=io.open('/proc/self/fd/4','wb')

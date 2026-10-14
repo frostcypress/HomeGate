@@ -77,4 +77,4 @@ Python 3.12+，Lua 回归另需 lupa==2.8；浏览器回归需 playwright==1.63.
 
 ## 固定服务动作阶段
 
-r27 在门禁关闭的持久引擎中增加 service-apply/service-recover，仅绑定 HGAPPLICATION3。固定 UCI 解析/依赖预检后按实测状态停服，再发布受绑定配置；恢复仅按原运行意图启动，开机链接保持不变。命令退出成功仍须观察核实，失败保留写屏障；新增 20 项 Linux 固定服务动作及全部既有回归待当前 Actions。详情见 docs/固定服务动作.md；init/ubus 是隔离夹具，不能冒充 QWRT/procd 实测或业务预检通过。
+r27 在门禁关闭的持久引擎中增加 service-apply/service-recover，仅绑定 HGAPPLICATION3。固定 UCI 解析/依赖预检后按实测状态停服，再发布受绑定配置；恢复仅按原运行意图启动，开机链接保持不变。命令退出成功仍须观察核实，失败保留写屏障；新增 20 项 Linux 固定服务动作及全部既有回归通过[Actions](https://github.com/frostcypress/HomeGate/actions/runs/38373836096)。详情见 docs/固定服务动作.md；init/ubus 是隔离夹具，不能冒充 QWRT/procd 实测或业务预检通过。

@@ -26,11 +26,12 @@ class Static(PrivateCodec):
         self.assertNotIn('os.getenv',(PROTO/'cloudflare-codec.lua').read_text())
         self.lua.compile((PROTO/'cloudflare-codec.lua').read_bytes())
 
-    def request(self,token=b'PRIVATE_SENTINEL',account=b'dns_a',revision=b'3',frame=None):
+    def request(self,token=b'PRIVATE_SENTINEL',account=b'dns_a',revision=b'3',frame=None,mode=None):
         slots=[] if token is None else [(b'cloudflare.dns_a.secret',token)]
         self.lua.globals().test_frame=frame if frame is not None else self.frame(slots)
         self.lua.globals().test_codec=self.codec;self.lua.globals().test_reader=self.reader
         self.lua.globals().arg=self.lua.table_from({0:b'/fixture/cloudflare-codec.lua',1:b'request',2:account,3:revision})
+        if mode:self.lua.globals().arg[4]=mode
         self.lua.execute(b"loadfile=function(p) if p:match('backup.lua$') then return function() return test_codec end elseif p:match('private%-snapshot.lua$') then return function() return test_reader end else error('unexpected fixture load') end end; require=function(name) assert(name=='luci.jsonc');return {} end; os.exit=function(n) error('__EXIT__'..n) end; output='';request_body='';io.stdin={read=function(self,n) return test_frame:sub(1,n) end};io.stdout={write=function(self,...) for _,v in ipairs({...}) do output=output..v end; return true end};io.write=function(...) for _,v in ipairs({...}) do output=output..v end;return true end;local real_open=io.open;io.open=function(p,m) if p=='/proc/self/fd/4' then return {write=function(self,v) request_body=request_body..v;return true end,close=function() return true end} end;return real_open(p,m) end")
         try:self.lua.execute((PROTO/'cloudflare-codec.lua').read_bytes());return True,self.lua.globals().output,self.lua.globals().request_body
         except Exception as e:self.assertIn('__EXIT__',str(e));return False,self.lua.globals().output,self.lua.globals().request_body
@@ -38,7 +39,7 @@ class Static(PrivateCodec):
     def test_private_request_quotes_are_escaped_without_public_reflection(self):
         token=b'PRIVATE_SENTINEL"\\# $(echo x)';ok,public,request=self.request(token)
         self.assertTrue(ok);self.assertEqual(public,b'HGDNSREADY1\n');self.assertNotIn(b'PRIVATE_SENTINEL',public)
-        self.assertEqual(request,b'url = "https://api.cloudflare.com/client/v4/zones?page=1&per_page=1"\nrequest = "GET"\nheader = "Authorization: Bearer PRIVATE_SENTINEL\\"\\\\# $(echo x)"\n')
+        self.assertEqual(request,b'url = "https://api.cloudflare.com/client/v4/zones?page=1&per_page=5"\nrequest = "GET"\nheader = "Authorization: Bearer PRIVATE_SENTINEL\\"\\\\# $(echo x)"\n')
 
     def test_missing_binary_and_multiline_credentials_never_make_requests(self):
         for token in [None,b'   ',b'PRIVATE_SENTINEL\x00',b'PRIVATE_SENTINEL\xff',b'PRIVATE_SENTINEL\nurl = "https://bad.test"']:
@@ -73,10 +74,11 @@ class Runtime(BootstrapRuntime):
             def log_message(self,*args):pass
             def do_GET(self):
                 outer.calls.append({'method':'GET','path':self.path,'authorization':self.headers.get('Authorization')})
-                body=outer.response if isinstance(outer.response,bytes) else json.dumps(outer.response).encode()
+                status,response=outer.response(self.path) if callable(outer.response) else (outer.http_status,outer.response)
+                body=response if isinstance(response,bytes) else json.dumps(response).encode()
                 time.sleep(outer.delay)
                 try:
-                    self.send_response(outer.http_status)
+                    self.send_response(status)
                     if outer.redirect:self.send_header('Location',outer.redirect)
                     if outer.chunked:self.send_header('Transfer-Encoding','chunked')
                     else:self.send_header('Content-Length',str(len(body)))
@@ -91,7 +93,7 @@ class Runtime(BootstrapRuntime):
         context=ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER);context.load_cert_chain(str(self.ca_dir/'ca.pem'),str(self.ca_dir/'key.pem'))
         self.server.socket=context.wrap_socket(self.server.socket,server_side=True)
         self.thread=threading.Thread(target=self.server.serve_forever,daemon=True);self.thread.start()
-        self.endpoint='https://127.0.0.1:'+str(self.server.server_port)+'/client/v4/zones?page=1&per_page=1'
+        self.endpoint='https://127.0.0.1:'+str(self.server.server_port)+'/client/v4/zones?page=1&per_page=5'
         self.curl=self.base/'curl';shutil.copy2(self.real_curl,self.curl);self.curl.chmod(0o700)
         self.watchdog_pid=self.base/'watchdog.pid';self.diagnostic=self.base/'numeric-diagnostic';self.processes=[];self.known_groups=[]
         mapping={'/etc/homegate/transactions':str(self.store),'/var/run/homegate':str(self.native.lockdir),'/usr/bin/curl':str(self.curl),'/etc/ssl/certs/ca-certificates.crt':str(self.ca_dir/'ca.pem')}
@@ -102,7 +104,7 @@ class Runtime(BootstrapRuntime):
             for before,after in [('= 0:700 ]','= '+str(os.getuid())+':700 ]'),('= 0:600:1 ]','= '+str(os.getuid())+':600:1 ]'),('in 0:700:1|0:755:1)','in '+str(os.getuid())+':700:1|'+str(os.getuid())+':755:1)')]:body=body.replace(before,after)
             if name.endswith('.lua'):
                 body=body.replace("local json=require('luci.jsonc')","package.cpath="+json.dumps(str(ROOT/'build/service-observer/?.so')+';;')+"\nlocal json=require('luci.jsonc')")
-                body=body.replace('https://api.cloudflare.com/client/v4/zones?page=1&per_page=1',self.endpoint)
+                body=body.replace('https://api.cloudflare.com/client/v4/zones?page=1&per_page=5',self.endpoint)
             elif name=='homegate-cloudflare-worker.sh':body=body.replace('--max-time 10','--max-time 0.5')
             elif name=='homegate-service-observer-watchdog.sh':
                 body=body.replace('action=cloudflare-check; budget=30','action=cloudflare-check; budget=2')
@@ -156,7 +158,7 @@ class Runtime(BootstrapRuntime):
 
     def test_success_uses_bound_private_token_real_tls_and_no_state_publication(self):
         r=self.check();self.assertEqual(r['configuration_revision'],3);self.assertTrue(r['credentials_valid']);self.assertEqual(r['check_scope'],'zone-read')
-        self.assertEqual(self.calls,[{'method':'GET','path':'/client/v4/zones?page=1&per_page=1','authorization':'Bearer PRIVATE_SENTINEL'}]);self.unchanged()
+        self.assertEqual(self.calls,[{'method':'GET','path':'/client/v4/zones?page=1&per_page=5','authorization':'Bearer PRIVATE_SENTINEL'}]);self.unchanged()
 
     def test_actual_zone_response_metadata_never_enters_public_report(self):
         self.response={'success':True,'result':[{'id':'a'*32,'name':'PRIVATE_SENTINEL.test','account':{'name':'PRIVATE_SENTINEL'}}]}
@@ -186,7 +188,7 @@ class Runtime(BootstrapRuntime):
             self.response=body;self.check(1)
 
     def test_malformed_zone_results_and_empty_object_not_array_refused(self):
-        for result in [{},[{}],[{'id':'a'*32,'name':'example.test'}]*2]:
+        for result in [{},[{}],[{'id':'a'*32,'name':'example.test'}]*6]:
             self.response={'success':True,'result':result};self.check(1)
 
     def test_redirect_is_not_followed_and_authorization_not_forwarded(self):

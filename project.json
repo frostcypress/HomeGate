@@ -416,5 +416,32 @@
     "result": "complete scoped GET pagination; observations retain effect unknown and original private evidence; no ownership or remote history claim",
     "runtime_run": "https://github.com/frostcypress/HomeGate/actions/runs/38529885831",
     "tested_revision": "1.3.0-r31"
+  },
+  "dns_persistent_receipts": {
+    "source": "project/core/prototype/homegate-dns-receipt.sh",
+    "scope": "isolated-pre-mutation-durable-two-slot-checkpoint-and-presence-fence",
+    "runtime_checks": "pending-current-linux",
+    "runtime_case_count": 20,
+    "local_checks": "passed-4",
+    "max_checkpoint_bytes": 8388608,
+    "slots": 2,
+    "production_install": false,
+    "production_switch": false,
+    "actual_business": false,
+    "live_provider_verified": false,
+    "target_verified": false,
+    "three_packages": false,
+    "prototype_checkpoints": true,
+    "prototype_native_writer_fence": true,
+    "automatic_collection": false,
+    "terminal_settlement": false,
+    "authorized_collection": false,
+    "cold_start_reconciliation": false,
+    "device_power_loss_verified": false,
+    "resource_budget_verified": false,
+    "credential_handling": "allowlisted private context excludes Token/headers/transport; TXT value stays private",
+    "binding": "store identity SHA, boot, account, generation + manifest SHA, fixed job, private context SHA and framed metadata checksum",
+    "mutation_precondition": "checked file/directory fsync and atomic current pointer return before HTTP mutation; no retry on uncertain checkpoint",
+    "completion": "retain durable barrier even when DNS change confirmed; future authorized settlement required"
   }
 }

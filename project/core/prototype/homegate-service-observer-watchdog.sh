@@ -66,14 +66,16 @@ stop_family() {
     kill -KILL "-$$" 2>/dev/null
     exit 1
 }
+[ "$action" != cloudflare-check ] || exec 5<&0
 case "$action" in
     observe) lua "$dir/homegate-service-observer.lua" 6>&- 7>&- 8>&- 9>&- >/dev/null 2>&1 &;;
     precheck) /sbin/uci -q show homegate 3>&- 6>&- 7>&- 8>&- 9>&- >/dev/null 2>&1 &;;
     start) /etc/init.d/homegate start 3>&- 6>&- 7>&- 8>&- 9>&- >/dev/null 2>&1 &;;
     stop) /etc/init.d/homegate stop 3>&- 6>&- 7>&- 8>&- 9>&- >/dev/null 2>&1 &;;
-    cloudflare-check) ash "$dir/homegate-cloudflare-worker.sh" "$dns_account" "$dns_revision" "$dns_job" 0<&0 6>&- 7>&- 8>&- 9>&- >/dev/null 2>&1 &;;
+    cloudflare-check) ash "$dir/homegate-cloudflare-worker.sh" "$dns_account" "$dns_revision" "$dns_job" 0<&5 5<&- 6>&- 7>&- 8>&- 9>&- >/dev/null 2>&1 &;;
 esac
 worker=$!
+[ "$action" != cloudflare-check ] || exec 5<&-
 while :; do
     info=$(lua "$process" info "$worker" none 2>/dev/null) || stop_family
     case "$info" in ''|Z:*|X:*) break;; esac

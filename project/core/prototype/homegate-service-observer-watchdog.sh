@@ -9,9 +9,10 @@ action=observe
 budget=5
 if [ "${1:-}" = --cloudflare-check ]; then
     shift
-    [ "$dns_read_enabled" = true ] && [ "$#" -eq 4 ] || exit 2
+    [ "$dns_read_enabled" = true ] && { [ "$#" -eq 4 ] || [ "$#" -eq 5 ]; } || exit 2
     action=cloudflare-check; budget=30
     dns_account=$2; dns_revision=$3; dns_job=$4
+    dns_mode=${5:-check}; case "$dns_mode" in check|zones) ;; *) exit 2;; esac
     case "$dns_account" in ''|*[!a-zA-Z0-9_-]*) exit 2;; esac
     [ "${#dns_account}" -le 64 ] || exit 2
     case "$dns_revision:$dns_job" in *[!0-9:]*) exit 2;; esac
@@ -72,7 +73,7 @@ case "$action" in
     precheck) /sbin/uci -q show homegate 3>&- 6>&- 7>&- 8>&- 9>&- >/dev/null 2>&1 &;;
     start) /etc/init.d/homegate start 3>&- 6>&- 7>&- 8>&- 9>&- >/dev/null 2>&1 &;;
     stop) /etc/init.d/homegate stop 3>&- 6>&- 7>&- 8>&- 9>&- >/dev/null 2>&1 &;;
-    cloudflare-check) ash "$dir/homegate-cloudflare-worker.sh" "$dns_account" "$dns_revision" "$dns_job" 0<&5 5<&- 6>&- 7>&- 8>&- 9>&- >/dev/null 2>&1 &;;
+    cloudflare-check) ash "$dir/homegate-cloudflare-worker.sh" "$dns_account" "$dns_revision" "$dns_job" "$dns_mode" 0<&5 5<&- 6>&- 7>&- 8>&- 9>&- >/dev/null 2>&1 &;;
 esac
 worker=$!
 [ "$action" != cloudflare-check ] || exec 5<&-

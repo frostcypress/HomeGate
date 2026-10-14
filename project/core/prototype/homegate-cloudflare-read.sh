@@ -6,8 +6,10 @@ export LC_ALL=C
 dns_read_enabled=false
 fail() { printf '{"api_version":1,"prototype":true,"ok":false,"phase":"dns-provider","error":"Cloudflare reader is unavailable"}\n'; exit "${1:-7}"; }
 [ "$dns_read_enabled" = true ] || fail 2
-[ "$#" -eq 1 ] || fail 2
+[ "$#" -eq 1 ] || { [ "$#" -eq 2 ] && [ "$2" = --zones ]; } || fail 2
 account=$1
+mode=check; codec=cloudflare-codec.lua
+if [ "$#" -eq 2 ]; then mode=zones; codec=cloudflare-zones.lua; fi
 case "$account" in ''|*[!a-zA-Z0-9_-]*) fail 2;; esac
 [ "${#account}" -le 64 ] || fail 2
 PATH=/usr/sbin:/usr/bin:/sbin:/bin; export PATH
@@ -35,18 +37,19 @@ ticket=$(lua "$dir/cloudflare-codec.lua" nonce < /proc/sys/kernel/random/uuid 2>
 job=$$
 work=/var/run/homegate/.dns-check-$job
 mkdir "$work" 2>/dev/null || fail
-(set -C; : > "$work/request" && : > "$work/result") 2>/dev/null || fail
+(set -C; : > "$work/request" && : > "$work/result" && : > "$work/zones" && : > "$work/state") 2>/dev/null || fail
 private_dir "$work" && private_file "$work/request" && private_file "$work/result" || fail
 result=0
 # Only the private frame uses FD3; engine's public receipt goes to /dev/null.
 # The independent consumer watchdog retains FD6/7, but not the configuration lock.
 ash "$dir/homegate-config-prototype.sh" --persistent snapshot-read 3>&1 8>&- 9>&- >/dev/null 2>/dev/null |
-    setsid ash "$dir/homegate-service-observer-watchdog.sh" --cloudflare-check "$ticket" "$account" "$revision" "$job" 3>"$work/result" 8>&- 9>&- >/dev/null 2>/dev/null || result=$?
+    setsid ash "$dir/homegate-service-observer-watchdog.sh" --cloudflare-check "$ticket" "$account" "$revision" "$job" "$mode" 3>"$work/result" 8>&- 9>&- >/dev/null 2>/dev/null || result=$?
 # The whole pipeline has ended. Unknown descendants retain the watchdog locks;
 # the same-session watchdog must prove quiescence before returning success.
 if [ "$result" -eq 0 ] || [ "$result" -eq 1 ]; then
-    report=$(lua "$dir/cloudflare-codec.lua" result "$account" "$revision" "$result" < "$work/result" 2>/dev/null) || result=7
+    lua "$dir/$codec" result "$account" "$revision" "$result" < "$work/result" 2>/dev/null > "$work/zones" || result=7
 fi
 # Delete only this invocation's allocated slots, after the pipeline is quiet.
-rm -f "$work/request" "$work/result" 2>/dev/null && rmdir "$work" 2>/dev/null || fail
-case "$result" in 0|1) printf '%s\n' "$report"; exit "$result";; *) fail;; esac
+case "$result" in 0|1) exec 5<"$work/zones" || fail;; esac
+rm -f "$work/request" "$work/result" "$work/zones" "$work/state" 2>/dev/null && rmdir "$work" 2>/dev/null || fail
+case "$result" in 0|1) cat <&5 || fail; exec 5<&-; exit "$result";; *) fail;; esac

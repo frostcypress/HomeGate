@@ -6,6 +6,9 @@ local function revision_valid(s) return type(s)=='string' and s:match('^[1-9]%d*
 local account,revision=arg[2],arg[3]
 local function report(kind,retry,code)
     local ok=kind==''
+    if arg[1]=='request' and arg[4]=='zones' then
+        return string.format('{"api_version":1,"prototype":true,"ok":%s,"phase":"dns-provider","provider":"cloudflare","account":"%s","configuration_revision":%s,"check_scope":"zone-list","error_kind":"%s","retryable":%s,"provider_code":"%s","zones":[]}',tostring(ok),account,revision,kind,tostring(retry),code or '')
+    end
     return string.format('{"api_version":1,"prototype":true,"ok":%s,"phase":"dns-provider","provider":"cloudflare","account":"%s","configuration_revision":%s,"credentials_valid":%s,"check_scope":"zone-read","error_kind":"%s","retryable":%s,"provider_code":"%s"}',tostring(ok),account,revision,tostring(ok),kind,tostring(retry),code or '')
 end
 local function reject(kind,retry,code,fd)
@@ -52,6 +55,27 @@ local function parse(body)
     end
     return value,root_types
 end
+local function envelope(raw,fail)
+    if not raw or #raw>65536 then return fail('temporary',true,'response_limit') end
+    local body,http,transport=raw:match('^(.*)\nHGHTTP:(%d%d%d)\n\nHGTRANSPORT:(%d+)\n$')
+    if not body or #transport>3 then return fail('temporary',true,'invalid_response') end
+    local rc,status=tonumber(transport),tonumber(http)
+    if rc~=0 then return fail(rc==28 and 'timeout' or 'network_unavailable',true) end
+    local doc,types=parse(body);local code=''
+    if doc and type(doc.errors)=='table' and type(doc.errors[1])=='table' then
+        local n=doc.errors[1].code
+        if type(n)=='number' and n==math.floor(n) and n>=1 and n<=99999999 then code=string.format('%.0f',n) end
+    end
+    if status==401 or status==403 then return fail('authentication',false,code) end
+    if status==429 then return fail('rate_limit',true,code) end
+    if status>=500 then return fail('temporary',true,code) end
+    if status==404 then return fail('not_found',false,code) end
+    if status<200 or status>=300 then return fail('invalid_request',false,code) end
+    if not doc or type(doc.success)~='boolean' then return fail('temporary',true,'invalid_response') end
+    if not doc.success then return fail((code=='10000' or code=='9109') and 'authentication' or 'invalid_request',false,code) end
+    return doc,types
+end
+if ...=='library' then return {parse=parse,envelope=envelope} end
 if arg[1]=='nonce' and not arg[2] then
     local body=io.stdin:read(38)
     if not body or #body~=37 or body:sub(9,9)~='-' or body:sub(14,14)~='-' or body:sub(19,19)~='-' or body:sub(24,24)~='-' then os.exit(1) end
@@ -62,7 +86,7 @@ if arg[1]=='context' and not arg[2] then
     local body=io.stdin:read(5);local n=body and body:match('^([1-9]%d*)\n$')
     if not n or not revision_valid(n) then os.exit(1) end;io.write(n,'\n');return
 end
-if not account_valid(account) or not revision_valid(revision) or (arg[4] and arg[1]~='result') or arg[5] then os.exit(1) end
+if not account_valid(account) or not revision_valid(revision) or (arg[4] and arg[1]~='result' and not (arg[1]=='request' and arg[4]=='zones')) or arg[5] then os.exit(1) end
 if arg[1]=='request' then
     local codec=assert(loadfile(dir..'/../../luci/lua/luasrc/model/homegate/backup.lua'))()
     local reader=assert(loadfile(dir..'/private-snapshot.lua'))()
@@ -77,33 +101,17 @@ if arg[1]=='request' then
     if #token>4096 or token:find('[^ -~]') then reject('authentication',false,'invalid_credentials') end
     if token:match('^ *$') then reject('authentication',false,'credentials_missing') end
     token=token:gsub('\\','\\\\'):gsub('"','\\"')
-    local body='url = "https://api.cloudflare.com/client/v4/zones?page=1&per_page=1"\nrequest = "GET"\nheader = "Authorization: Bearer '..token..'"\n'
+    local url='https://api.cloudflare.com/client/v4/zones?page=1&per_page=5'
+    local body='request = "GET"\nheader = "Authorization: Bearer '..token..'"\n'
+    if arg[4]~='zones' then body='url = "'..url..'"\n'..body end
     local f=io.open('/proc/self/fd/4','wb')
     if not f or not f:write(body) or not f:close() then os.exit(1) end
     io.write('HGDNSREADY1\n')
 elseif arg[1]=='response' then
-    local raw=io.stdin:read(65537)
-    if not raw or #raw>65536 then reject('temporary',true,'response_limit',true) end
-    local body,http,transport=raw:match('^(.*)\nHGHTTP:(%d%d%d)\n\nHGTRANSPORT:(%d+)\n$')
-    if not body or #transport>3 then reject('temporary',true,'invalid_response',true) end
-    local rc=tonumber(transport);local status=tonumber(http)
-    if rc~=0 then reject(rc==28 and 'timeout' or 'network_unavailable',true,nil,true) end
-    local doc,types=parse(body)
-    local code=''
-    if doc and type(doc.errors)=='table' and type(doc.errors[1])=='table' then
-        local n=doc.errors[1].code
-        if type(n)=='number' and n==math.floor(n) and n>=1 and n<=99999999 then code=string.format('%.0f',n) end
-    end
-    if status==401 or status==403 then reject('authentication',false,code,true) end
-    if status==429 then reject('rate_limit',true,code,true) end
-    if status>=500 then reject('temporary',true,code,true) end
-    if status==404 then reject('not_found',false,code,true) end
-    if status<200 or status>=300 then reject('invalid_request',false,code,true) end
-    if not doc or type(doc.success)~='boolean' then reject('temporary',true,'invalid_response',true) end
-    if not doc.success then reject((code=='10000' or code=='9109') and 'authentication' or 'invalid_request',false,code,true) end
-    if type(doc.result)~='table' or types.result~='array' or #doc.result>1 then reject('temporary',true,'invalid_response',true) end
+    local doc,types=envelope(io.stdin:read(65537),function(k,r,c) reject(k,r,c,true) end)
+    if type(doc.result)~='table' or types.result~='array' or #doc.result>5 then reject('temporary',true,'invalid_response',true) end
     for k,v in pairs(doc.result) do
-        if k~=1 or type(v)~='table' or type(v.id)~='string' or #v.id~=32 or v.id:find('[^0-9a-f]') or type(v.name)~='string' or #v.name<1 or #v.name>253 then reject('temporary',true,'invalid_response',true) end
+        if type(k)~='number' or k<1 or k>#doc.result or type(v)~='table' or type(v.id)~='string' or #v.id~=32 or v.id:find('[^0-9a-f]') or type(v.name)~='string' or #v.name<1 or #v.name>253 then reject('temporary',true,'invalid_response',true) end
     end
     local f=io.open('/proc/self/fd/3','wb');if not f or not f:write(report('',false),'\n') or not f:close() then os.exit(1) end
 elseif arg[1]=='result' then

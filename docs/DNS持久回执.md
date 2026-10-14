@@ -30,6 +30,6 @@ current 的发布不会让旧槽先消失；第二/后续变更前检查点失�
 
 ## 验证
 
-4 新增本地通过；20 新增 Linux 与全部既有回归待当前 Actions。使用 BusyBox ash/fsync/flock/rename、真实 Lua51/jsonc、固定官方 curl 7.83.1 和本地 CA/可丢弃 HTTPS 数据库。测试变更前检查点因果顺序和身份/hash/权限、排除 Token、未知操作只读核对、临时证据丢失/模拟新 boot、文件/清单/目录/指针 fsync 故障、两处 rename 故障、三次删除双槽轮换、第二检查点失败保留前证据、存储身份变化/残留准备目录、内部锁和关闭门禁、异常回执及原生/配置/服务恢复屏障。
+4 新增本地、20 新增 Linux 及全部既有回归通过[Actions](https://github.com/frostcypress/HomeGate/actions/runs/38534399617)；实际源码 `43bf0a900d88e1648f3232990e2e04c3738fe219`，78 个关键文件逐字节核对；SDK/发布跳过。使用 BusyBox ash/fsync/flock/rename、真实 Lua51/jsonc、固定官方 curl 7.83.1 和本地 CA/可丢弃 HTTPS 数据库。测试变更前检查点因果顺序和身份/hash/权限、排除 Token、未知操作只读核对、临时证据丢失/模拟新 boot、文件/清单/目录/指针 fsync 故障、两处 rename 故障、三次删除双槽轮换、第二检查点失败保留前证据、存储身份变化/残留准备目录、内部锁和关闭门禁、异常回执及原生/配置/服务恢复屏障。
 
 没有真实供应商、QWRT ABI/断电/闪存资源、SDK 三包或完整业务结论。详细验证记录、当前三 MD 和完整 ZIP 仅本地；普通源码/协议和成功链接可公开。High 与发布前 Ultra 提醒/一次终审/有限局部优化边界、CI 运行中低频只查状态/终态后分析继续继承。

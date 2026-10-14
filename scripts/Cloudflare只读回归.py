@@ -44,6 +44,13 @@ class Static(PrivateCodec):
             self.setUp();ok,public,request=self.request(token);self.assertFalse(ok);self.assertEqual(request,b'');self.assertNotIn(b'PRIVATE_SENTINEL',public);self.assertIn(b'authentication',public)
 
     def test_wrong_generation_account_and_truncated_private_frame_refused(self):
+        # Also execute the bounded nonce data path; JSON module is unused here.
+        for raw,accepted in [(b'12345678-1234-1234-1234-123456789abc\n',True),(b'12345678-1234-1234-1234-123456789abc',False),(b'12345678_1234-1234-1234-123456789abc\n',False)]:
+            self.setUp();self.lua.globals().nonce_body=raw;self.lua.globals().arg=self.lua.table_from({0:b'/fixture/cloudflare-codec.lua',1:b'nonce'})
+            self.lua.execute(b"require=function()return {}end;os.exit=function()error('__EXIT__')end;output='';io.stdin={read=function(self,n)return nonce_body:sub(1,n)end};io.write=function(v)output=v;return true end")
+            if accepted:self.lua.execute((PROTO/'cloudflare-codec.lua').read_bytes());self.assertEqual(self.lua.globals().output,b'12345678123412341234123456789abc')
+            else:
+                with self.assertRaises(Exception):self.lua.execute((PROTO/'cloudflare-codec.lua').read_bytes())
         for account,rev,frame in [(b'missing',b'3',None),(b'dns_a',b'2',None),(b'dns_a',b'3',self.frame()[:-1])]:
             self.setUp();ok,public,request=self.request(account=account,revision=rev,frame=frame);self.assertFalse(ok);self.assertEqual(request,b'');self.assertNotIn(b'PRIVATE_SENTINEL',public)
 

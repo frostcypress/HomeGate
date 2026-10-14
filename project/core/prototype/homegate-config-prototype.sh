@@ -269,6 +269,11 @@ open_store() {
         case "$command" in status|export|dns-recovery-check|dns-recovery-snapshot-read) ;;
             *) fail 'DNS operation requires explicit durable recovery' 4;; esac
     fi
+    if [ "$persistent_mode" = true ] && { [ -e "$store/dns-settled" ] || [ -L "$store/dns-settled" ] ||
+        [ -e "$store/dns-collection" ] || [ -L "$store/dns-collection" ] || [ -e "$store/.dns-collection-next" ] || [ -L "$store/.dns-collection-next" ]; }; then
+        case "$command" in status|export|dns-recovery-check|dns-recovery-snapshot-read) ;;
+            *) ash "$(dirname "$0")/homegate-dns-recovery.sh" archive-check >/dev/null 2>/dev/null || fail 'DNS collection requires durable recovery' 4;; esac
+    fi
     if [ "$persistent_mode" = true ]; then
         if [ "$journal_active" = true ]; then
             [ "$persistent_fence_pending" = true ] && [ "$fence_base:$fence_target:$fence_token" = "$journal_base:$journal_target:$journal_token" ] || fail 'Application and persistent fence mismatch' 7

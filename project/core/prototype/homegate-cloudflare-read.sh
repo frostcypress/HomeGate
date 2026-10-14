@@ -7,6 +7,8 @@ dns_read_enabled=false
 dns_records_enabled=false
 dns_reconcile_enabled=false
 dns_receipt_enabled=false
+dns_settlement_enabled=false
+persistent_reconcile=false
 effect=none
 fail() {
     if [ "${mode:-check}" = records ]; then
@@ -16,7 +18,7 @@ fail() {
     exit "${1:-7}"
 }
 [ "$dns_read_enabled" = true ] || fail 2
-[ "$#" -eq 1 ] || { [ "$#" -eq 2 ] && { [ "$2" = --zones ] || [ "$2" = --records ]; }; } || { [ "$#" -eq 4 ] && [ "$2" = --reconcile ] && [ "$4" = --confirm ]; } || fail 2
+[ "$#" -eq 1 ] || { [ "$#" -eq 2 ] && { [ "$2" = --zones ] || [ "$2" = --records ]; }; } || { [ "$#" -eq 4 ] && { [ "$2" = --reconcile ] || [ "$2" = --reconcile-receipt ] || [ "$2" = --collect-receipt ]; } && [ "$4" = --confirm ]; } || fail 2
 account=$1
 mode=check; codec=cloudflare-codec.lua
 if [ "$#" -eq 2 ]; then
@@ -30,6 +32,10 @@ if [ "$#" -eq 4 ]; then
     case "$old_job" in ''|0*|*[!0-9]*) fail 2;; esac
     [ "${#old_job}" -le 9 ] && [ "$old_job" -ge 2 ] || fail 2
     old_work=/var/run/homegate/.dns-check-$old_job
+    if [ "$2" != --reconcile ]; then
+        [ "$dns_receipt_enabled" = true ] && [ "$dns_settlement_enabled" = true ] || fail 2
+        if [ "$2" = --collect-receipt ]; then mode=collect;else persistent_reconcile=true;fi
+    fi
 fi
 case "$account" in ''|*[!a-zA-Z0-9_-]*) fail 2;; esac
 [ "${#account}" -le 64 ] || fail 2
@@ -48,7 +54,7 @@ exec 7>>/etc/homegate/transactions/.supervisor.lock || fail
 flock -n 7 || fail 4
 dir=$(CDPATH= cd "$(dirname "$0")" && pwd) || fail
 check_command=writer-check;snapshot_command=snapshot-read
-if [ "$mode" = reconcile ] && [ "$dns_receipt_enabled" = true ]; then check_command=dns-recovery-check;snapshot_command=dns-recovery-snapshot-read; fi
+if { [ "$mode" = reconcile ] || [ "$mode" = collect ]; } && [ "$dns_receipt_enabled" = true ]; then check_command=dns-recovery-check;snapshot_command=dns-recovery-snapshot-read; fi
 ash "$dir/homegate-config-prototype.sh" --persistent "$check_command" >/dev/null 2>&1
 state=$?; case "$state" in 0) ;; 4) fail 4;; *) fail;; esac
 revision=$(lua "$dir/cloudflare-codec.lua" context < /etc/homegate/transactions/current 2>/dev/null) || fail
@@ -57,7 +63,12 @@ for orphan in /var/run/homegate/.dns-check-*; do
     if [ "$mode" = reconcile ] && [ "$orphan" = "$old_work" ]; then continue; fi
     [ ! -e "$orphan" ] && [ ! -L "$orphan" ] || fail 4
 done
-if [ "$mode" = reconcile ]; then
+if [ "$mode" = collect ]; then
+    ash "$dir/homegate-dns-recovery.sh" collect "$account" "$revision" "$old_job" >/dev/null 2>/dev/null || fail
+    printf '{"api_version":1,"prototype":true,"ok":true,"scope":"dns-receipt-collection","archived":true,"write_ready":true}\n'
+    exit 0
+fi
+if [ "$mode" = reconcile ] && [ "$persistent_reconcile" = false ]; then
     private_dir "$old_work" || fail
     for slot in request result zones state input context attempt; do private_file "$old_work/$slot" || fail; done
     [ "$(cat "$old_work/attempt" 2>/dev/null)" = HGCFATTEMPT1 ] || fail
@@ -74,6 +85,8 @@ if [ "$mode" = records ] || [ "$mode" = reconcile ]; then
     # Original operation input has a separate inherited reader. The watchdog
     # bounds its consumption; the private snapshot remains on FD0.
     if [ "$mode" = records ]; then exec 4<&0 || fail
+    elif [ "$persistent_reconcile" = true ]; then
+        ash "$dir/homegate-dns-recovery.sh" load "$account" "$revision" "$old_job" 5>"$work/context" >/dev/null 2>/dev/null || fail
     else
         [ "$(stat -c '%s' "$old_work/context" 2>/dev/null)" -le 8388608 ] || fail
         cat "$old_work/context" > "$work/context" || fail
@@ -94,6 +107,11 @@ if [ "$result" -eq 0 ] || [ "$result" -eq 1 ]; then
     [ "$mode" != reconcile ] || result_mode=reconcile-result
     lua "$dir/$codec" "$result_mode" "$account" "$revision" "$result" < "$work/result" 2>/dev/null > "$work/zones" || result=7
     exec 9<&-
+fi
+# Persist the already canonical success receipt only after the supervised family
+# is quiet. A settlement failure retains both durable and same-boot barriers.
+if [ "$mode" = records ] && [ "$dns_receipt_enabled" = true ] && [ "$dns_settlement_enabled" = true ] && [ "$effect" = unknown ] && [ "$result" -eq 0 ]; then
+    ash "$dir/homegate-dns-recovery.sh" settle "$account" "$revision" "$job" >/dev/null 2>/dev/null || result=7
 fi
 # Delete only this invocation's allocated slots, after the pipeline is quiet.
 case "$result" in 0|1) exec 5<"$work/zones" || fail;; esac

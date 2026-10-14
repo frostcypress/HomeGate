@@ -84,7 +84,16 @@ local function load_context()
         (c.type~='AAAA' and c.type~='TXT') or (c.operation~='upsert' and c.operation~='delete') or
         type(c.ids)~='table' or type(c.delete_ids)~='table' or (c.zone_id~=nil and not valid_id(c.zone_id)) then invalid('invalid_context') end
 end
-if arg[1]=='receipt' and not arg[4] then
+if arg[1]=='receipt-terminal' and not arg[4] then
+    local raw=read(8,8388608);local original=json.parse(raw)
+    if type(original)~='table' or codec.json(original)..'\n'~=raw then os.exit(1) end
+    local exported=receipt.export(original)
+    if not exported or codec.json(exported)..'\n'~=raw then os.exit(1) end
+    local public=io.stdin:read(4097);local doc=public and shared.parse(public)
+    if not doc or #public>4096 or not receipt.terminal(original,doc) or
+        public~=report('',false,'',doc.result,'confirmed',doc.affected) then os.exit(1) end
+    io.write('HGCFTVALID1\n')
+elseif arg[1]=='receipt' and not arg[4] then
     load_context();local out=receipt.export(c)
     if not out then os.exit(1) end
     local raw=codec.json(out)..'\n';if #raw>8388608 then os.exit(1) end

@@ -71,7 +71,9 @@ class Runtime(ReconcileRuntime):
         self.assertEqual(before,{p.relative_to(self.journal).as_posix():p.read_bytes() for p in self.journal.rglob('*') if p.is_file()})
     def test_volatile_loss_and_simulated_new_boot_do_not_remove_persistent_block(self):
         self.pending();before=(self.journal/'current').read_bytes()
-        assert self.old.resolve().is_relative_to(self.base.resolve());shutil.rmtree(self.old)
+        assert self.old.parent.resolve()==self.native.lockdir.resolve()
+        assert self.old.resolve().is_relative_to(self.native.base.resolve()) and self.old.name=='.dns-check-'+self.oldjob
+        shutil.rmtree(self.old)
         self.boot_id.write_text('11111111-1111-1111-1111-111111111111\n');self.blocked();self.assertEqual((self.journal/'current').read_bytes(),before)
     def test_context_file_fsync_failure_prevents_http_mutation(self):
         self.no_http_mutation('if any(v.endswith("/.prepare/context") for v in sys.argv[1:]):sys.exit(1)')

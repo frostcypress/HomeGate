@@ -32,7 +32,7 @@ POST/PATCH/DELETE 前写固定 HGCFATTEMPT1 标记；不自动重试。随后 HT
 
 ## 本阶段验证
 
-5 项新增本地通过。30 项新增 Linux 及全部既有回归待当前 Actions。用实际私有帧、BusyBox ash、Lua51/jsonc、固定官方 curl、临时 CA/loopback TLS 和可丢弃记录数据库验证：AAAA/TXT 创建/重跑、等价 IPv6、PATCH 元数据保留、按值/显式全删、跨页重复值、完整分页/范围异常、删除前并发变化、HTTP 已变更但失败、超时、伪响应、回读失败/部分删除、TLS与共锁、curl argv/env/FD、未结束输入、父 SIGKILL 与关闭门禁。SIGKILL 故障明确使用仅夹具的 curl 包装器，不把它当成真实供应商网络证据。
+5 项新增本地通过。30 项新增 Linux 及全部既有回归通过[Actions](https://github.com/frostcypress/HomeGate/actions/runs/38525973506)；实际源码 `ca59e05d818d91c3e890bdd209188afb711b8359`，71 个关键文件逐字节核对，SDK/发布跳过。用实际私有帧、BusyBox ash、Lua51/jsonc、固定官方 curl、临时 CA/loopback TLS 和可丢弃记录数据库验证：AAAA/TXT 创建/重跑、等价 IPv6、PATCH 元数据保留、按值/显式全删、跨页重复值、完整分页/范围异常、删除前并发变化、HTTP 已变更但失败、超时、伪响应、回读失败/部分删除、TLS与共锁、curl argv/env/FD、未结束输入、父 SIGKILL 与关闭门禁。SIGKILL 故障明确使用仅夹具的 curl 包装器，不把它当成真实供应商网络证据。
 
 当前记录源码和普通协议说明可公开；详细运行/失败记录、当前三份 MD 与完整 ZIP 仅本地。生产四家 DNS、自动 DDNS/来源采集、完整 ACME/代理/WOL/防火墙、受确认迁移/生产生命周期/冷启动、SDK ABI/三包/设备与资源仍待完成。High 开发及发布前 Ultra 提醒、一次终审/有限局部优化边界继续继承。
 

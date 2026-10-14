@@ -93,6 +93,10 @@ jobs:
           python3 scripts/准备UCI解析回归.py
           python3 scripts/准备服务采样回归.py
           python3 scripts/准备curl回归.py
+      - name: 验证 DNS 变更前持久回执与写入屏障
+        run: |
+          build/verify-venv/bin/python scripts/DNS持久回执回归.py
+          build/verify-venv/bin/python scripts/DNS持久回执回归.py --runtime
       - name: 验证 Cloudflare 未知操作的确认只读核对
         run: |
           build/verify-venv/bin/python scripts/Cloudflare核对回归.py

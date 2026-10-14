@@ -6,6 +6,8 @@ export LC_ALL=C
 dns_read_enabled=false
 dns_records_enabled=false
 dns_reconcile_enabled=false
+dns_receipt_enabled=false
+[ "$dns_receipt_enabled" = true ] || { exec 6>&- 7>&-; }
 [ "$dns_read_enabled" = true ] && { [ "$#" -eq 3 ] || [ "$#" -eq 4 ]; } || exit 2
 account=$1; revision=$2; job=$3
 mode=${4:-check};case "$mode" in check|zones) ;; records) [ "$dns_records_enabled" = true ] || exit 2;; reconcile) [ "$dns_records_enabled" = true ] && [ "$dns_reconcile_enabled" = true ] || exit 2;; *) exit 2;; esac
@@ -58,7 +60,7 @@ fetch() {
     rc=0
     /usr/bin/curl --disable --config "$work/request" --proto '=https' --proto-redir '=https' --proxy '' --noproxy '*' \
         --connect-timeout 3 --max-time 10 --cacert /etc/ssl/certs/ca-certificates.crt --silent \
-        --write-out '\nHGHTTP:%{http_code}\n' "$@" 3>&- 4>&- 5>&- 8>&- 9>&- || rc=$?
+        --write-out '\nHGHTTP:%{http_code}\n' "$@" 3>&- 4>&- 5>&- 8>&- 9>&- 6>&- 7>&- || rc=$?
     printf '\nHGTRANSPORT:%s\n' "$rc"
 }
 if [ "$mode" = records ] || [ "$mode" = reconcile ]; then
@@ -66,9 +68,15 @@ if [ "$mode" = records ] || [ "$mode" = reconcile ]; then
     step=0
     response_mode=response;[ "$mode" != reconcile ] || response_mode=reconcile-response
     while [ "$step" -lt 302000 ]; do
+        if [ "$ready" = HGDNSWRITE1 ]; then
+            [ "$mode" = records ] || exit 1
+            if [ "$dns_receipt_enabled" = true ]; then
+                ash "$dir/homegate-dns-receipt.sh" checkpoint "$account" "$revision" "$job" >/dev/null 2>/dev/null || exit 1
+            fi
+        elif [ "$ready" != HGDNSNEXT1 ]; then exit 1; fi
         ready=$(fetch | lua "$dir/cloudflare-records.lua" "$response_mode" "$account" "$revision" 2>/dev/null)
         code=$?;[ "$code" -eq 0 ] || exit 1
-        case "$ready" in HGDNSDONE1) exit 0;; HGDNSNEXT1) step=$((step + 1));; *) exit 1;; esac
+        case "$ready" in HGDNSDONE1) exit 0;; HGDNSNEXT1|HGDNSWRITE1) step=$((step + 1));; *) exit 1;; esac
     done
     exit 1
 fi

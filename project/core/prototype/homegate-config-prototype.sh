@@ -18,6 +18,7 @@ production_writes_enabled=false
 persistent_namespace_enabled=false
 orphan_recovery_enabled=false
 service_actions_enabled=false
+dns_recovery_read_enabled=false
 persistent_mode=false
 persistent_fence_present=false
 persistent_fence_pending=false
@@ -262,6 +263,12 @@ open_store() {
     fi
     persistent_fence_read
     journal_read
+    if [ "$persistent_mode" = true ] && { [ -e "$store/dns-operation" ] || [ -L "$store/dns-operation" ]; }; then
+        # Presence alone fences ALL mutations/lifecycle recovery, even malformed
+        # or incomplete receipts. No environment or feature gate can bypass it.
+        case "$command" in status|export|dns-recovery-check|dns-recovery-snapshot-read) ;;
+            *) fail 'DNS operation requires explicit durable recovery' 4;; esac
+    fi
     if [ "$persistent_mode" = true ]; then
         if [ "$journal_active" = true ]; then
             [ "$persistent_fence_pending" = true ] && [ "$fence_base:$fence_target:$fence_token" = "$journal_base:$journal_target:$journal_token" ] || fail 'Application and persistent fence mismatch' 7
@@ -1004,6 +1011,8 @@ case "$command" in
         projection_role=restore;;
     init|status|export|preview|cancel) [ "$#" -eq 0 ] || fail 'Unexpected arguments' 2;;
     writer-check) [ "$#" -eq 0 ] && [ "$persistent_mode" = true ] || fail 'Writer check requires persistent namespace' 2;;
+    dns-recovery-check|dns-recovery-snapshot-read)
+        [ "$#" -eq 0 ] && [ "$persistent_mode" = true ] && [ "$dns_recovery_read_enabled" = true ] || fail 'DNS recovery reader is not ready' 2;;
     migration-preview) [ "$#" -eq 0 ] && [ "$public_mode" = true ] || fail 'Migration requires full schema' 2;;
     snapshot-read) [ "$#" -eq 0 ] && [ "$public_mode" = true ] || fail 'Private reader requires full schema' 2;;
     recover-application) [ "$#" -eq 0 ] && [ "$public_mode" = true ] || fail 'Recovery requires full schema' 2;;
@@ -1075,6 +1084,9 @@ case "$command" in
         # open_store already verified readiness while all three locks are held.
         printf '{"api_version":1,"prototype":true,"ok":true,"scope":"persistent-writer-barrier","write_ready":true}\n'
         ;;
+    dns-recovery-check)
+        printf '{"api_version":1,"prototype":true,"ok":true,"scope":"dns-recovery-reader","write_ready":false,"read_ready":true}\n'
+        ;;
     init)
         [ "$head_revision" -eq 0 ] || fail 'Store already initialized' 4
         begin_generation
@@ -1101,7 +1113,7 @@ case "$command" in
         need_initialized
         cat "$store/gen-$head_revision/public.conf" || fail 'Unable to export public config'
         ;;
-    snapshot-read)
+    snapshot-read|dns-recovery-snapshot-read)
         need_initialized
         # Only an inherited pipe may receive private bytes. Never a path, RPC
         # response, terminal, or regular file. Hold the same flock throughout.

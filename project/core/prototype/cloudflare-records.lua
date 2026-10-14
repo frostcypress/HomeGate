@@ -4,6 +4,7 @@ local dir=arg[0]:match('^(.*)/[^/]+$');if not dir then os.exit(1) end
 local shared=assert(loadfile(dir..'/cloudflare-codec.lua'))('library')
 local plan=assert(loadfile(dir..'/cloudflare-record-plan.lua'))()
 local reconcile=assert(loadfile(dir..'/cloudflare-reconcile-plan.lua'))()
+local receipt=assert(loadfile(dir..'/cloudflare-receipt.lua'))()
 local codec=assert(loadfile(dir..'/../../luci/lua/luasrc/model/homegate/backup.lua'))()
 local account,revision=arg[2],arg[3]
 if type(account)~='string' or #account<1 or #account>64 or not account:match('^[a-zA-Z0-9_-]+$') or type(revision)~='string' or not revision:match('^[1-9]%d*$') or tonumber(revision)>32 or arg[5] then os.exit(1) end
@@ -64,7 +65,7 @@ local function issue()
     save()
     local config='url = "https://api.cloudflare.com/client/v4'..path..'"\nrequest = "'..method..'"\nheader = "Authorization: Bearer '..shared.quote(c.token)..'"\n'
     if body then config=config..'header = "Content-Type: application/json"\ndata-binary = "'..shared.quote(body)..'"\n' end
-    write(4,config);io.write('HGDNSNEXT1\n')
+    write(4,config);io.write(method=='GET' and 'HGDNSNEXT1\n' or 'HGDNSWRITE1\n')
 end
 local function next_delete(count)
     c.affected=c.affected+count;c.position=c.position+1
@@ -83,7 +84,12 @@ local function load_context()
         (c.type~='AAAA' and c.type~='TXT') or (c.operation~='upsert' and c.operation~='delete') or
         type(c.ids)~='table' or type(c.delete_ids)~='table' or (c.zone_id~=nil and not valid_id(c.zone_id)) then invalid('invalid_context') end
 end
-if arg[1]=='input' and not arg[4] then
+if arg[1]=='receipt' and not arg[4] then
+    load_context();local out=receipt.export(c)
+    if not out then os.exit(1) end
+    local raw=codec.json(out)..'\n';if #raw>8388608 then os.exit(1) end
+    write(3,raw)
+elseif arg[1]=='input' and not arg[4] then
     local raw=io.stdin:read(4097);local q=raw and shared.parse(raw)
     if not q or #raw>4096 or codec.json(q)..'\n'~=raw then fail('invalid_request',false,'invalid_operation') end
     write(5,raw);io.write('HGDNSINPUT1\n')

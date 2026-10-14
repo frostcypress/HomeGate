@@ -6,6 +6,7 @@ export LC_ALL=C
 dns_read_enabled=false
 dns_records_enabled=false
 dns_reconcile_enabled=false
+dns_receipt_enabled=false
 effect=none
 fail() {
     if [ "${mode:-check}" = records ]; then
@@ -46,7 +47,9 @@ flock -n 6 || fail 4
 exec 7>>/etc/homegate/transactions/.supervisor.lock || fail
 flock -n 7 || fail 4
 dir=$(CDPATH= cd "$(dirname "$0")" && pwd) || fail
-ash "$dir/homegate-config-prototype.sh" --persistent writer-check >/dev/null 2>&1
+check_command=writer-check;snapshot_command=snapshot-read
+if [ "$mode" = reconcile ] && [ "$dns_receipt_enabled" = true ]; then check_command=dns-recovery-check;snapshot_command=dns-recovery-snapshot-read; fi
+ash "$dir/homegate-config-prototype.sh" --persistent "$check_command" >/dev/null 2>&1
 state=$?; case "$state" in 0) ;; 4) fail 4;; *) fail;; esac
 revision=$(lua "$dir/cloudflare-codec.lua" context < /etc/homegate/transactions/current 2>/dev/null) || fail
 # Never silently collect an orphan request or unlink possibly live files.
@@ -79,7 +82,7 @@ fi
 result=0
 # Only the private frame uses FD3; engine's public receipt goes to /dev/null.
 # The independent consumer watchdog retains FD6/7, but not the configuration lock.
-ash "$dir/homegate-config-prototype.sh" --persistent snapshot-read 3>&1 8>&- 9>&- >/dev/null 2>/dev/null |
+ash "$dir/homegate-config-prototype.sh" --persistent "$snapshot_command" 3>&1 8>&- 9>&- >/dev/null 2>/dev/null |
     setsid ash "$dir/homegate-service-observer-watchdog.sh" --cloudflare-check "$ticket" "$account" "$revision" "$job" "$mode" 3>"$work/result" 8>&- 9>&- >/dev/null 2>/dev/null || result=$?
 exec 4>&-
 if [ "$mode" = records ] && [ -s "$work/attempt" ]; then effect=unknown; fi

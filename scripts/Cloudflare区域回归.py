@@ -58,7 +58,7 @@ class Runtime(ReadRuntime):
         self.assertEqual(p.returncode,expected,(p.stdout,p.stderr,diag));self.assertEqual(p.stderr,b'')
         self.assertNotIn(b'PRIVATE_SENTINEL',p.stdout);self.assertNotIn(b'PRIVATE_METADATA',p.stdout)
         r=json.loads(p.stdout);self.assertEqual(r['ok'],expected==0)
-        if expected in [0,1]:self.assertEqual(r['check_scope'],'zone-list');self.assertEqual(r['configuration_revision'],3)
+        if expected in [0,1]:self.assertEqual(r['check_scope'],'zone-list');self.assertEqual(r['configuration_revision'],int((self.store/'current').read_text()))
         if expected==1:self.assertEqual(r['zones'],[])
         return r
 

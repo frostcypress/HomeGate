@@ -23,7 +23,7 @@ class Static(unittest.TestCase):
         s=(PROTO/'homegate-service-observer-watchdog.sh').read_text()
         for action in ['start','stop']: self.assertIn('/etc/init.d/homegate '+action+' 3>&- 6>&- 7>&-',s)
         self.assertIn('/sbin/uci -q show homegate',s)
-        self.assertIn('flock -n "$fd"',s); self.assertIn('deadline=$((now + 5))',s)
+        self.assertIn('flock -n "$fd"',s); self.assertIn('budget=5',s); self.assertIn('deadline=$((now + budget))',s)
         self.assertNotRegex(s,r'/etc/init.d/homegate (enable|disable|restart|reload)\b')
         self.assertNotIn('eval ',s)
 
@@ -235,7 +235,7 @@ os.execv(UCI,[UCI,'-c',str(base/'etc/config'),'-P',str(base/'uci-save'),'-q','sh
 
     def test_caller_sigkill_retains_action_lock_until_independent_deadline(self):
         self.begin(running=1);self.flag(stop_hang=True)
-        watchdog=self.engine.parent/'homegate-service-observer-watchdog.sh';watchdog.write_text(watchdog.read_text().replace('deadline=$((now + 5))','deadline=$((now + 2))'))
+        watchdog=self.engine.parent/'homegate-service-observer-watchdog.sh';watchdog.write_text(watchdog.read_text().replace('budget=5\n','budget=2\n'))
         p=subprocess.Popen([self.busybox,'ash',str(self.engine),'--persistent','service-apply',self.handle],env=self.env,stdout=subprocess.PIPE,stderr=subprocess.PIPE);self.processes.append(p)
         deadline=time.monotonic()+5
         while not self.log():

@@ -52,6 +52,12 @@ local function parse(body)
     end
     return value,root_types
 end
+if arg[1]=='nonce' and not arg[2] then
+    local body=io.stdin:read(38)
+    if not body or #body~=37 or body:sub(9,9)~='-' or body:sub(14,14)~='-' or body:sub(19,19)~='-' or body:sub(24,24)~='-' then os.exit(1) end
+    local n=body:gsub('-',''):match('^([0-9a-f]+)\n$')
+    if not n or #n~=32 then os.exit(1) end;io.write(n,'\n');return
+end
 if arg[1]=='context' and not arg[2] then
     local body=io.stdin:read(5);local n=body and body:match('^([1-9]%d*)\n$')
     if not n or not revision_valid(n) then os.exit(1) end;io.write(n,'\n');return

@@ -31,15 +31,12 @@ revision=$(lua "$dir/cloudflare-codec.lua" context < /etc/homegate/transactions/
 for orphan in /var/run/homegate/.dns-check-*; do
     [ ! -e "$orphan" ] && [ ! -L "$orphan" ] || fail 4
 done
+ticket=$(lua "$dir/cloudflare-codec.lua" nonce < /proc/sys/kernel/random/uuid 2>/dev/null) || fail
 job=$$
 work=/var/run/homegate/.dns-check-$job
 mkdir "$work" 2>/dev/null || fail
 (set -C; : > "$work/request" && : > "$work/result") 2>/dev/null || fail
 private_dir "$work" && private_file "$work/request" && private_file "$work/result" || fail
-IFS= read -r uuid < /proc/sys/kernel/random/uuid || fail
-ticket=$(printf '%s' "$uuid" | tr -d '-') || fail
-[ "${#ticket}" -eq 32 ] || fail
-case "$ticket" in *[!0-9a-f]*) fail;; esac
 result=0
 # Only the private frame uses FD3; engine's public receipt goes to /dev/null.
 # The independent consumer watchdog retains FD6/7, but not the configuration lock.

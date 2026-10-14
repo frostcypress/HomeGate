@@ -308,5 +308,22 @@
     "failed_transition": "persistent-barrier-until-explicit-observed-recovery",
     "runtime_run": "https://github.com/frostcypress/HomeGate/actions/runs/38373836096",
     "tested_revision": "1.3.0-r27"
+  },
+  "cloudflare_private_read": {
+    "source": "project/core/prototype/homegate-cloudflare-read.sh",
+    "scope": "isolated-persistent-zone-read-credential-check",
+    "runtime_checks": "pending-linux-20",
+    "runtime_case_count": 20,
+    "local_checks": "passed-5",
+    "curl_test_version": "7.83.1-official-host-build",
+    "production_install": false,
+    "production_switch": false,
+    "actual_business": false,
+    "live_provider_verified": false,
+    "target_verified": false,
+    "implemented_readonly_operation": "Cloudflare ValidateCredentials via zones?page=1&per_page=1",
+    "full_zone_discovery": false,
+    "dns_record_changes": false,
+    "three_packages": false
   }
 }

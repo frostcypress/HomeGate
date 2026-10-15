@@ -5,12 +5,14 @@ umask 077
 export LC_ALL=C
 dns_settlement_enabled=false
 dns_terminal_repair_enabled=false
+dns_orphan_collection_enabled=false
 action=${1:-}
 case "$action" in
     archive-check) [ "$#" -eq 1 ] || exit 2;;
-    settle|load|collect|retire-check|repair-terminal)
+    settle|load|collect|retire-check|repair-terminal|orphan-check)
         [ "$dns_settlement_enabled" = true ] && [ "$#" -eq 4 ] || exit 2
         [ "$action" != repair-terminal ] || [ "$dns_terminal_repair_enabled" = true ] || exit 2
+        [ "$action" != orphan-check ] || [ "$dns_orphan_collection_enabled" = true ] || exit 2
         account=$2;revision=$3;job=$4
         case "$account" in ''|*[!a-zA-Z0-9_-]*) exit 2;; esac
         [ "${#account}" -le 64 ] || exit 2
@@ -50,6 +52,7 @@ for entry in "$journal/"* "$journal/".[!.]* "$journal/"..?*; do
     case "$entry" in
         "$journal/current"|"$journal/slot-1"|"$journal/slot-2"|"$journal/terminal"|"$journal/terminal-meta") ;;
         "$journal/.terminal"|"$journal/.terminal-meta") [ "$action" = repair-terminal ] || exit 1;;
+        "$journal/orphan-plan"|"$journal/.orphan-plan") [ "$action" = orphan-check ] || exit 1;;
         *) exit 1;;
     esac
 done
@@ -137,6 +140,8 @@ ledger_write() {
     fsync "$next" 2>/dev/null && mv -f "$next" "$ledger" 2>/dev/null && fsync "$store" 2>/dev/null
 }
 case "$action" in
+    orphan-check)
+        terminal_check && fsync "$journal/terminal" "$journal/terminal-meta" "$journal" "$store" 2>/dev/null || exit 1;;
     repair-terminal)
         # Only continue an existing bound success pair. Never create evidence
         # from a current provider observation or the volatile work directory.

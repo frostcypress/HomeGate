@@ -18,4 +18,29 @@ function M.terminal(c,r)
         type(c.delete_ids)=='table' and type(c.position)=='number' and c.position==math.floor(c.position) and c.position>=1 and c.position<=#c.delete_ids and
         r.result=='deleted' and r.affected==c.affected+1 and r.affected<=#c.delete_ids
 end
+-- A new delete checkpoint may skip targets found absent, but cannot change the
+-- frozen request/ID set or move backwards. This does not certify remote success.
+function M.advance(before,after,codec)
+    if before.operation~='delete' or after.operation~='delete' or before.stage~='delete' or after.stage~='delete' or
+        after.position<=before.position or after.affected<before.affected or
+        after.affected-before.affected>after.position-before.position then return false end
+    local a,b={},{}
+    for k,v in pairs(before) do if k~='position' and k~='affected' then a[k]=v end end
+    for k,v in pairs(after) do if k~='position' and k~='affected' then b[k]=v end end
+    return codec.json(a)==codec.json(b)
+end
+-- Only the original verified response stage can bind disposable work files.
+function M.orphan(checkpoint,work,request,codec)
+    if type(work)~='table' or type(request)~='table' or codec.json(request)~=codec.json(checkpoint.request) then return false end
+    for _,k in ipairs({'schema','account','revision','operation','kind','resource','zone','fqdn','type','ttl','value','value_key','delete_all',
+        'request','affected','zone_id','first_id','first_key','delete_ids','position','attempted'}) do
+        if codec.json({value=checkpoint[k]})~=codec.json({value=work[k]}) then return false end
+    end
+    if checkpoint.operation=='upsert' then
+        return work.stage=='verify-upsert' and
+            ((checkpoint.stage=='create' and work.result=='created') or
+             (checkpoint.stage=='update' and work.result=='updated' and work.new_id==checkpoint.first_id))
+    end
+    return checkpoint.operation=='delete' and checkpoint.stage=='delete' and work.stage=='verify-delete'
+end
 return M

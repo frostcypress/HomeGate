@@ -84,7 +84,35 @@ local function load_context()
         (c.type~='AAAA' and c.type~='TXT') or (c.operation~='upsert' and c.operation~='delete') or
         type(c.ids)~='table' or type(c.delete_ids)~='table' or (c.zone_id~=nil and not valid_id(c.zone_id)) then invalid('invalid_context') end
 end
-if arg[1]=='receipt-terminal' and not arg[4] then
+if arg[1]=='receipt-checkpoint' and (arg[4]=='initial' or arg[4]=='advance' or arg[4]=='current') then
+    local reader=assert(loadfile(dir..'/private-snapshot.lua'))()
+    local snapshot=reader.read(io.stdin,codec)
+    local function checked(fd)
+        local raw=read(fd,8388608);local doc=json.parse(raw)
+        if type(doc)~='table' or codec.json(doc)..'\n'~=raw then os.exit(1) end
+        local exported=receipt.export(doc)
+        if not exported or codec.json(exported)..'\n'~=raw or not reconcile.restore(snapshot,account,revision,doc,plan) then os.exit(1) end
+        return doc
+    end
+    local candidate=checked(8)
+    if arg[4]=='initial' and candidate.affected~=0 then os.exit(1) end
+    if arg[4]=='advance' and not receipt.advance(checked(9),candidate,codec) then os.exit(1) end
+    io.write('HGCFCVALID1\n')
+elseif arg[1]=='receipt-orphan' and not arg[4] then
+    local reader=assert(loadfile(dir..'/private-snapshot.lua'))()
+    local snapshot=reader.read(io.stdin,codec)
+    local function canonical(fd,limit)
+        local raw=read(fd,limit);local doc=json.parse(raw)
+        if type(doc)~='table' or codec.json(doc)..'\n'~=raw then os.exit(1) end
+        return doc,raw
+    end
+    local checkpoint,raw=canonical(8,8388608)
+    local exported=receipt.export(checkpoint)
+    if not exported or codec.json(exported)..'\n'~=raw or not reconcile.restore(snapshot,account,revision,checkpoint,plan) then os.exit(1) end
+    local work=canonical(9,8388608);local request=canonical(5,4096)
+    if not reconcile.restore(snapshot,account,revision,work,plan) or not receipt.orphan(checkpoint,work,request,codec) then os.exit(1) end
+    io.write('HGCFOBOUND1\n')
+elseif arg[1]=='receipt-terminal' and not arg[4] then
     local raw=read(8,8388608);local original=json.parse(raw)
     if type(original)~='table' or codec.json(original)..'\n'~=raw then os.exit(1) end
     local exported=receipt.export(original)

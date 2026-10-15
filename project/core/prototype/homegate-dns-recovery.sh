@@ -4,11 +4,13 @@ set -u
 umask 077
 export LC_ALL=C
 dns_settlement_enabled=false
+dns_terminal_repair_enabled=false
 action=${1:-}
 case "$action" in
     archive-check) [ "$#" -eq 1 ] || exit 2;;
-    settle|load|collect|retire-check)
+    settle|load|collect|retire-check|repair-terminal)
         [ "$dns_settlement_enabled" = true ] && [ "$#" -eq 4 ] || exit 2
+        [ "$action" != repair-terminal ] || [ "$dns_terminal_repair_enabled" = true ] || exit 2
         account=$2;revision=$3;job=$4
         case "$account" in ''|*[!a-zA-Z0-9_-]*) exit 2;; esac
         [ "${#account}" -le 64 ] || exit 2
@@ -45,7 +47,11 @@ elif [ "$action" = collect ] && [ ! -e "$journal" ] && [ ! -L "$journal" ]; then
 private_dir "$journal" || exit 1
 for entry in "$journal/"* "$journal/".[!.]* "$journal/"..?*; do
     [ ! -e "$entry" ] && [ ! -L "$entry" ] && continue
-    case "$entry" in "$journal/current"|"$journal/slot-1"|"$journal/slot-2"|"$journal/terminal"|"$journal/terminal-meta") ;; *) exit 1;; esac
+    case "$entry" in
+        "$journal/current"|"$journal/slot-1"|"$journal/slot-2"|"$journal/terminal"|"$journal/terminal-meta") ;;
+        "$journal/.terminal"|"$journal/.terminal-meta") [ "$action" = repair-terminal ] || exit 1;;
+        *) exit 1;;
+    esac
 done
 private_file "$journal/current" && [ "$(stat -c %s "$journal/current")" = 2 ] || exit 1
 active=$(cat "$journal/current") || exit 1
@@ -103,14 +109,15 @@ terminal_meta() {
     printf '%s\n' "$frame" "${digest%% *}"
 }
 terminal_check() {
-    private_file "$journal/terminal" && private_file "$journal/terminal-meta" || return 1
-    [ "$(stat -c %s "$journal/terminal")" -le 4096 ] && [ "$(stat -c %s "$journal/terminal-meta")" -le 1024 ] || return 1
-    hash "$journal/terminal" || return 1;terminal_hash=$sum
+    terminal_file=${1:-$journal/terminal};meta_file=${2:-$journal/terminal-meta}
+    private_file "$terminal_file" && private_file "$meta_file" || return 1
+    [ "$(stat -c %s "$terminal_file")" -le 4096 ] && [ "$(stat -c %s "$meta_file")" -le 1024 ] || return 1
+    hash "$terminal_file" || return 1;terminal_hash=$sum
     expected=$(terminal_meta) || return 1
-    [ "$(stat -c %s "$journal/terminal-meta")" -eq "$((${#expected} + 1))" ] && [ "$(cat "$journal/terminal-meta")" = "$expected" ] || return 1
-    ready=$(lua "$dir/cloudflare-records.lua" receipt-terminal "$account" "$revision" 8<"$slot/context" < "$journal/terminal" 3>&- 4>&- 5>&- 9>&- 2>/dev/null) || return 1
+    [ "$(stat -c %s "$meta_file")" -eq "$((${#expected} + 1))" ] && [ "$(cat "$meta_file")" = "$expected" ] || return 1
+    ready=$(lua "$dir/cloudflare-records.lua" receipt-terminal "$account" "$revision" 8<"$slot/context" < "$terminal_file" 3>&- 4>&- 5>&- 9>&- 2>/dev/null) || return 1
     [ "$ready" = HGCFTVALID1 ] || return 1
-    hash "$journal/terminal-meta" || return 1;terminal_binding=$sum
+    hash "$meta_file" || return 1;terminal_binding=$sum
 }
 ledger_body() {
     frame=$(printf '%s\n' HGCFCollection1 homegate "$identity_hash" "$terminal_binding" "$1") || return 1
@@ -130,6 +137,27 @@ ledger_write() {
     fsync "$next" 2>/dev/null && mv -f "$next" "$ledger" 2>/dev/null && fsync "$store" 2>/dev/null
 }
 case "$action" in
+    repair-terminal)
+        # Only continue an existing bound success pair. Never create evidence
+        # from a current provider observation or the volatile work directory.
+        terminal_candidate=$journal/terminal;meta_candidate=$journal/terminal-meta
+        if [ -e "$journal/.terminal" ] || [ -L "$journal/.terminal" ]; then
+            [ ! -e "$terminal_candidate" ] && [ ! -L "$terminal_candidate" ] || exit 1
+            terminal_candidate=$journal/.terminal
+        fi
+        if [ -e "$journal/.terminal-meta" ] || [ -L "$journal/.terminal-meta" ]; then
+            [ ! -e "$meta_candidate" ] && [ ! -L "$meta_candidate" ] || exit 1
+            meta_candidate=$journal/.terminal-meta
+        fi
+        terminal_check "$terminal_candidate" "$meta_candidate" || exit 1
+        fsync "$terminal_candidate" "$meta_candidate" "$journal" "$store" 2>/dev/null || exit 1
+        if [ "$terminal_candidate" != "$journal/terminal" ]; then
+            mv "$terminal_candidate" "$journal/terminal" || exit 1
+        fi
+        if [ "$meta_candidate" != "$journal/terminal-meta" ]; then
+            mv "$meta_candidate" "$journal/terminal-meta" || exit 1
+        fi
+        terminal_check && fsync "$journal/terminal" "$journal/terminal-meta" "$journal" "$store" 2>/dev/null || exit 1;;
     retire-check)
         [ ! -e "$store/.dns-collection-next" ] && [ ! -L "$store/.dns-collection-next" ] || exit 1
         terminal_check && ledger_check settled || exit 1

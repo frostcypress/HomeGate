@@ -93,6 +93,18 @@ jobs:
           python3 scripts/准备UCI解析回归.py
           python3 scripts/准备服务采样回归.py
           python3 scripts/准备curl回归.py
+      - name: 验证固定来源持久旧配置迁移
+        run: |
+          build/verify-venv/bin/python scripts/持久旧配置迁移回归.py
+          build/verify-venv/bin/python scripts/持久旧配置迁移回归.py --runtime
+      - name: 验证生命周期运行锁与持久准备
+        run: |
+          build/verify-venv/bin/python scripts/生命周期准备回归.py
+          build/verify-venv/bin/python scripts/生命周期准备回归.py --runtime
+      - name: 验证迁移后同代 Cloudflare 只读业务
+        run: |
+          build/verify-venv/bin/python scripts/生命周期业务集成回归.py
+          build/verify-venv/bin/python scripts/生命周期业务集成回归.py --runtime
       - name: 验证 DNS 检查点准备残留的受控发布
         run: |
           build/verify-venv/bin/python scripts/DNS检查点修复回归.py

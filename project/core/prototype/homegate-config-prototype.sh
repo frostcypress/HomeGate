@@ -269,6 +269,13 @@ open_store() {
         case "$command" in status|export|dns-recovery-check|dns-recovery-snapshot-read) ;;
             *) fail 'DNS operation requires explicit durable recovery' 4;; esac
     fi
+    if [ "$persistent_mode" = true ] && { [ -e "$store/dns-retirement" ] || [ -L "$store/dns-retirement" ] ||
+        [ -e "$store/.dns-retirement-next" ] || [ -L "$store/.dns-retirement-next" ] ||
+        [ -e "$store/dns-retiring" ] || [ -L "$store/dns-retiring" ] ||
+        [ -e "$store/dns-retired" ] || [ -L "$store/dns-retired" ]; }; then
+        case "$command" in status|export|dns-recovery-check|dns-recovery-snapshot-read) ;;
+            *) ash "$(dirname "$0")/homegate-dns-retention.sh" check >/dev/null 2>/dev/null || fail 'DNS retirement requires durable recovery' 4;; esac
+    fi
     if [ "$persistent_mode" = true ] && { [ -e "$store/dns-settled" ] || [ -L "$store/dns-settled" ] ||
         [ -e "$store/dns-collection" ] || [ -L "$store/dns-collection" ] || [ -e "$store/.dns-collection-next" ] || [ -L "$store/.dns-collection-next" ]; }; then
         case "$command" in status|export|dns-recovery-check|dns-recovery-snapshot-read) ;;

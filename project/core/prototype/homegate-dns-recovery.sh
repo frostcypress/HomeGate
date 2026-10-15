@@ -7,7 +7,7 @@ dns_settlement_enabled=false
 action=${1:-}
 case "$action" in
     archive-check) [ "$#" -eq 1 ] || exit 2;;
-    settle|load|collect)
+    settle|load|collect|retire-check)
         [ "$dns_settlement_enabled" = true ] && [ "$#" -eq 4 ] || exit 2
         account=$2;revision=$3;job=$4
         case "$account" in ''|*[!a-zA-Z0-9_-]*) exit 2;; esac
@@ -40,7 +40,7 @@ if [ "$action" != archive-check ]; then
 fi
 hash "$store/identity" || exit 1;identity_hash=$sum
 journal=$store/dns-operation;archive=$store/dns-settled;ledger=$store/dns-collection
-if [ "$action" = archive-check ]; then journal=$archive
+if [ "$action" = archive-check ] || [ "$action" = retire-check ]; then journal=$archive
 elif [ "$action" = collect ] && [ ! -e "$journal" ] && [ ! -L "$journal" ]; then journal=$archive; fi
 private_dir "$journal" || exit 1
 for entry in "$journal/"* "$journal/".[!.]* "$journal/"..?*; do
@@ -68,6 +68,9 @@ case "$stored_job" in ''|0*|*[!0-9]*) exit 1;; esac
 [ "${#stored_job}" -le 9 ] && [ "$stored_job" -ge 2 ] && [ "${#original_boot}" -eq 36 ] || exit 1
 case "$original_boot" in *[!0-9a-f-]*) exit 1;; esac
 if [ "$action" = archive-check ]; then account=$stored_account;revision=$stored_revision;job=$stored_job
+elif [ "$action" = retire-check ]; then
+    [ "$account:$job" = "$stored_account:$stored_job" ] || exit 1
+    revision=$stored_revision
 else [ "$account:$revision:$job" = "$stored_account:$stored_revision:$stored_job" ] || exit 1; fi
 private_file "$store/gen-$revision/manifest" || exit 1
 hash "$store/gen-$revision/manifest" && [ "$sum" = "$generation_hash" ] || exit 1
@@ -127,6 +130,10 @@ ledger_write() {
     fsync "$next" 2>/dev/null && mv -f "$next" "$ledger" 2>/dev/null && fsync "$store" 2>/dev/null
 }
 case "$action" in
+    retire-check)
+        [ ! -e "$store/.dns-collection-next" ] && [ ! -L "$store/.dns-collection-next" ] || exit 1
+        terminal_check && ledger_check settled || exit 1
+        fsync "$ledger" "$journal" "$store" 2>/dev/null || exit 1;;
     load)
         # Original boot may differ. Only current private credentials will be used
         # by the later supervised GET; no mutation/collection follows an observation.

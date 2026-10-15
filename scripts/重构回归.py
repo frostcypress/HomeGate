@@ -140,7 +140,16 @@ class Migration(unittest.TestCase):
 
     def test_draft_contains_complete_sources_and_no_packages(self):
         with tempfile.TemporaryDirectory() as directory:
-            file = snapshot.create(ROOT, Path(directory), 'pending', 'test', True)
+            # CI has no private handoff records. Exercise the local-only format
+            # with explicit test documents rather than publishing real records.
+            root = Path(directory) / 'fixture'
+            self.copy_public_sources(root)
+            for name in snapshot.DOCS:
+                (root / name).write_text('# Synthetic handoff fixture: ' + name + '\n', encoding='utf-8')
+            private = root / 'docs/验证/local-only.txt'
+            private.parent.mkdir(parents=True)
+            private.write_text('Local handoff keeps private fixture data.\n', encoding='utf-8')
+            file = snapshot.create(root, Path(directory), 'pending', 'test', True)
             with zipfile.ZipFile(file) as archive:
                 self.assertIsNone(archive.testzip())
                 names = archive.namelist()
@@ -149,6 +158,7 @@ class Migration(unittest.TestCase):
                              '源码/project/luci/js/htdocs/luci-static/resources/view/homegate/overview.js', *snapshot.DOCS):
                     self.assertIn(name, names)
                 self.assertFalse(any(name.endswith(('.ipk', '.apk', '.exe')) for name in names))
+                self.assertIn('源码/docs/验证/local-only.txt', names)
                 manifest = archive.read('校验.md').decode('utf-8')
                 for name in names:
                     if name != '校验.md':
@@ -161,9 +171,67 @@ class Migration(unittest.TestCase):
                 with zipfile.ZipFile(roundtrip) as rebuilt:
                     self.assertEqual(rebuilt.read('校验.md').decode('utf-8').count('## 自动快照清单'), 1)
             with self.assertRaises(FileExistsError):
-                snapshot.create(ROOT, Path(directory), 'pending', 'test', True)
+                snapshot.create(root, Path(directory), 'pending', 'test', True)
             with self.assertRaisesRegex(ValueError, '迁移'):
-                snapshot.create(ROOT, Path(directory), 'pending', 'test', False)
+                snapshot.create(root, Path(directory), 'pending', 'test', False)
+
+    @staticmethod
+    def copy_public_sources(root):
+        for file in snapshot.public_files(ROOT):
+            destination = root / file.relative_to(ROOT)
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            destination.write_bytes(file.read_bytes())
+
+    def test_public_source_excludes_local_data_and_restores_without_handoff(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / 'fixture'
+            self.copy_public_sources(root)
+            marker = 'PRIVATE-SENTINEL-' + Path(directory).name
+            for name in (*snapshot.DOCS, 'docs/验证/private.json', 'targets/evidence/report.txt',
+                         '.github/reference/import.yml', 'scripts/unlisted-secret.txt'):
+                file = root / name
+                file.parent.mkdir(parents=True, exist_ok=True)
+                file.write_text(marker, encoding='utf-8')
+            output = Path(directory) / 'public'
+            file = snapshot.create_public(root, output, 'pending', 'test')
+            with zipfile.ZipFile(file) as archive:
+                self.assertIsNone(archive.testzip())
+                expected = {'源码/' + p.relative_to(root).as_posix() for p in snapshot.public_files(root)}
+                self.assertEqual(set(archive.namelist()), expected | {'源码清单.sha256'})
+                hashes = dict(line.split('  ', 1)[::-1] for line in archive.read('源码清单.sha256').decode('utf-8').splitlines())
+                self.assertEqual(set(hashes), expected)
+                for name in expected:
+                    self.assertEqual(hashlib.sha256(archive.read(name)).hexdigest(), hashes[name])
+                    self.assertNotIn(marker.encode('utf-8'), archive.read(name))
+                restored = Path(directory) / 'restore'
+                archive.extractall(restored)
+            verify_generated(restored / '源码')
+            self.assertTrue(snapshot.create_public(restored / '源码', Path(directory) / 'roundtrip', 'pending', 'restore').is_file())
+            with self.assertRaises(FileExistsError):
+                snapshot.create_public(root, output, 'pending', 'test')
+            with self.assertRaisesRegex(ValueError, 'handoff'):
+                snapshot.create(restored / '源码', Path(directory) / 'private', 'pending', 'test', True)
+
+    def test_public_manifest_rejects_private_unsafe_missing_and_duplicate_entries(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / 'fixture'
+            self.copy_public_sources(root)
+            manifest = root / snapshot.PUBLIC_MANIFEST
+            original = json.loads(manifest.read_text(encoding='utf-8'))
+            for name in ('接续.md', 'docs/验证/private.json', 'targets/evidence/report.txt',
+                         '.github/reference/import.yml', 'scripts/.env', 'scripts/private.key',
+                         '../escape', '/absolute', 'scripts/../escape', 'scripts\\escape', 'scripts/missing.py'):
+                with self.subTest(name=name):
+                    changed = dict(original, files=sorted(original['files'] + [name]))
+                    manifest.write_text(json.dumps(changed, ensure_ascii=False), encoding='utf-8')
+                    with self.assertRaises(ValueError):
+                        snapshot.create_public(root, Path(directory) / 'invalid', 'pending', 'test')
+                    self.assertFalse((Path(directory) / 'invalid').exists())
+            for names in (original['files'] + [original['files'][-1]],
+                          [p for p in original['files'] if p != 'LICENSE']):
+                manifest.write_text(json.dumps(dict(original, files=names)), encoding='utf-8')
+                with self.assertRaises(ValueError):
+                    snapshot.public_files(root)
 
     def test_python_syntax(self):
         for file in (ROOT / 'scripts').glob('*.py'):

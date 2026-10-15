@@ -2,3 +2,9 @@
 /dist/
 __pycache__/
 *.pyc
+/接续.md
+/校验.md
+/核实查漏修复.md
+/docs/验证/
+/targets/evidence/
+/.github/reference/

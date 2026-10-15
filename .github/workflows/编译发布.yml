@@ -93,6 +93,14 @@ jobs:
           python3 scripts/准备UCI解析回归.py
           python3 scripts/准备服务采样回归.py
           python3 scripts/准备curl回归.py
+      - name: 验证 DNS 检查点准备残留的受控发布
+        run: |
+          build/verify-venv/bin/python scripts/DNS检查点修复回归.py
+          build/verify-venv/bin/python scripts/DNS检查点修复回归.py --runtime
+      - name: 验证已确认 DNS 原孤立目录的收集
+        run: |
+          build/verify-venv/bin/python scripts/DNS孤立收集回归.py
+          build/verify-venv/bin/python scripts/DNS孤立收集回归.py --runtime
       - name: 验证 DNS 中断终态发布的明确恢复
         run: |
           build/verify-venv/bin/python scripts/DNS终态修复回归.py

@@ -171,17 +171,13 @@ jobs:
           build/verify-venv/bin/python scripts/配置预览页面回归.py
           build/verify-venv/bin/python scripts/legacy-footer-regressions.py
           build/verify-venv/bin/python scripts/luci-loader-regressions.py
-      - name: 生成可接续源码草稿
-        run: python3 scripts/生成接续包.py --target pending --stage CI源码检查 --draft
-      - name: 上传草稿与回归记录
+      - name: 按公开清单生成源码包
+        run: python3 scripts/生成接续包.py --target pending --stage CI源码检查 --public-source --check-public-tree
+      - name: 上传必要公开源码
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
-          name: HomeGate-源码草稿-${{ github.run_id }}
-          path: |
-            dist/*.zip
-            build/native-ui-regressions/
-            build/legacy-footer-regressions/
-            build/official-footer-regressions/
+          name: HomeGate-公开源码-${{ github.run_id }}
+          path: dist/*_公开源码.zip
           if-no-files-found: error
   build:
     name: 已核实 SDK 三包构建

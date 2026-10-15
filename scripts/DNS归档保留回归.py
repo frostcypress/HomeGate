@@ -112,7 +112,7 @@ class Runtime(RecoveryRuntime):
     def test_plan_corruption_wrong_identity_and_wrong_job_cannot_authorize_removal(self):
         old=self.archived();self.stop_after_rename(old);before=self.bytes_tree(self.retiring);saved=self.plan.read_bytes();self.plan.write_bytes(saved+b' ')
         self.retire(old,7);self.assertEqual(before,self.bytes_tree(self.retiring));self.plan.write_bytes(saved);self.retire('999999999',7);self.assertEqual(before,self.bytes_tree(self.retiring))
-        self.write_identity(identity='b'*32);self.retire(old,4);self.assertEqual(before,self.bytes_tree(self.retiring));self.writer(4)
+        self.write_identity(identity='b'*32);self.retire(old,7);self.assertEqual(before,self.bytes_tree(self.retiring));self.writer(4)
     def test_completed_receipt_corruption_blocks_writer_with_feature_gate_closed(self):
         old=self.archived();self.retire(old);self.retention.write_text(self.retention.read_text().replace('dns_retention_enabled=true','dns_retention_enabled=false'))
         self.completed.write_bytes(self.completed.read_bytes()+b' ');self.writer(4);self.cli('writer-check',expected=4)

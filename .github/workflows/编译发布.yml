@@ -93,6 +93,10 @@ jobs:
           python3 scripts/准备UCI解析回归.py
           python3 scripts/准备服务采样回归.py
           python3 scripts/准备curl回归.py
+      - name: 验证 DNS 归档容量回收与中断续做
+        run: |
+          build/verify-venv/bin/python scripts/DNS归档保留回归.py
+          build/verify-venv/bin/python scripts/DNS归档保留回归.py --runtime
       - name: 验证 DNS 终态回执收集与跨启动只读恢复
         run: |
           build/verify-venv/bin/python scripts/DNS回执恢复回归.py

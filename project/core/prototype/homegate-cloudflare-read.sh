@@ -4,6 +4,7 @@ set -u
 umask 077
 export LC_ALL=C
 dns_read_enabled=false
+dns_migrated_read_enabled=false
 dns_records_enabled=false
 dns_reconcile_enabled=false
 dns_receipt_enabled=false
@@ -22,11 +23,13 @@ fail() {
     exit "${1:-7}"
 }
 [ "$dns_read_enabled" = true ] || fail 2
-[ "$#" -eq 1 ] || { [ "$#" -eq 2 ] && { [ "$2" = --zones ] || [ "$2" = --records ]; }; } || { [ "$#" -eq 4 ] && { [ "$2" = --reconcile ] || [ "$2" = --reconcile-receipt ] || [ "$2" = --collect-receipt ] || [ "$2" = --retire-archive ] || [ "$2" = --repair-terminal ] || [ "$2" = --repair-checkpoint ] || [ "$2" = --collect-orphan ]; } && [ "$4" = --confirm ]; } || fail 2
+[ "$#" -eq 1 ] || { [ "$#" -eq 2 ] && { [ "$2" = --zones ] || [ "$2" = --records ] || [ "$2" = --migrated ]; }; } || { [ "$#" -eq 4 ] && { [ "$2" = --reconcile ] || [ "$2" = --reconcile-receipt ] || [ "$2" = --collect-receipt ] || [ "$2" = --retire-archive ] || [ "$2" = --repair-terminal ] || [ "$2" = --repair-checkpoint ] || [ "$2" = --collect-orphan ]; } && [ "$4" = --confirm ]; } || fail 2
 account=$1
 mode=check; codec=cloudflare-codec.lua
+migrated_read=false
 if [ "$#" -eq 2 ]; then
     case "$2" in --zones) mode=zones; codec=cloudflare-zones.lua;;
+        --migrated) [ "$dns_migrated_read_enabled" = true ] || fail 2;migrated_read=true;;
         --records) mode=records;codec=cloudflare-records.lua;[ "$dns_records_enabled" = true ] || fail 2;; esac
 fi
 if [ "$#" -eq 4 ]; then
@@ -68,6 +71,10 @@ check_command=writer-check;snapshot_command=snapshot-read
 if { [ "$mode" = reconcile ] || [ "$mode" = collect ] || [ "$mode" = retire ] || [ "$mode" = repair ] || [ "$mode" = checkpoint ] || [ "$mode" = orphan ]; } && [ "$dns_receipt_enabled" = true ]; then check_command=dns-recovery-check;snapshot_command=dns-recovery-snapshot-read; fi
 ash "$dir/homegate-config-prototype.sh" --persistent "$check_command" >/dev/null 2>&1
 state=$?; case "$state" in 0) ;; 4) fail 4;; *) fail;; esac
+if [ "$migrated_read" = true ]; then
+    ash "$dir/homegate-config-prototype.sh" --persistent migration-source-reader-check >/dev/null 2>&1
+    state=$?;case "$state" in 0) ;; 4) fail 4;; *) fail;; esac
+fi
 revision=$(lua "$dir/cloudflare-codec.lua" context < /etc/homegate/transactions/current 2>/dev/null) || fail
 # Never silently collect an orphan request or unlink possibly live files.
 for orphan in /var/run/homegate/.dns-check-*; do

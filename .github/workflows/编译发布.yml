@@ -207,9 +207,26 @@ jobs:
           name: HomeGate-公开源码-${{ github.run_id }}
           path: dist/*_公开源码.zip
           if-no-files-found: error
+  extended:
+    name: 本批集中回归 · ${{ matrix.group }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        group: [Aliyun, DNSPod, Huawei, DDNS执行, DDNS授权状态]
+    steps:
+      - name: 检出相同源码
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: 准备固定版本的隔离回归依赖
+        run: sh scripts/准备扩展CI环境.sh
+      - name: 串行执行本组必要专项
+        run: build/verify-venv/bin/python scripts/扩展集中回归.py '${{ matrix.group }}'
   build:
     name: 已核实 SDK 三包构建
-    needs: source
+    needs: [source, extended]
     if: github.event_name == 'workflow_dispatch' && inputs.mode != '仅检查源码'
     runs-on: ubuntu-24.04
     timeout-minutes: 60

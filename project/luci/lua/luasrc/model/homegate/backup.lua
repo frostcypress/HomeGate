@@ -226,7 +226,7 @@ local function normalize(doc)
 end
 local PRIVATE = {dns_account={id="key_id",secret="secret",account_id="account_id",endpoint="endpoint"},
     ddns_rule={url="url"},web_rule={target="target"}}
-local function parse(body, legacy)
+local function parse(body, legacy, capture_ddns_switches)
     if type(body)~="string" or #body==0 then return nil,"Select a HomeGate configuration file" end
     if #body>262144 then return nil,"Configuration file is too large" end
     body=body:gsub("\r\n","\n")
@@ -297,6 +297,10 @@ local function parse(body, legacy)
                 if zone and host and host~="" and host~="@" and host~=zone and host:sub(-(#zone+1))~="."..zone then s.values.host=host.."."..zone end
             end
         end
+        local switches={}
+        if capture_ddns_switches then
+            for _,s in ipairs(doc) do if s.kind=="ddns_rule" then switches[s.name]=s.values.enabled or DEFAULTS.ddns_rule.enabled end end
+        end
         local normalized,err=normalize(doc)
         if not normalized then return nil,err end
         local slots={}
@@ -307,7 +311,7 @@ local function parse(body, legacy)
                 slots[namespace.."."..s.name.."."..p.slot]=p.value
             end
         end
-        return normalized,slots
+        return normalized,slots,switches
     elseif meta["homegate-backup-format"]=="2" then
         if meta.plugin~="homegate" or meta.schema~="public-uci-v1" or meta.secrets~="omitted" then return nil,"Wrong plugin or unsupported backup schema" end
     elseif meta["homegate-backup-format"]=="1" then
@@ -316,6 +320,13 @@ local function parse(body, legacy)
     return normalize(doc)
 end
 function M.parse(body) return parse(body,false) end
+-- Private source-bound preflight only. Import/export normalization stays disabled.
+function M.private_ddns_switches(body)
+    local doc,slots,switches=parse(body,true,true)
+    if not doc or type(switches)~="table" then return nil end
+    for _,enabled in pairs(switches) do if enabled~="0" and enabled~="1" then return nil end end
+    return switches
+end
 local function quote(v) return "'"..v:gsub("'","'\\''").."'" end
 local function ordered(doc)
     local out={}

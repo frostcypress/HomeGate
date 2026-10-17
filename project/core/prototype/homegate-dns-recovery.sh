@@ -4,15 +4,35 @@ set -u
 umask 077
 export LC_ALL=C
 dns_settlement_enabled=false
+aliyun_settlement_enabled=false
+dnspod_settlement_enabled=false
+huaweicloud_settlement_enabled=false
+huaweicloud_terminal_repair_enabled=false
+huaweicloud_orphan_collection_enabled=false
+dnspod_terminal_repair_enabled=false
+dnspod_orphan_collection_enabled=false
+aliyun_terminal_repair_enabled=false
+aliyun_orphan_collection_enabled=false
+provider=cloudflare
+if [ "${1:-}" = --aliyun-internal ]; then
+    [ "$aliyun_settlement_enabled" = true ] || exit 2;provider=aliyun;shift
+    case "${1:-}" in settle|collect|load|retire-check) ;; repair-terminal) [ "$aliyun_terminal_repair_enabled" = true ] || exit 2;; orphan-check) [ "$aliyun_orphan_collection_enabled" = true ] || exit 2;; *) exit 2;;esac
+elif [ "${1:-}" = --dnspod-internal ]; then
+    [ "$dnspod_settlement_enabled" = true ] || exit 2;provider=dnspod;shift
+    case "${1:-}" in settle|collect|load|retire-check) ;; repair-terminal) [ "$dnspod_terminal_repair_enabled" = true ] || exit 2;; orphan-check) [ "$dnspod_orphan_collection_enabled" = true ] || exit 2;; *) exit 2;;esac
+elif [ "${1:-}" = --huaweicloud-internal ]; then
+    [ "$huaweicloud_settlement_enabled" = true ] || exit 2;provider=huaweicloud;shift
+    case "${1:-}" in settle|collect|load|retire-check) ;; repair-terminal) [ "$huaweicloud_terminal_repair_enabled" = true ] || exit 2;; orphan-check) [ "$huaweicloud_orphan_collection_enabled" = true ] || exit 2;; *) exit 2;;esac
+fi
 dns_terminal_repair_enabled=false
 dns_orphan_collection_enabled=false
 action=${1:-}
 case "$action" in
     archive-check) [ "$#" -eq 1 ] || exit 2;;
     settle|load|collect|retire-check|repair-terminal|orphan-check)
-        [ "$dns_settlement_enabled" = true ] && [ "$#" -eq 4 ] || exit 2
-        [ "$action" != repair-terminal ] || [ "$dns_terminal_repair_enabled" = true ] || exit 2
-        [ "$action" != orphan-check ] || [ "$dns_orphan_collection_enabled" = true ] || exit 2
+        { [ "$provider" != cloudflare ] || [ "$dns_settlement_enabled" = true ]; } && [ "$#" -eq 4 ] || exit 2
+        [ "$action" != repair-terminal ] || [ "$provider" != cloudflare ] || [ "$dns_terminal_repair_enabled" = true ] || exit 2
+        [ "$action" != orphan-check ] || [ "$provider" != cloudflare ] || [ "$dns_orphan_collection_enabled" = true ] || exit 2
         account=$2;revision=$3;job=$4
         case "$account" in ''|*[!a-zA-Z0-9_-]*) exit 2;; esac
         [ "${#account}" -le 64 ] || exit 2
@@ -68,7 +88,23 @@ IFS= read -r format <&8 && IFS= read -r slug <&8 && IFS= read -r stored_identity
     IFS= read -r generation_hash <&8 && IFS= read -r context_hash <&8 && IFS= read -r checksum <&8 || exit 1
 if IFS= read -r extra <&8; then exit 1; fi
 exec 8<&-
-[ "$format:$slug:$stored_identity" = "HGCFJOURNAL1:homegate:$identity_hash" ] || exit 1
+# An archive guard must remain active even when optional entry gates are closed.
+if [ "$action" = archive-check ] && [ "$format" = HGALIJOURNAL1 ]; then provider=aliyun;fi
+if [ "$action" = archive-check ] && [ "$format" = HGDNPJOURNAL1 ]; then provider=dnspod;fi
+if [ "$action" = archive-check ] && [ "$format" = HGHWJOURNAL1 ]; then provider=huaweicloud;fi
+journal_format=HGCFJOURNAL1;terminal_format=HGCFTerminal1;collection_format=HGCFCollection1
+terminal_codec=cloudflare-records.lua;terminal_ready=HGCFTVALID1
+if [ "$provider" = aliyun ]; then
+    journal_format=HGALIJOURNAL1;terminal_format=HGALITerminal1;collection_format=HGALICollection1
+    terminal_codec=aliyun-checkpoint.lua;terminal_ready=HGALITVALID1
+elif [ "$provider" = dnspod ]; then
+    journal_format=HGDNPJOURNAL1;terminal_format=HGDNPTerminal1;collection_format=HGDNPCollection1
+    terminal_codec=dnspod-checkpoint.lua;terminal_ready=HGDNPVALID1
+elif [ "$provider" = huaweicloud ]; then
+    journal_format=HGHWJOURNAL1;terminal_format=HGHWTerminal1;collection_format=HGHWCollection1
+    terminal_codec=huaweicloud-checkpoint.lua;terminal_ready=HGHWVALID1
+fi
+[ "$format:$slug:$stored_identity" = "$journal_format:homegate:$identity_hash" ] || exit 1
 case "$stored_account" in ''|*[!a-zA-Z0-9_-]*) exit 1;; esac
 [ "${#stored_account}" -le 64 ] || exit 1
 case "$stored_revision:$stored_job" in *[!0-9:]*) exit 1;; esac
@@ -84,7 +120,7 @@ else [ "$account:$revision:$job" = "$stored_account:$stored_revision:$stored_job
 private_file "$store/gen-$revision/manifest" || exit 1
 hash "$store/gen-$revision/manifest" && [ "$sum" = "$generation_hash" ] || exit 1
 hash "$slot/context" && [ "$sum" = "$context_hash" ] || exit 1
-frame=$(printf '%s\n' HGCFJOURNAL1 homegate "$identity_hash" "$original_boot" "$revision" "$account" "$job" "$generation_hash" "$context_hash") || exit 1
+frame=$(printf '%s\n' "$journal_format" homegate "$identity_hash" "$original_boot" "$revision" "$account" "$job" "$generation_hash" "$context_hash") || exit 1
 digest=$(printf '%s\n' "$frame" | sha256sum) || exit 1
 expected=$(printf '%s\n' "$frame" "${digest%% *}") || exit 1
 [ "$(stat -c %s "$slot/manifest")" -eq "$((${#expected} + 1))" ] && [ "$(cat "$slot/manifest")" = "$expected" ] || exit 1
@@ -97,7 +133,7 @@ slot_extra_check() (
         case "$item" in "$1/context"|"$1/manifest") ;; *) exit 1;; esac
     done
     hash "$1/context" || exit 1
-    frame=$(printf '%s\n' HGCFJOURNAL1 homegate "$identity_hash" "$original_boot" "$revision" "$account" "$job" "$generation_hash" "$sum") || exit 1
+    frame=$(printf '%s\n' "$journal_format" homegate "$identity_hash" "$original_boot" "$revision" "$account" "$job" "$generation_hash" "$sum") || exit 1
     digest=$(printf '%s\n' "$frame" | sha256sum) || exit 1
     expected=$(printf '%s\n' "$frame" "${digest%% *}") || exit 1
     [ "$(stat -c %s "$1/manifest")" -eq "$((${#expected} + 1))" ] && [ "$(cat "$1/manifest")" = "$expected" ]
@@ -107,7 +143,7 @@ for other in "$journal/slot-1" "$journal/slot-2"; do
     slot_extra_check "$other" || exit 1
 done
 terminal_meta() {
-    frame=$(printf '%s\n' HGCFTerminal1 homegate "$identity_hash" "$original_boot" "$revision" "$account" "$job" "$generation_hash" "$checkpoint_hash" "$terminal_hash") || return 1
+    frame=$(printf '%s\n' "$terminal_format" homegate "$identity_hash" "$original_boot" "$revision" "$account" "$job" "$generation_hash" "$checkpoint_hash" "$terminal_hash") || return 1
     digest=$(printf '%s\n' "$frame" | sha256sum) || return 1
     printf '%s\n' "$frame" "${digest%% *}"
 }
@@ -118,12 +154,12 @@ terminal_check() {
     hash "$terminal_file" || return 1;terminal_hash=$sum
     expected=$(terminal_meta) || return 1
     [ "$(stat -c %s "$meta_file")" -eq "$((${#expected} + 1))" ] && [ "$(cat "$meta_file")" = "$expected" ] || return 1
-    ready=$(lua "$dir/cloudflare-records.lua" receipt-terminal "$account" "$revision" 8<"$slot/context" < "$terminal_file" 3>&- 4>&- 5>&- 9>&- 2>/dev/null) || return 1
-    [ "$ready" = HGCFTVALID1 ] || return 1
+    ready=$(lua "$dir/$terminal_codec" receipt-terminal "$account" "$revision" 8<"$slot/context" < "$terminal_file" 3>&- 4>&- 5>&- 9>&- 2>/dev/null) || return 1
+    [ "$ready" = "$terminal_ready" ] || return 1
     hash "$meta_file" || return 1;terminal_binding=$sum
 }
 ledger_body() {
-    frame=$(printf '%s\n' HGCFCollection1 homegate "$identity_hash" "$terminal_binding" "$1") || return 1
+    frame=$(printf '%s\n' "$collection_format" homegate "$identity_hash" "$terminal_binding" "$1") || return 1
     digest=$(printf '%s\n' "$frame" | sha256sum) || return 1
     printf '%s\n' "$frame" "${digest%% *}"
 }
@@ -168,6 +204,7 @@ case "$action" in
         terminal_check && ledger_check settled || exit 1
         fsync "$ledger" "$journal" "$store" 2>/dev/null || exit 1;;
     load)
+        if [ "$provider" != cloudflare ] && { [ -e "$journal/terminal" ] || [ -L "$journal/terminal" ] || [ -e "$journal/terminal-meta" ] || [ -L "$journal/terminal-meta" ]; }; then terminal_check || exit 1;fi
         # Original boot may differ. Only current private credentials will be used
         # by the later supervised GET; no mutation/collection follows an observation.
         [ -f /proc/self/fd/5 ] && [ "$(stat -Lc '%u:%a:%h' /proc/self/fd/5)" = "$owner:600:1" ] || exit 1
@@ -178,8 +215,8 @@ case "$action" in
         work=/var/run/homegate/.dns-check-$job
         private_dir "$work" && private_file "$work/zones" || exit 1
         [ "$(stat -c %s "$work/zones")" -le 4096 ] || exit 1
-        ready=$(lua "$dir/cloudflare-records.lua" receipt-terminal "$account" "$revision" 8<"$slot/context" < "$work/zones" 3>&- 4>&- 5>&- 9>&- 2>/dev/null) || exit 1
-        [ "$ready" = HGCFTVALID1 ] || exit 1
+        ready=$(lua "$dir/$terminal_codec" receipt-terminal "$account" "$revision" 8<"$slot/context" < "$work/zones" 3>&- 4>&- 5>&- 9>&- 2>/dev/null) || exit 1
+        [ "$ready" = "$terminal_ready" ] || exit 1
         if [ -e "$journal/terminal" ] || [ -L "$journal/terminal" ] || [ -e "$journal/terminal-meta" ] || [ -L "$journal/terminal-meta" ]; then terminal_check || exit 1;exit 0;fi
         temp=$journal/.terminal;binding=$journal/.terminal-meta
         (set -C; : > "$temp" && : > "$binding") 2>/dev/null || exit 1
@@ -197,6 +234,12 @@ case "$action" in
         # Re-sync an uncertain settled rename before opening the next writer.
         fsync "$ledger" "$journal" "$store" 2>/dev/null || exit 1;;
     collect)
+        if [ "$provider" != cloudflare ]; then
+            # Collection revalidates the current migration source; archive-check
+            # instead validates the retained historical generation and hashes.
+            ash "$dir/homegate-config-prototype.sh" --persistent migration-source-recovery-snapshot-read 3>&1 8>&- 9>&- >/dev/null 2>/dev/null |
+                lua "$dir/$terminal_codec" load "$account" "$revision" 8<"$slot/context" 3>/dev/null 4>&- 5>&- 9>&- >/dev/null 2>/dev/null || exit 1
+        fi
         [ ! -e "$store/.dns-collection-next" ] && [ ! -L "$store/.dns-collection-next" ] || exit 1
         terminal_check || exit 1
         if [ "$journal" != "$archive" ]; then

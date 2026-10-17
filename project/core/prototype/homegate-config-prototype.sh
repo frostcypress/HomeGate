@@ -21,6 +21,8 @@ orphan_recovery_enabled=false
 service_actions_enabled=false
 dns_recovery_read_enabled=false
 lifecycle_migration_enabled=false
+ddns_plan_enabled=false
+ddns_authority_enabled=false
 persistent_mode=false
 persistent_fence_present=false
 persistent_fence_pending=false
@@ -268,19 +270,19 @@ open_store() {
     if [ "$persistent_mode" = true ] && { [ -e "$store/dns-operation" ] || [ -L "$store/dns-operation" ]; }; then
         # Presence alone fences ALL mutations/lifecycle recovery, even malformed
         # or incomplete receipts. No environment or feature gate can bypass it.
-        case "$command" in status|export|dns-recovery-check|dns-recovery-snapshot-read) ;;
+        case "$command" in status|export|dns-recovery-check|dns-recovery-snapshot-read|migration-source-recovery-snapshot-read|runtime-ddns-recovery-snapshot-read) ;;
             *) fail 'DNS operation requires explicit durable recovery' 4;; esac
     fi
     if [ "$persistent_mode" = true ] && { [ -e "$store/dns-retirement" ] || [ -L "$store/dns-retirement" ] ||
         [ -e "$store/.dns-retirement-next" ] || [ -L "$store/.dns-retirement-next" ] ||
         [ -e "$store/dns-retiring" ] || [ -L "$store/dns-retiring" ] ||
         [ -e "$store/dns-retired" ] || [ -L "$store/dns-retired" ]; }; then
-        case "$command" in status|export|dns-recovery-check|dns-recovery-snapshot-read) ;;
+        case "$command" in status|export|dns-recovery-check|dns-recovery-snapshot-read|migration-source-recovery-snapshot-read|runtime-ddns-recovery-snapshot-read) ;;
             *) ash "$(dirname "$0")/homegate-dns-retention.sh" check >/dev/null 2>/dev/null || fail 'DNS retirement requires durable recovery' 4;; esac
     fi
     if [ "$persistent_mode" = true ] && { [ -e "$store/dns-settled" ] || [ -L "$store/dns-settled" ] ||
         [ -e "$store/dns-collection" ] || [ -L "$store/dns-collection" ] || [ -e "$store/.dns-collection-next" ] || [ -L "$store/.dns-collection-next" ]; }; then
-        case "$command" in status|export|dns-recovery-check|dns-recovery-snapshot-read) ;;
+        case "$command" in status|export|dns-recovery-check|dns-recovery-snapshot-read|migration-source-recovery-snapshot-read|runtime-ddns-recovery-snapshot-read) ;;
             *) ash "$(dirname "$0")/homegate-dns-recovery.sh" archive-check >/dev/null 2>/dev/null || fail 'DNS collection requires durable recovery' 4;; esac
     fi
     if [ "$persistent_mode" = true ]; then
@@ -1055,13 +1057,19 @@ case "$command" in
     migration-preview) [ "$#" -eq 0 ] && [ "$public_mode" = true ] && [ "$persistent_mode" = false ] || fail 'Input migration requires isolated namespace' 2;;
     migration-source-preview)
         [ "$#" -eq 0 ] && [ "$persistent_mode" = true ] && [ "$lifecycle_migration_enabled" = true ] || fail 'Lifecycle migration is not ready' 2;;
-    migration-source-reader-check)
+    migration-source-reader-check|migration-source-recovery-snapshot-read|ddns-plan-snapshot-read)
+        [ "$command" != ddns-plan-snapshot-read ] || [ "$ddns_plan_enabled" = true ] || fail 'DDNS preflight reader is not ready' 2
+        [ "$command" != migration-source-recovery-snapshot-read ] || [ "$dns_recovery_read_enabled" = true ] || fail 'DNS recovery reader is not ready' 2
         [ "$#" -eq 0 ] && [ "$persistent_mode" = true ] && [ "$lifecycle_migration_enabled" = true ] || fail 'Lifecycle migration reader is not ready' 2;;
     migration-source-commit)
         [ "$persistent_mode" = true ] && [ "$lifecycle_migration_enabled" = true ] || fail 'Lifecycle migration is not ready' 2
         [ "$#" -eq 1 ] && [ "${#1}" -eq 32 ] || fail 'Expected confirmation handle' 2
         case "$1" in *[!0-9a-f]*) fail 'Invalid confirmation handle' 2;; esac
         confirmation=$1; source_migration_transaction=true;;
+    runtime-ddns-recovery-snapshot-read)
+        [ "$#" -eq 0 ] && [ "$persistent_mode" = true ] && [ "$ddns_authority_enabled" = true ] && [ "$production_writes_enabled" = true ] && [ "$dns_recovery_read_enabled" = true ] || fail 'Runtime recovery source is not ready' 2;;
+    runtime-ddns-snapshot-read)
+        [ "$#" -eq 0 ] && [ "$persistent_mode" = true ] && [ "$ddns_authority_enabled" = true ] && [ "$production_writes_enabled" = true ] || fail 'Runtime DDNS source is not ready' 2;;
     snapshot-read) [ "$#" -eq 0 ] && [ "$public_mode" = true ] || fail 'Private reader requires full schema' 2;;
     recover-application) [ "$#" -eq 0 ] && [ "$public_mode" = true ] || fail 'Recovery requires full schema' 2;;
     recover-fence)
@@ -1108,13 +1116,29 @@ case "$command" in
 esac
 open_store
 case "$command" in
-    migration-source-reader-check)
+    runtime-ddns-snapshot-read|runtime-ddns-recovery-snapshot-read)
+        need_initialized
+        runtime_generation="$store/gen-$head_revision"
+        private_file "$runtime_generation/source.conf" || fail 'Runtime DDNS requires a published ordinary generation' 7
+        projection_source_check
+        digest_file "$runtime_generation/public.conf";runtime_digest=$digest
+        digest_file /etc/config/homegate
+        [ "$digest" = "$runtime_digest" ] || fail 'Runtime source differs from published generation' 7
+        lua "$codec" source-baseline /etc/config/homegate "$runtime_generation" 2>/dev/null || fail 'Runtime source is not bound' 7
+        private_snapshot;exit 0;;
+    migration-source-reader-check|migration-source-recovery-snapshot-read|ddns-plan-snapshot-read)
         need_initialized
         migration_generation="$store/gen-$head_revision"
         private_file "$migration_generation/legacy.conf" || fail 'Current generation is not a migration copy' 7
         [ ! -e "$migration_generation/source.conf" ] && [ ! -L "$migration_generation/source.conf" ] || fail 'Migration reader cannot accept a projected generation' 7
         migration_source_matches "$migration_generation/legacy.conf"
         lua "$codec" source-baseline "$migration_generation/legacy.conf" "$migration_generation" 2>/dev/null || fail 'Migration reader data is not source-bound' 7
+        if [ "$command" = ddns-plan-snapshot-read ]; then
+            [ -f /proc/self/fd/4 ] && [ "$(stat -Lc '%u:%a:%h' /proc/self/fd/4)" = "$owner:600:1" ] || fail 'DDNS intent destination is not private' 7
+            lua "$(dirname "$0")/homegate-ddns-plan.lua" intent "$head_revision" < "$migration_generation/legacy.conf" 3>&- 5>&- 8>&- 9>&- >/dev/null 2>/dev/null || fail 'DDNS intent cannot be read' 7
+            private_snapshot;exit 0
+        fi
+        if [ "$command" = migration-source-recovery-snapshot-read ]; then private_snapshot;exit 0;fi
         printf '{"api_version":1,"prototype":true,"ok":true,"scope":"migration-source-reader","revision":%s,"source_bound":true,"production_ready":false}\n' "$head_revision"
         ;;
     service-apply)

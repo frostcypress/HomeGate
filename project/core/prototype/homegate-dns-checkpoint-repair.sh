@@ -4,7 +4,30 @@ set -u
 umask 077
 export LC_ALL=C
 dns_checkpoint_repair_enabled=false
-[ "$dns_checkpoint_repair_enabled" = true ] && [ "$#" -eq 4 ] && [ "$1" = repair-checkpoint ] || exit 2
+aliyun_checkpoint_repair_enabled=false
+dnspod_checkpoint_repair_enabled=false
+huaweicloud_checkpoint_repair_enabled=false
+provider=cloudflare
+if [ "${1:-}" = --aliyun-internal ]; then
+    [ "$aliyun_checkpoint_repair_enabled" = true ] || exit 2;provider=aliyun;shift
+elif [ "${1:-}" = --dnspod-internal ]; then
+    [ "$dnspod_checkpoint_repair_enabled" = true ] || exit 2;provider=dnspod;shift
+elif [ "${1:-}" = --huaweicloud-internal ]; then
+    [ "$huaweicloud_checkpoint_repair_enabled" = true ] || exit 2;provider=huaweicloud;shift
+else [ "$dns_checkpoint_repair_enabled" = true ] || exit 2;fi
+[ "$#" -eq 4 ] && [ "$1" = repair-checkpoint ] || exit 2
+journal_format=HGCFJOURNAL1;snapshot_command=dns-recovery-snapshot-read
+checkpoint_codec=cloudflare-records.lua;checkpoint_ready=HGCFCVALID1
+if [ "$provider" = aliyun ]; then
+    journal_format=HGALIJOURNAL1;snapshot_command=migration-source-recovery-snapshot-read
+    checkpoint_codec=aliyun-checkpoint.lua;checkpoint_ready=HGALICVALID1
+elif [ "$provider" = dnspod ]; then
+    journal_format=HGDNPJOURNAL1;snapshot_command=migration-source-recovery-snapshot-read
+    checkpoint_codec=dnspod-checkpoint.lua;checkpoint_ready=HGDNPCVALID1
+elif [ "$provider" = huaweicloud ]; then
+    journal_format=HGHWJOURNAL1;snapshot_command=migration-source-recovery-snapshot-read
+    checkpoint_codec=huaweicloud-checkpoint.lua;checkpoint_ready=HGHWCVALID1
+fi
 account=$2;revision=$3;job=$4
 case "$account" in ''|*[!a-zA-Z0-9_-]*) exit 2;; esac
 [ "${#account}" -le 64 ] || exit 2
@@ -74,7 +97,7 @@ IFS= read -r format <&8 && IFS= read -r slug <&8 && IFS= read -r stored_identity
 if IFS= read -r extra <&8; then exit 1;fi
 exec 8<&-
 hash "$store/identity" || exit 1;identity_hash=$sum
-[ "$format:$slug:$stored_identity:$stored_revision:$stored_account:$stored_job" = "HGCFJOURNAL1:homegate:$identity_hash:$revision:$account:$job" ] || exit 1
+[ "$format:$slug:$stored_identity:$stored_revision:$stored_account:$stored_job" = "$journal_format:homegate:$identity_hash:$revision:$account:$job" ] || exit 1
 [ "${#boot}" -eq 36 ] || exit 1;case "$boot" in *[!0-9a-f-]*) exit 1;; esac
 private_file "$store/gen-$revision/manifest" && hash "$store/gen-$revision/manifest" && [ "$sum" = "$generation_hash" ] || exit 1
 slot_check() (
@@ -85,7 +108,7 @@ slot_check() (
         case "$item" in "$1/context"|"$1/manifest") ;; *) exit 1;; esac
     done
     hash "$1/context" || exit 1
-    frame=$(printf '%s\n' HGCFJOURNAL1 homegate "$identity_hash" "$boot" "$revision" "$account" "$job" "$generation_hash" "$sum") || exit 1
+    frame=$(printf '%s\n' "$journal_format" homegate "$identity_hash" "$boot" "$revision" "$account" "$job" "$generation_hash" "$sum") || exit 1
     digest=$(printf '%s\n' "$frame" | sha256sum) || exit 1
     expected=$(printf '%s\n' "$frame" "${digest%% *}") || exit 1
     [ "$(stat -c %s "$1/manifest")" -eq "$((${#expected} + 1))" ] && [ "$(cat "$1/manifest")" = "$expected" ]
@@ -97,9 +120,9 @@ done
 slot_check "$candidate" || exit 1
 previous=$candidate/context
 [ "$active" = 0 ] || { slot_check "$journal/slot-$active" || exit 1;previous=$journal/slot-$active/context; }
-ready=$(ash "$dir/homegate-config-prototype.sh" --persistent dns-recovery-snapshot-read 3>&1 8<&- 9<&- >/dev/null 2>/dev/null |
-    lua "$dir/cloudflare-records.lua" receipt-checkpoint "$account" "$revision" "$comparison" 8<"$candidate/context" 9<"$previous" 3>&- 4>&- 5>&- 2>/dev/null) || exit 1
-[ "$ready" = HGCFCVALID1 ] || exit 1
+ready=$(ash "$dir/homegate-config-prototype.sh" --persistent "$snapshot_command" 3>&1 8<&- 9<&- >/dev/null 2>/dev/null |
+    lua "$dir/$checkpoint_codec" receipt-checkpoint "$account" "$revision" "$comparison" 8<"$candidate/context" 9<"$previous" 3>&- 4>&- 5>&- 2>/dev/null) || exit 1
+[ "$ready" = "$checkpoint_ready" ] || exit 1
 # Validate every byte and candidate relationship before the first mutation.
 for slot in "$journal/slot-1" "$journal/slot-2" "$journal/.prepare"; do
     ! exists "$slot" && continue

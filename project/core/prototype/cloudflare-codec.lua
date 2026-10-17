@@ -30,9 +30,12 @@ local function parse(body)
     end
     if not complete then return nil end
     local value=parser:get(); if type(value)~='table' or not body:match('^%s*{') then return nil end
-    local stack={}; local root_types={}; local i=1
+    local stack={}; local root_types={}; local shape; local i=1
     while i<=#body do
         local c=body:sub(i,i);local top=stack[#stack]
+        if top and top.kind=='array' and top.expect and not c:match('%s') and c~=']' then
+            top.index=top.index+1;top.expect=false;top.shape.length=top.index
+        end
         if c=='"' then
             local first=i;i=i+1
             while i<=#body do
@@ -48,12 +51,17 @@ local function parse(body)
         elseif c=='{' or c=='[' then
             local kind=c=='{' and 'object' or 'array'
             if #stack==1 and top.key then root_types[top.key]=kind end
-            stack[#stack+1]={kind=kind,keys={},key_expected=kind=='object'}
+            local node={kind=kind,children={}};if kind=='array' then node.length=0 end
+            if not top then shape=node elseif top.kind=='object' and top.key then top.shape.children[top.key]=node
+            elseif top.kind=='array' then top.shape.children[top.index]=node end
+            stack[#stack+1]={kind=kind,keys={},key_expected=kind=='object',shape=node,index=0,expect=kind=='array'}
         elseif c=='}' or c==']' then stack[#stack]=nil
-        elseif c==',' and top and top.kind=='object' then top.key_expected=true;top.key=nil end
+        elseif c==',' and top then
+            if top.kind=='object' then top.key_expected=true;top.key=nil else top.expect=true end
+        end
         i=i+1
     end
-    return value,root_types
+    return value,root_types,shape
 end
 local function envelope(raw,fail)
     if not raw or #raw>65536 then return fail('temporary',true,'response_limit') end

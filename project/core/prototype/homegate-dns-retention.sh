@@ -4,11 +4,29 @@ set -u
 umask 077
 export LC_ALL=C
 dns_retention_enabled=false
+aliyun_retention_enabled=false
+dnspod_retention_enabled=false
+huaweicloud_retention_enabled=false
+provider=cloudflare
+if [ "${1:-}" = --aliyun-internal ]; then
+    [ "$aliyun_retention_enabled" = true ] || exit 2;provider=aliyun;shift
+    [ "${1:-}" = retire ] || exit 2
+elif [ "${1:-}" = --dnspod-internal ]; then
+    [ "$dnspod_retention_enabled" = true ] || exit 2;provider=dnspod;shift
+    [ "${1:-}" = retire ] || exit 2
+elif [ "${1:-}" = --huaweicloud-internal ]; then
+    [ "$huaweicloud_retention_enabled" = true ] || exit 2;provider=huaweicloud;shift
+    [ "${1:-}" = retire ] || exit 2
+fi
+retire_format=HGCFRetire1
+[ "$provider" != aliyun ] || retire_format=HGALIRetire1
+[ "$provider" != dnspod ] || retire_format=HGDNPRetire1
+[ "$provider" != huaweicloud ] || retire_format=HGHWRetire1
 action=${1:-}
 case "$action" in
     check) [ "$#" -eq 1 ] || exit 2;;
     retire)
-        [ "$dns_retention_enabled" = true ] && [ "$#" -eq 4 ] || exit 2
+        { [ "$provider" != cloudflare ] || [ "$dns_retention_enabled" = true ]; } && [ "$#" -eq 4 ] || exit 2
         account=$2;revision=$3;job=$4
         case "$account" in ''|*[!a-zA-Z0-9_-]*) exit 2;; esac
         [ "${#account}" -le 64 ] || exit 2
@@ -38,7 +56,7 @@ for fd in 6 7; do
 done
 hash "$store/identity" || exit 1;identity_hash=$sum
 plan_body() {
-    printf '%s\n' HGCFRetire1 homegate "$identity_hash" "$p_account" "$p_job" "$ledger_hash" "$current_hash" "$c1" "$m1" "$c2" "$m2" "$terminal_hash" "$meta_hash"
+    printf '%s\n' "$p_format" homegate "$identity_hash" "$p_account" "$p_job" "$ledger_hash" "$current_hash" "$c1" "$m1" "$c2" "$m2" "$terminal_hash" "$meta_hash"
 }
 plan_read() {
     private_file "$1" && [ "$(stat -c %s "$1")" -le 2048 ] || return 1
@@ -50,7 +68,8 @@ plan_read() {
         IFS= read -r meta_hash <&8 && IFS= read -r checksum <&8 || return 1
     if IFS= read -r extra <&8; then return 1;fi
     exec 8<&-
-    [ "$format:$slug:$stored_identity" = "HGCFRetire1:homegate:$identity_hash" ] || return 1
+    case "$format" in HGCFRetire1|HGALIRetire1|HGDNPRetire1|HGHWRetire1) p_format=$format;; *) return 1;;esac
+    [ "$slug:$stored_identity" = "homegate:$identity_hash" ] || return 1
     case "$p_account" in ''|*[!a-zA-Z0-9_-]*) return 1;; esac
     [ "${#p_account}" -le 64 ] || return 1
     case "$p_job" in ''|0*|*[!0-9]*) return 1;; esac
@@ -77,15 +96,23 @@ ash "$dir/homegate-config-prototype.sh" --persistent dns-recovery-check >/dev/nu
 ! exists "$next" && ! exists "$store/.dns-collection-next" || exit 1
 if exists "$completed"; then
     plan_read "$completed" || exit 1
-    if ! exists "$plan" && ! exists "$retiring" && [ "$p_account:$p_job" = "$account:$job" ]; then
+    if ! exists "$plan" && ! exists "$retiring" && [ "$p_account:$p_job" = "$account:$job" ] && [ "$p_format" = "$retire_format" ]; then
         fsync "$completed" "$store" 2>/dev/null || exit 1;exit 0
     fi
 fi
 if ! exists "$plan"; then
     ! exists "$retiring" || exit 1
     # The existing validator proves the exact settled archive, terminal and ledger.
+    if [ "$provider" = aliyun ]; then
+        ash "$dir/homegate-dns-recovery.sh" --aliyun-internal retire-check "$account" "$revision" "$job" >/dev/null 2>/dev/null || exit 1
+    elif [ "$provider" = dnspod ]; then
+        ash "$dir/homegate-dns-recovery.sh" --dnspod-internal retire-check "$account" "$revision" "$job" >/dev/null 2>/dev/null || exit 1
+    elif [ "$provider" = huaweicloud ]; then
+        ash "$dir/homegate-dns-recovery.sh" --huaweicloud-internal retire-check "$account" "$revision" "$job" >/dev/null 2>/dev/null || exit 1
+    else
     ash "$dir/homegate-dns-recovery.sh" retire-check "$account" "$revision" "$job" >/dev/null 2>/dev/null || exit 1
-    p_account=$account;p_job=$job
+    fi
+    p_format=$retire_format;p_account=$account;p_job=$job
     hash "$ledger" || exit 1;ledger_hash=$sum
     hash "$archive/current" || exit 1;current_hash=$sum
     hash "$archive/terminal" || exit 1;terminal_hash=$sum
@@ -106,11 +133,19 @@ if ! exists "$plan"; then
     printf '%s\n' "$frame" "${digest%% *}" > "$next" || exit 1
     fsync "$next" 2>/dev/null && mv "$next" "$plan" && fsync "$store" 2>/dev/null || exit 1
 fi
-plan_read "$plan" && [ "$p_account:$p_job" = "$account:$job" ] || exit 1
+plan_read "$plan" && [ "$p_account:$p_job" = "$account:$job" ] && [ "$p_format" = "$retire_format" ] || exit 1
 fsync "$plan" "$store" 2>/dev/null || exit 1
 if exists "$archive";then
     ! exists "$retiring" || exit 1
+    if [ "$provider" = aliyun ]; then
+        ash "$dir/homegate-dns-recovery.sh" --aliyun-internal retire-check "$account" "$revision" "$job" >/dev/null 2>/dev/null || exit 1
+    elif [ "$provider" = dnspod ]; then
+        ash "$dir/homegate-dns-recovery.sh" --dnspod-internal retire-check "$account" "$revision" "$job" >/dev/null 2>/dev/null || exit 1
+    elif [ "$provider" = huaweicloud ]; then
+        ash "$dir/homegate-dns-recovery.sh" --huaweicloud-internal retire-check "$account" "$revision" "$job" >/dev/null 2>/dev/null || exit 1
+    else
     ash "$dir/homegate-dns-recovery.sh" retire-check "$account" "$revision" "$job" >/dev/null 2>/dev/null || exit 1
+    fi
     # Verify the plan below before moving or removing any archive member.
     tree=$archive
 else tree=$retiring;fi

@@ -74,6 +74,7 @@ class Runtime(BootstrapRuntime):
             def log_message(self,*args):pass
             def reply(self,method):
                 request={'method':method,'path':self.path,'authorization':self.headers.get('Authorization')}
+                if getattr(outer,'capture_headers',False):request['headers']=dict(self.headers)
                 if method!='GET':
                     size=int(self.headers.get('Content-Length','0'));assert 0<=size<=32768
                     request['body']=self.rfile.read(size)

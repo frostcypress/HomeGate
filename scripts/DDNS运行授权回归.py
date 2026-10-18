@@ -4,7 +4,7 @@ import argparse,hashlib,json,os,re,subprocess,sys,unittest
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from project import ROOT
-from DDNS计划回归 import Static as PlanStatic
+from DDNS计划回归 import Static as PlanStatic,fixture_uid
 from 固定服务动作回归 import Runtime as ServiceRuntime
 PROTO=ROOT/'project/core/prototype'
 
@@ -46,7 +46,7 @@ class Runtime(ServiceRuntime):
         self.plan=self.preview(self.business.replace(b"option https_port '443'",b"option https_port '8443'"))
         self.helper=self.engine.parent/'homegate-ddns-authority.sh';self.active=self.store/'ddns-authority';self.auth_pending=self.store/'ddns-authority-pending';self.auth_next=self.store/'.ddns-authority-next'
         self.engine.write_text(self.engine.read_text().replace('ddns_authority_enabled=false','ddns_authority_enabled=true'))
-        s=self.helper.read_text().replace('ddns_authority_enabled=false','ddns_authority_enabled=true');mapping={'/etc/homegate/transactions':str(self.store),'/var/run/homegate':str(self.native.lockdir),'/proc/sys/kernel/random/boot_id':str(self.boot_id)};s=re.sub('|'.join(re.escape(k) for k in sorted(mapping,key=len,reverse=True)),lambda m:mapping[m[0]],s);self.helper.write_text(s.replace('PATH=/usr/sbin:/usr/bin:/sbin:/bin','PATH='+str(self.bin)))
+        s=self.helper.read_text().replace('ddns_authority_enabled=false','ddns_authority_enabled=true');mapping={'/etc/homegate/transactions':str(self.store),'/var/run/homegate':str(self.native.lockdir),'/proc/sys/kernel/random/boot_id':str(self.boot_id)};s=re.sub('|'.join(re.escape(k) for k in sorted(mapping,key=len,reverse=True)),lambda m:mapping[m[0]],s);self.helper.write_text(fixture_uid(s.replace('PATH=/usr/sbin:/usr/bin:/sbin:/bin','PATH='+str(self.bin))))
         # The fixed helper uses the shared nonce/context library with the real LuCI parser.
         p=self.engine.parent/'cloudflare-codec.lua';s=p.read_text().replace("local json=require('luci.jsonc')","package.cpath="+json.dumps(str(ROOT/'build/service-observer/?.so')+';;')+"\nlocal json=require('luci.jsonc')");p.write_text(s)
     def ordinary(self):

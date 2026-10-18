@@ -3,7 +3,7 @@
 import argparse,copy,json,os,re,shutil,subprocess,sys,unittest
 from pathlib import Path
 from project import ROOT
-from DDNS计划回归 import Static as PlanStatic,ADDR,ROUTE
+from DDNS计划回归 import Static as PlanStatic,ADDR,ROUTE,fixture_uid
 from DNS回执恢复回归 import Runtime as CFRuntime
 from Aliyun终态回归 import Runtime as AliRuntime
 from DNSPod终态回归 import Runtime as DNPRuntime
@@ -77,7 +77,7 @@ class SyncMixin:
             if n in ['homegate-ddns-read.sh','homegate-ddns-work.sh','homegate-ddns-plan-worker.sh','homegate-ddns-plan.lua']:s=re.sub('|'.join(re.escape(k) for k in sorted(mapping,key=len,reverse=True)),lambda m:mapping[m[0]],s)
             if n=='homegate-ddns-work.sh':s=s.replace('/proc/sys/kernel/random/boot_id',str(self.boot_id))
             s=s.replace('dns_migrated_read_enabled=false','dns_migrated_read_enabled=true').replace('PATH=/usr/sbin:/usr/bin:/sbin:/bin','PATH='+str(self.bin))
-            p.write_text(s)
+            p.write_text(fixture_uid(s))
         self.baseline_config=self.config_bytes()
     def config_bytes(self):return {p.relative_to(self.store).as_posix():p.read_bytes() for p in self.store.rglob('*') if p.is_file() and not any(x.startswith('dns-') or x.startswith('.dns-') for x in p.relative_to(self.store).parts)}
     def sync_call(self,expected=0,args=None):
@@ -114,6 +114,13 @@ class DNP(SyncMixin,DNPRuntime):provider='dnspod'
 class HW(SyncMixin,HWRuntime):provider='huaweicloud'
 
 class Boundaries(CF):
+    def test_private_mode_and_foreign_owner_still_block_before_sampling(self):
+        self.native.lockdir.chmod(0o755);self.sync_call(7);self.native.lockdir.chmod(0o700)
+        self.native.lock.chmod(0o644);self.sync_call(7);self.native.lock.chmod(0o600)
+        raw=self.entry.read_text();needle='= '+str(os.getuid())+':700 ]';self.assertIn(needle,raw)
+        self.entry.write_text(raw.replace(needle,'= '+str(os.getuid()+1)+':700 ]'));self.sync_call(7)
+        self.assertEqual(self.calls,[]);self.assertFalse(self.netlog.exists())
+
     def test_entry_gate_ignores_environment(self):
         self.entry.write_text(self.entry.read_text().replace('ddns_sync_enabled=true','ddns_sync_enabled=false'))
         p=subprocess.run([self.busybox,'ash',str(self.entry),'--sync','ddns_a','--confirm'],env={**self.env,'ddns_sync_enabled':'true'},capture_output=True,timeout=5);self.assertEqual((p.returncode,p.stderr),(2,b''));self.assertFalse(json.loads(p.stdout)['ok']);self.assertEqual(self.calls,[]);self.assertFalse(self.netlog.exists())

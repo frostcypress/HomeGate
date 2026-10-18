@@ -4,7 +4,7 @@ import argparse,copy,json,os,re,subprocess,unittest
 from pathlib import Path
 from project import ROOT
 from DDNS普通运行回归 import CF as CFBase,Ali as AliBase,DNP as DNPBase,HW as HWBase
-from DDNS计划回归 import Static as PlanStatic
+from DDNS计划回归 import Static as PlanStatic,fixture_uid
 PROTO=ROOT/'project/core/prototype'
 
 class Static(PlanStatic):
@@ -51,7 +51,7 @@ class StateMixin:
         super().setUp();self.helper=self.engine.parent/'homegate-ddns-state.sh';self.state_dir=self.native.lockdir/'ddns-state';self.state_file=self.state_dir/'ddns_a';self.clock=self.base/'state-clock';self.clock.write_text('1000\n')
         mapping={'/var/run/homegate':str(self.native.lockdir),'/etc/homegate/transactions':str(self.store),'/proc/sys/kernel/random/boot_id':str(self.boot_id)}
         s=self.helper.read_text().replace('ddns_state_enabled=false','ddns_state_enabled=true');s=re.sub('|'.join(re.escape(k) for k in sorted(mapping,key=len,reverse=True)),lambda m:mapping[m[0]],s)
-        s=s.replace('PATH=/usr/sbin:/usr/bin:/sbin:/bin','PATH='+str(self.bin)).replace('now=$(lua "$dir/worker-process.lua" now 2>/dev/null)','now=$(cat '+str(self.clock)+')');self.helper.write_text(s)
+        s=s.replace('PATH=/usr/sbin:/usr/bin:/sbin:/bin','PATH='+str(self.bin)).replace('now=$(lua "$dir/worker-process.lua" now 2>/dev/null)','now=$(cat '+str(self.clock)+')');self.helper.write_text(fixture_uid(s))
     def state_call(self,*args,expected=0):
         p=subprocess.run([self.busybox,'ash',str(self.helper),*args],env=self.env,capture_output=True,timeout=20);self.assertEqual((p.returncode,p.stderr),(expected,b''),(p.stdout,p.stderr));out=json.loads(p.stdout)
         for marker in [b'SECRET_SENTINEL',b'PRIVATE_SENTINEL',b'example.test',b'2001:db8',b'pppoe-wan']:self.assertNotIn(marker,p.stdout)

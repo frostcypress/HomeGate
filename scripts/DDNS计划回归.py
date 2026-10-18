@@ -10,6 +10,17 @@ PROTO=ROOT/'project/core/prototype'
 ADDR='12: pppoe-wan inet6 2001:db8::2/64 scope global dynamic\n13: br-lan inet6 2001:db8:1::1/64 scope global\n'
 ROUTE='default via fe80::1 dev pppoe-wan metric 512\n'
 
+def fixture_uid(body):
+    """Adapt copied test scripts to their owner; production root checks stay intact."""
+    uid=str(os.getuid())
+    for before,after in [('= 0:700 ]','= '+uid+':700 ]'),
+                         ('= 0:600:1 ]','= '+uid+':600:1 ]'),
+                         ('= 0:600:0 ]','= '+uid+':600:0 ]'),
+                         ('[ "$(id -u)" = 0 ]','[ "$(id -u)" = '+uid+' ]'),
+                         ('[ "$owner" = 0 ]','[ "$owner" = '+uid+' ]')]:
+        body=body.replace(before,after)
+    return body
+
 class Static(Codec):
     def setUp(self):
         super().setUp();self.records=self.lua.execute((PROTO/'cloudflare-record-plan.lua').read_bytes());self.network=self.lua.execute((PROTO/'wan6-plan.lua').read_bytes());self.planner=self.lua.execute((PROTO/'ddns-plan.lua').read_bytes())
@@ -104,7 +115,7 @@ class Runtime(LifecycleRuntime):
             if n in ['homegate-ddns-read.sh','homegate-ddns-plan-worker.sh','homegate-ddns-plan.lua']:
                 s=re.sub('|'.join(re.escape(k) for k in sorted(mapping,key=len,reverse=True)),lambda m:mapping[m[0]],s)
             s=s.replace('PATH=/usr/sbin:/usr/bin:/sbin:/bin','PATH='+str(self.bin))
-            for before,after in [('= 0:700 ]','= '+str(os.getuid())+':700 ]'),('= 0:600:1 ]','= '+str(os.getuid())+':600:1 ]'),('[ "$(id -u)" = 0 ]','[ "$(id -u)" = '+str(os.getuid())+' ]')]:s=s.replace(before,after)
+            s=fixture_uid(s)
             if n=='cloudflare-codec.lua':s=s.replace("local json=require('luci.jsonc')","package.cpath="+json.dumps(str(ROOT/'build/service-observer/?.so')+';;')+"\nlocal json=require('luci.jsonc')")
             p.write_text(s)
         self.fault('rm','from pathlib import Path\nfor a in sys.argv[1:]:\n if a.endswith("/plan"):Path('+repr(str(self.capture))+').write_bytes(Path(a).read_bytes())')

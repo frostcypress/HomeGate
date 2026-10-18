@@ -13,7 +13,13 @@ class Static(RecordStatic):
         for name in ['homegate-dns-retention.sh','homegate-cloudflare-read.sh']:
             self.assertEqual((PROTO/name).read_bytes().count(b'dns_retention_enabled=false'),1)
         body=(PROTO/'homegate-dns-retention.sh').read_text()
-        for forbidden in ['rm -r','rm -f "$store/dns-operation','curl','eval ','source ']:self.assertNotIn(forbidden,body)
+        for forbidden in ['rm -r','rm -f "$store/dns-operation','curl','eval ']:self.assertNotIn(forbidden,body)
+        # Inspect the shell command, not the data-only Lua argument "source".
+        nodes=[parser.parse(body.encode()).root_node]
+        while nodes:
+            node=nodes.pop()
+            if node.type=='command_name':self.assertNotIn(node.text,(b'source',b'.'))
+            nodes.extend(node.children)
         self.assertNotIn('prototype/',(PROTO.parent/'Makefile').read_text())
     def test_retirement_guard_remains_outside_production_feature_switch(self):
         body=(PROTO/'homegate-config-prototype.sh').read_text();guard=body.split('[ -e "$store/dns-retirement" ]',1)[1].split('    if [ "$persistent_mode"',1)[0]

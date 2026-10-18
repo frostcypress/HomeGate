@@ -5,6 +5,7 @@ from pathlib import Path
 from project import ROOT
 from DDNS执行回归 import CF as CFBase,Ali as AliBase,DNP as DNPBase,HW as HWBase,SyncMixin
 from DDNS外层恢复回归 import WorkMixin
+from DDNS计划回归 import fixture_uid
 PROTO=ROOT/'project/core/prototype'
 
 class Static(unittest.TestCase):
@@ -17,7 +18,7 @@ class Static(unittest.TestCase):
         for name in ['homegate-config-prototype.sh','homegate-ddns-authority.sh','homegate-dns-receipt.sh']:self.assertFalse(parser.parse((PROTO/name).read_bytes()).root_node.has_error)
         LuaRuntime().compile((PROTO/'homegate-ddns-sync.lua').read_bytes());self.assertNotIn('prototype/',(PROTO.parent/'Makefile').read_text())
     def test_recovery_source_is_read_only_and_limited_to_dns_fences(self):
-        s=(PROTO/'homegate-config-prototype.sh').read_text();self.assertEqual(s.count('migration-source-recovery-snapshot-read|runtime-ddns-recovery-snapshot-read)'),3)
+        s=(PROTO/'homegate-config-prototype.sh').read_text();self.assertEqual(s.count('migration-source-recovery-snapshot-read|runtime-ddns-recovery-snapshot-read)'),4)  # Includes the independent batch-results recovery guard.
         self.assertIn('runtime-ddns-snapshot-read|runtime-ddns-recovery-snapshot-read)',s)
         s=(PROTO/'homegate-cloudflare-read.sh').read_text();self.assertIn('[ "$mode" = reconcile ] && [ "$persistent_reconcile" = true ]',s)
         self.assertIn('check-rule "$ddns_rule"',s);self.assertIn('check-runtime',s)
@@ -32,7 +33,7 @@ class NormalMixin:
         for name in ['homegate-config-prototype.sh','homegate-ddns-read.sh','homegate-ddns-work.sh','homegate-cloudflare-read.sh','homegate-ddns-authority.sh','homegate-dns-receipt.sh']:
             p=self.engine.parent/name;s=p.read_text().replace('ddns_runtime_enabled=false','ddns_runtime_enabled=true').replace('ddns_authority_enabled=false','ddns_authority_enabled=true').replace('production_writes_enabled=false','production_writes_enabled=true').replace('service_observer_enabled=false','service_observer_enabled=true')
             if name=='homegate-ddns-authority.sh':s=re.sub('|'.join(re.escape(k) for k in sorted(mapping,key=len,reverse=True)),lambda m:mapping[m[0]],s)
-            p.write_text(s.replace('PATH=/usr/sbin:/usr/bin:/sbin:/bin','PATH='+str(self.bin)))
+            p.write_text(fixture_uid(s.replace('PATH=/usr/sbin:/usr/bin:/sbin:/bin','PATH='+str(self.bin))))
         # Real fixed observer, with read-only disabled-service responses. No service action.
         init=self.base/'normal-init';common=self.base/'normal-common';ubus=self.base/'normal-ubus';self.initlog=self.base/'normal-init-log'
         init.write_text('#!/bin/sh\nprintf "%s\\n" "$1" >> '+str(self.initlog)+'\n[ "$#" -eq 1 ] && [ "$1" = enabled ] || exit 99\nexit 1\n');common.write_text('#!/bin/sh\nexit 0\n');ubus.write_text('#!/bin/sh\nprintf "{}"\n')

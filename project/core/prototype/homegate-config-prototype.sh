@@ -267,6 +267,13 @@ open_store() {
     fi
     persistent_fence_read
     journal_read
+    if [ "$persistent_mode" = true ] && { [ -e "$store/dns-batch-results" ] || [ -L "$store/dns-batch-results" ] || [ -e "$store/.dns-batch-results-next" ] || [ -L "$store/.dns-batch-results-next" ]; }; then
+        case "$command" in status|export) ;;
+            dns-recovery-check|dns-recovery-snapshot-read|migration-source-recovery-snapshot-read|runtime-ddns-recovery-snapshot-read)
+                ash "$(dirname "$0")/homegate-ddns-batch-results.sh" check-recovery >/dev/null 2>/dev/null || fail 'Batch results require explicit recovery' 4;;
+            *) ash "$(dirname "$0")/homegate-ddns-batch-results.sh" check-writer >/dev/null 2>/dev/null || fail 'Batch results require explicit recovery' 4;;
+        esac
+    fi
     if [ "$persistent_mode" = true ] && { [ -e "$store/dns-operation" ] || [ -L "$store/dns-operation" ]; }; then
         # Presence alone fences ALL mutations/lifecycle recovery, even malformed
         # or incomplete receipts. No environment or feature gate can bypass it.

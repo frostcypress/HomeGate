@@ -69,11 +69,38 @@ private_lock || fail 'Runtime lock must already be private'
 # This lifecycle entry acquires its own open description; it is not an internal
 # borrowed-lock command. A live inherited writer must remain busy.
 exec 6>&- 7>&- 8>&- 9>&-
+# Reserve the same admission lock before acquiring the business lock. Keep it
+# through bootstrap, including while a scheduler would otherwise be waiting.
+schedule_lock="$runtime/ddns-schedule.lock"
+if ! present "$schedule_lock"; then
+    (set -C; : > "$schedule_lock") 2>/dev/null || :
+    fsync "$schedule_lock" "$runtime" 2>/dev/null || fail 'Schedule lock durability is uncertain'
+fi
+schedule_file() {
+    [ -f "$schedule_lock" ] && [ ! -L "$schedule_lock" ] &&
+        [ "$(stat -c '%u:%a:%h:%s' "$schedule_lock")" = "$owner:600:1:0" ]
+}
+schedule_binding() {
+    schedule_file &&
+        [ "$(stat -Lc '%d:%i:%u:%a:%h' /proc/self/fd/9 2>/dev/null)" = "$(stat -c '%d:%i:%u:%a:%h' "$schedule_lock")" ]
+}
+schedule_file || fail 'Unsafe schedule lock'
+exec 9>>"$schedule_lock" || fail 'Unable to open schedule lock'
+schedule_binding || fail 'Unsafe schedule lock'
+flock -n 9 || fail 'Schedule admission is active' 4
+schedule_binding || fail 'Schedule lock identity changed'
+! present "$runtime/ddns-schedule" || fail 'Schedule control requires explicit stop and reap' 4
+for pending in "$runtime/".dns-check-* "$runtime/".ddns-plan-*; do
+    ! present "$pending" || fail 'DDNS work requires explicit recovery' 4
+done
 exec 6>>"$lock" || fail 'Unable to open runtime writer lock'
 check_binding
 flock -n 6 || fail 'Lifecycle writer is busy' 4
 check_binding
 dir=$(CDPATH= cd "$(dirname "$0")" && pwd) || fail 'Unable to locate lifecycle dependencies'
+if present "$runtime/ddns-ui-jobs";then
+    ash "$dir/homegate-ddns-job.sh" check-quiescent >/dev/null 2>/dev/null || fail 'Retained DDNS job requires attention' 4
+fi
 ash "$dir/homegate-store-bootstrap-prototype.sh" "$bootstrap_action" >/dev/null 2>/dev/null
 result=$?
 case "$result" in

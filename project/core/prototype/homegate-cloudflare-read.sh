@@ -7,6 +7,7 @@ dns_read_enabled=false
 ddns_sync_enabled=false
 ddns_work_enabled=false
 ddns_runtime_enabled=false
+ddns_closeout_enabled=false
 aliyun_read_enabled=false
 dnspod_read_enabled=false
 huaweicloud_read_enabled=false
@@ -61,7 +62,14 @@ fail() {
 }
 [ "$dns_read_enabled" = true ] || fail 2
 provider=cloudflare
-ddns_dispatch=false;runtime_dispatch=false;runtime_recovery=false
+ddns_dispatch=false;runtime_dispatch=false;runtime_recovery=false;runtime_closeout=false
+case "${1:-}" in
+    --runtime-collect-orphan-internal|--runtime-collect-receipt-internal|--runtime-retire-archive-internal)
+        [ "$ddns_runtime_enabled" = true ] && [ "$ddns_closeout_enabled" = true ] && [ "$#" -eq 5 ] && [ "$5" = --confirm ] || fail 2
+        runtime_closeout=true
+        case "$1" in --runtime-collect-orphan-internal) maintenance=--collect-orphan;; --runtime-collect-receipt-internal) maintenance=--collect-receipt;; --runtime-retire-archive-internal) maintenance=--retire-archive;; esac
+        case "$2" in cloudflare) set -- "$3" "$maintenance" "$4" --confirm;; aliyun|dnspod|huaweicloud) set -- --"$2"-internal "$3" "$maintenance" "$4" --confirm;; *) fail 2;; esac;;
+esac
 if [ "${1:-}" = --runtime-reconcile-internal ]; then
     [ "$ddns_runtime_enabled" = true ] && [ "$#" -eq 5 ] && [ "$5" = --confirm ] || fail 2
     runtime_recovery=true
@@ -225,6 +233,9 @@ if [ "$runtime_recovery" = true ]; then
     [ "$mode" = reconcile ] && [ "$persistent_reconcile" = true ] || fail 2
     check_command=dns-recovery-check;snapshot_command=runtime-ddns-recovery-snapshot-read;migrated_read=false
 fi
+if [ "$runtime_closeout" = true ]; then
+    check_command=dns-recovery-check;snapshot_command=runtime-ddns-recovery-snapshot-read;migrated_read=false
+fi
 ash "$dir/homegate-config-prototype.sh" --persistent "$check_command" >/dev/null 2>&1
 state=$?; case "$state" in 0) ;; 4) fail 4;; *) fail;; esac
 if [ "$migrated_read" = true ]; then
@@ -232,6 +243,19 @@ if [ "$migrated_read" = true ]; then
     state=$?;case "$state" in 0) ;; 4) fail 4;; *) fail;; esac
 fi
 revision=$(lua "$dir/cloudflare-codec.lua" context < /etc/homegate/transactions/current 2>/dev/null) || fail
+if [ "$runtime_closeout" = true ]; then
+    case "$mode" in orphan|collect|retire) ;; *) fail 2;; esac
+    # Bind the ordinary source even for archive retirement, which otherwise
+    # deliberately validates historical evidence without current credentials.
+    ready=$(ash "$dir/homegate-config-prototype.sh" --persistent runtime-ddns-recovery-snapshot-read 3>&1 4>&- 5>&- 8>&- 9>&- >/dev/null 2>/dev/null |
+        lua "$dir/homegate-ddns-sync.lua" source "$revision" 3>&- 4>&- 5>&- 8>&- 9>&- 2>/dev/null) || fail
+    [ "$ready" = HGDDNSSOURCE1 ] || fail
+    # The outer DDNS evidence must be explicitly collected first. Never clear
+    # a provider fence while another outer request remains unresolved.
+    for outer in /var/run/homegate/.ddns-plan-*; do
+        [ ! -e "$outer" ] && [ ! -L "$outer" ] || fail 4
+    done
+fi
 if [ "$ddns_dispatch" = true ]; then
     work_check=check;[ "$runtime_dispatch" != true ] || work_check=check-runtime
     ddns_rule=$(ash "$dir/homegate-ddns-work.sh" "$work_check" "$ddns_job" "$revision" "$provider" "$account" 2>/dev/null) || fail
@@ -305,7 +329,8 @@ if [ "$mode" = collect ]; then
     else
     ash "$dir/homegate-dns-recovery.sh" collect "$account" "$revision" "$old_job" >/dev/null 2>/dev/null || fail
     fi
-    printf '{"api_version":1,"prototype":true,"ok":true,"scope":"dns-receipt-collection","archived":true,"write_ready":true}\n'
+    ready=true;[ "$runtime_closeout" != true ] || ready=false
+    printf '{"api_version":1,"prototype":true,"ok":true,"scope":"dns-receipt-collection","archived":true,"write_ready":%s}\n' "$ready"
     exit 0
 fi
 if [ "$mode" = reconcile ] && [ "$persistent_reconcile" = false ]; then

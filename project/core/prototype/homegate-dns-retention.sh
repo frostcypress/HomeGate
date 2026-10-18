@@ -3,6 +3,7 @@
 set -u
 umask 077
 export LC_ALL=C
+ddns_closeout_enabled=false
 dns_retention_enabled=false
 aliyun_retention_enabled=false
 dnspod_retention_enabled=false
@@ -93,6 +94,13 @@ fi
 dir=$(CDPATH= cd "$(dirname "$0")" && pwd) || exit 1
 ash "$dir/homegate-config-prototype.sh" --persistent dns-recovery-check >/dev/null 2>/dev/null || exit 1
 [ "$(lua "$dir/cloudflare-codec.lua" context < "$store/current" 2>/dev/null)" = "$revision" ] || exit 1
+if exists "$store/gen-$revision/source.conf"; then
+    [ "$ddns_closeout_enabled" = true ] || exit 2
+    ready=$(ash "$dir/homegate-config-prototype.sh" --persistent runtime-ddns-recovery-snapshot-read 3>&1 4>&- 5>&- 8>&- 9>&- >/dev/null 2>/dev/null |
+        lua "$dir/homegate-ddns-sync.lua" source "$revision" 3>&- 4>&- 5>&- 8>&- 9>&- 2>/dev/null) || exit 1
+    [ "$ready" = HGDDNSSOURCE1 ] || exit 1
+    for outer in /var/run/homegate/.ddns-plan-*; do ! exists "$outer" || exit 1;done
+fi
 ! exists "$next" && ! exists "$store/.dns-collection-next" || exit 1
 if exists "$completed"; then
     plan_read "$completed" || exit 1

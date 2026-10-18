@@ -4,9 +4,17 @@ set -u
 umask 077
 export LC_ALL=C
 ddns_state_enabled=false
+ddns_batch_enabled=false
 fail() { printf '{"api_version":1,"prototype":true,"ok":false,"phase":"ddns-state","effect":"none","write_ready":false,"error":"DDNS state is unavailable"}\n';exit "${1:-7}"; }
 [ "$ddns_state_enabled" = true ] || fail 2
-action=${1:-};rule=${2:-}
+action=${1:-};rule=${2:-};batch=false
+if [ "$action" = batch-sync-internal ]; then
+    [ "$ddns_batch_enabled" = true ] && [ "$#" -eq 4 ] && [ "$4" = --confirm ] || fail 2
+    batch=true;batch_parent=$3
+    case "$batch_parent" in ''|0*|*[!0-9]*) fail 2;; esac
+    [ "${#batch_parent}" -le 9 ] && [ "$batch_parent" -ge 2 ] || fail 2
+    action=sync;set -- sync "$rule" --confirm
+fi
 case "$action" in status) [ "$#" -eq 2 ] || fail 2;; sync|reset) [ "$#" -eq 3 ] && [ "$3" = --confirm ] || fail 2;; *) fail 2;; esac
 case "$rule" in ''|*[!a-zA-Z0-9_-]*) fail 2;; esac
 [ "${#rule}" -le 64 ] || fail 2
@@ -20,6 +28,11 @@ hash() { sum=$(sha256sum "$1" 2>/dev/null) || return 1;sum=${sum%% *};[ "${#sum}
 run=/var/run/homegate;store=/etc/homegate/transactions
 cache=$run/ddns-state;file=$cache/$rule;next=$cache/.$rule.next;result=$cache/.$rule.result
 dir=$(CDPATH= cd "$(dirname "$0")" && pwd) || fail
+if [ "$batch" = true ]; then
+    [ -f /proc/self/fd/5 ] && [ "$(stat -Lc '%u:%a:%h' /proc/self/fd/5)" = 0:600:0 ] && [ "$(stat -Lc %s /proc/self/fd/5)" -le 524288 ] || fail
+    [ "$(stat -Lc '%d:%i' /proc/self/fd/5)" = "$(stat -Lc '%d:%i' /proc/$batch_parent/fd/5 2>/dev/null)" ] || fail
+    lua "$dir/homegate-ddns-batch.lua" parent state "$$" "$rule" "$batch_parent" >/dev/null 2>/dev/null || fail
+fi
 private_dir "$run" && private_dir "$store" && private_file "$run/frontend.lock" && private_file "$store/.supervisor.lock" || fail
 for fd in 6 7; do
     lock=$run/frontend.lock;[ "$fd" != 7 ] || lock=$store/.supervisor.lock
@@ -77,7 +90,12 @@ codec begin > "$next" && publish || fail
 exec 8<&-
 (set -C; : > "$result") 2>/dev/null || fail
 rc=0
-ash "$dir/homegate-ddns-read.sh" --runtime-sync "$rule" --confirm > "$result" 8>&- 9>&- 2>/dev/null || rc=$?
+if [ "$batch" = true ]; then
+    ash "$dir/homegate-ddns-read.sh" --runtime-batch-internal "$rule" "$$" --confirm > "$result" 8>&- 9>&- 2>/dev/null || rc=$?
+    exec 5<&-
+else
+    ash "$dir/homegate-ddns-read.sh" --runtime-sync "$rule" --confirm > "$result" 8>&- 9>&- 2>/dev/null || rc=$?
+fi
 private_file "$result" && [ "$(stat -c %s "$result")" -le 65536 ] || fail
 case "$rc" in 0|1) ;; *) fail;; esac
 now=$(lua "$dir/worker-process.lua" now 2>/dev/null) || fail

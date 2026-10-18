@@ -5,13 +5,13 @@ local shared=assert(loadfile(dir..'/cloudflare-codec.lua'))('library')
 local planner=assert(loadfile(dir..'/ddns-plan.lua'))()
 local sync=assert(loadfile(dir..'/ddns-sync.lua'))()
 local revision,rule=arg[2],arg[3]
-if type(revision)~='string' or not revision:match('^[1-9]%d*$') or tonumber(revision)>32 or not planner.id(rule) then os.exit(1) end
+if type(revision)~='string' or not revision:match('^[1-9]%d*$') or tonumber(revision)>32 or (arg[1]~='source' and not planner.id(rule)) then os.exit(1) end
 local function read(fd,limit)
     local f=io.open('/proc/self/fd/'..fd,'rb');if not f then os.exit(1) end
     local b=f:read(limit+1) or '';if not f:close() or #b>limit then os.exit(1) end;return b
 end
-if arg[1]=='work-source' then
-    if arg[4] then os.exit(1) end
+if arg[1]=='work-source' or arg[1]=='source' then
+    if arg[4] or (arg[1]=='source' and arg[3]) then os.exit(1) end
     local snapshot=assert(loadfile(dir..'/private-snapshot.lua'))().read(io.stdin,codec)
     if not snapshot or snapshot.revision~=tonumber(revision) then os.exit(1) end
     io.write('HGDDNSSOURCE1\n');return

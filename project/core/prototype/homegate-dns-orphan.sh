@@ -3,6 +3,7 @@
 set -u
 umask 077
 export LC_ALL=C
+ddns_closeout_enabled=false
 dns_orphan_collection_enabled=false
 aliyun_orphan_collection_enabled=false
 dnspod_orphan_collection_enabled=false
@@ -58,6 +59,14 @@ for fd in 6 7; do
     flock -n "$fd" || exit 1
 done
 dir=$(CDPATH= cd "$(dirname "$0")" && pwd) || exit 1
+if exists "$store/gen-$revision/source.conf"; then
+    [ "$ddns_closeout_enabled" = true ] || exit 2
+    snapshot_command=runtime-ddns-recovery-snapshot-read
+    ready=$(ash "$dir/homegate-config-prototype.sh" --persistent "$snapshot_command" 3>&1 4>&- 5>&- 8>&- 9>&- >/dev/null 2>/dev/null |
+        lua "$dir/homegate-ddns-sync.lua" source "$revision" 3>&- 4>&- 5>&- 8>&- 9>&- 2>/dev/null) || exit 1
+    [ "$ready" = HGDDNSSOURCE1 ] || exit 1
+    for outer in "$run/".ddns-plan-*; do ! exists "$outer" || exit 1;done
+fi
 # The existing independent watchdog retains these locks until its family is
 # quiet. Also refuse any live/reused coordinator PID; never signal old PIDs.
 quiet() {

@@ -7,12 +7,20 @@ ddns_plan_enabled=false
 ddns_sync_enabled=false
 ddns_work_enabled=false
 ddns_runtime_enabled=false
+ddns_batch_enabled=false
 if [ "${1:-}" = --collect-work ]; then
     [ "$ddns_work_enabled" = true ] && [ "$#" -eq 3 ] && [ "$3" = --confirm ] || exit 2
     dir=$(CDPATH= cd "$(dirname "$0")" && pwd) || exit 1
     exec ash "$dir/homegate-ddns-work.sh" collect "$2" --confirm
 fi
-runtime=false
+runtime=false;batch=false
+if [ "${1:-}" = --runtime-batch-internal ]; then
+    [ "$ddns_batch_enabled" = true ] && [ "$#" -eq 4 ] && [ "$4" = --confirm ] || exit 2
+    batch=true;batch_parent=$3
+    case "$batch_parent" in ''|0*|*[!0-9]*) exit 2;; esac
+    [ "${#batch_parent}" -le 9 ] && [ "$batch_parent" -ge 2 ] || exit 2
+    set -- --runtime-sync "$2" --confirm
+fi
 if [ "${1:-}" = --runtime ] || [ "${1:-}" = --runtime-sync ]; then
     [ "$ddns_runtime_enabled" = true ] || exit 2
     runtime=true
@@ -44,6 +52,11 @@ for fd in 6 7; do
     flock -n "$fd" || fail 4
 done
 dir=$(CDPATH= cd "$(dirname "$0")" && pwd) || fail
+if [ "$batch" = true ]; then
+    [ -f /proc/self/fd/5 ] && [ "$(stat -Lc '%u:%a:%h' /proc/self/fd/5)" = 0:600:0 ] && [ "$(stat -Lc %s /proc/self/fd/5)" -le 524288 ] || fail
+    [ "$(stat -Lc '%d:%i' /proc/self/fd/5)" = "$(stat -Lc '%d:%i' /proc/$batch_parent/fd/5 2>/dev/null)" ] || fail
+    batch_context=$(lua "$dir/homegate-ddns-batch.lua" parent read "$$" "$rule" "$batch_parent" 2>/dev/null) || fail
+fi
 ash "$dir/homegate-config-prototype.sh" --persistent writer-check >/dev/null 2>/dev/null
 state=$?;case "$state" in 0) ;; 4) fail 4;; *) fail;; esac
 for orphan in "$run/".dns-check-* "$run/".ddns-plan-*; do [ ! -e "$orphan" ] && [ ! -L "$orphan" ] || fail 4;done
@@ -59,11 +72,20 @@ if [ "$sync" = true ]; then
     private_file "$work/input" && private_file "$work/provider" || fail
 fi
 snapshot() {
-    if [ "$runtime" = true ]; then ash "$dir/homegate-ddns-authority.sh" snapshot;else ash "$dir/homegate-config-prototype.sh" --persistent ddns-plan-snapshot-read;fi
+    if [ "$runtime" = true ]; then ash "$dir/homegate-ddns-authority.sh" snapshot-rule "$rule";else ash "$dir/homegate-config-prototype.sh" --persistent ddns-plan-snapshot-read;fi
 }
 result=0
+if [ "$batch" = true ]; then
+    identity=$(sha256sum "$store/identity") || fail;identity=${identity%% *}
+    generation=$(sha256sum "$store/gen-$revision/manifest") || fail;generation=${generation%% *}
+    grant=$(sha256sum "$store/ddns-authority") || fail;grant=${grant%% *};boot=$(cat /proc/sys/kernel/random/boot_id) || fail
+    snapshot 3>&1 4>"$work/intent" 8>&- 9>&- >/dev/null 2>/dev/null |
+        lua "$dir/homegate-ddns-batch.lua" slice "$revision" "$rule" "$identity" "$generation" "$grant" "$boot" "$batch_context" 3>"$work/result" 4>"$work/plan" 8<"$work/intent" 9>&- 2>/dev/null || result=$?
+    exec 5<&-
+else
 snapshot 3>&1 4>"$work/intent" 8>&- 9>&- >/dev/null 2>/dev/null |
     setsid ash "$dir/homegate-service-observer-watchdog.sh" --ddns-plan "$ticket" "$revision" "$job" "$rule" 3>"$work/result" 8>&- 9>&- >/dev/null 2>/dev/null || result=$?
+fi
 case "$result" in 0|1)
     lua "$dir/homegate-ddns-plan.lua" result "$revision" "$rule" "$result" < "$work/result" > "$work/public" 2>/dev/null || fail
     if [ "$sync" = true ] && [ "$result" = 0 ]; then

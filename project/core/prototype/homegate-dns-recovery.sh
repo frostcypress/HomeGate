@@ -3,6 +3,7 @@
 set -u
 umask 077
 export LC_ALL=C
+ddns_closeout_enabled=false
 dns_settlement_enabled=false
 aliyun_settlement_enabled=false
 dnspod_settlement_enabled=false
@@ -234,11 +235,19 @@ case "$action" in
         # Re-sync an uncertain settled rename before opening the next writer.
         fsync "$ledger" "$journal" "$store" 2>/dev/null || exit 1;;
     collect)
-        if [ "$provider" != cloudflare ]; then
-            # Collection revalidates the current migration source; archive-check
-            # instead validates the retained historical generation and hashes.
-            ash "$dir/homegate-config-prototype.sh" --persistent migration-source-recovery-snapshot-read 3>&1 8>&- 9>&- >/dev/null 2>/dev/null |
-                lua "$dir/$terminal_codec" load "$account" "$revision" 8<"$slot/context" 3>/dev/null 4>&- 5>&- 9>&- >/dev/null 2>/dev/null || exit 1
+        source_command=migration-source-recovery-snapshot-read;ordinary=false
+        if [ -e "$store/gen-$revision/source.conf" ] || [ -L "$store/gen-$revision/source.conf" ]; then
+            [ "$ddns_closeout_enabled" = true ] || exit 2
+            source_command=runtime-ddns-recovery-snapshot-read;ordinary=true
+            for outer in /var/run/homegate/.ddns-plan-*; do
+                [ ! -e "$outer" ] && [ ! -L "$outer" ] || exit 1
+            done
+        fi
+        if [ "$provider" != cloudflare ] || [ "$ordinary" = true ]; then
+            # Rebind the exact checkpoint before archiving; never fall back from
+            # an ordinary source failure to the old migration snapshot.
+            ash "$dir/homegate-config-prototype.sh" --persistent "$source_command" 3>&1 8>&- 9>&- >/dev/null 2>/dev/null |
+                lua "$dir/$terminal_codec" receipt-checkpoint "$account" "$revision" current 8<"$slot/context" 3>&- 4>&- 5>&- 9>&- >/dev/null 2>/dev/null || exit 1
         fi
         [ ! -e "$store/.dns-collection-next" ] && [ ! -L "$store/.dns-collection-next" ] || exit 1
         terminal_check || exit 1

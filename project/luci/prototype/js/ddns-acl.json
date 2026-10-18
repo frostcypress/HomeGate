@@ -1,0 +1,25 @@
+{
+  "luci-app-homegate-ddns": {
+    "description": "Candidate HomeGate DDNS permission and status",
+    "read": {
+      "ubus": {
+        "homegate_ddns": [
+          "status",
+          "jobs"
+        ]
+      }
+    },
+    "write": {
+      "ubus": {
+        "homegate_ddns": [
+          "preview",
+          "commit",
+          "revoke",
+          "submit",
+          "maintain_preview",
+          "maintain_commit"
+        ]
+      }
+    }
+  }
+}

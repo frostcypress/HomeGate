@@ -1,0 +1,8 @@
+{
+  "admin/services/homegate/settings/ddns": {
+    "title": "DDNS Authorization",
+    "order": 25,
+    "action": {"type": "view", "path": "homegate/ddns"},
+    "depends": {"acl": ["luci-app-homegate-ddns"]}
+  }
+}

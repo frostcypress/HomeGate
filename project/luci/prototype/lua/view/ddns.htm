@@ -1,0 +1,19 @@
+<%+header%>
+<div id="homegate-ddns-native" data-token="<%=pcdata(token)%>" data-endpoint="<%=url('admin/services/homegate/ddns_native')%>"></div>
+<script src="<%=resource%>/homegate/ddns-ui.js"></script>
+<script>
+(function(){
+ var root=document.getElementById('homegate-ddns-native');
+ window.HomeGateDDNS.mount(root,function(action,form){
+  return new Promise(function(resolve,reject){
+   var xhr=new XMLHttpRequest(),write=action!=='status'&&action!=='jobs';
+   xhr.open(write?'POST':'GET',root.getAttribute('data-endpoint')+'/'+action,true);xhr.timeout=30000;
+   xhr.onload=function(){try{if(xhr.status!==200||xhr.responseText.length>65536)throw new Error();resolve(JSON.parse(xhr.responseText));}catch(e){reject(new Error('Request unavailable'));}};
+   xhr.onerror=xhr.ontimeout=function(){reject(new Error('Request unavailable'));};
+   var fields=[];if(write){fields.push('token='+encodeURIComponent(root.getAttribute('data-token')));Object.keys(form).forEach(function(k){fields.push(encodeURIComponent(k)+'='+encodeURIComponent(form[k]));});xhr.setRequestHeader('Content-Type','application/x-www-form-urlencoded');}
+   xhr.send(write?fields.join('&'):null);
+  });
+ });
+}());
+</script>
+<%+footer%>

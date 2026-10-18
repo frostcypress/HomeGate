@@ -31,7 +31,7 @@ jobs:
   source:
     name: 源码规范与回归检查
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 25
     steps:
       - name: 检出源码
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -197,6 +197,8 @@ jobs:
           build/verify-venv/bin/python scripts/配置预览回归.py
           build/verify-venv/bin/python scripts/native-ui-regressions.py
           build/verify-venv/bin/python scripts/配置预览页面回归.py
+          build/verify-venv/bin/python scripts/DDNS原生传输回归.py
+          build/verify-venv/bin/python scripts/DDNS授权页面回归.py
           build/verify-venv/bin/python scripts/legacy-footer-regressions.py
           build/verify-venv/bin/python scripts/luci-loader-regressions.py
       - name: 按公开清单生成源码包
@@ -214,7 +216,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        group: [Aliyun, DNSPod, Huawei, DDNS执行, DDNS授权状态]
+        group: [Aliyun, DNSPod, Huawei, DDNS执行, DDNS授权状态, DDNS全批, DDNS批次收尾, DDNS有界调度, DDNS生命周期CLI, DDNS原生授权UI, DDNS异步任务, DDNS明确维护]
     steps:
       - name: 检出相同源码
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1

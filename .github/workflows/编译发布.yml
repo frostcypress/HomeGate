@@ -93,6 +93,8 @@ jobs:
           python3 scripts/准备UCI解析回归.py
           python3 scripts/准备服务采样回归.py
           python3 scripts/准备curl回归.py
+      - name: 核实私有隔离并补齐官方bwrap配置
+        run: python3 scripts/prepare-ci-isolation.py
       - name: 验证宿主ucode与DDNS候选关闭门禁
         run: sh scripts/check-ucode.sh
       - name: 验证隔离rpcd参数与DDNS会话ACL

@@ -50,10 +50,10 @@ local function dispatch(route)
     id = id:gsub("[-\n]", ""):lower()
     local dir = "/tmp/homegate-luci-" .. id
     local path = dir .. "/request"
-    if not fs.mkdir(dir, 448) then return refused() end -- exclusive 0700
+    if not fs.mkdir(dir, "700") then return refused() end -- exclusive 0700
     local result, fd
     local ok = pcall(function()
-        fd = nx.open(path, nx.open_flags("wronly", "creat", "excl"), 384)
+        fd = nx.open(path, nx.open_flags("wronly", "creat", "excl"), "600")
         if not fd then error("private request") end
         local written = fd:writeall(body)
         local closed = fd:close()

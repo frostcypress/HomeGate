@@ -32,10 +32,10 @@ function M.call(action,form)
  local nonce=uuid:read(38);uuid:close()
  if type(nonce)~='string' or not nonce:match('^%x%x%x%x%x%x%x%x%-%x%x%x%x%-%x%x%x%x%-%x%x%x%x%-%x%x%x%x%x%x%x%x%x%x%x%x\n$') then return unavailable(action) end
  local dir='/tmp/homegate-ddns-ui-'..nonce:gsub('[-\n]',''):lower();local path=dir..'/request'
- if not fs.mkdir(dir,448) then return unavailable(action) end
+ if not fs.mkdir(dir,'700') then return unavailable(action) end
  local fd,result
  local ok=pcall(function()
-  fd=nx.open(path,nx.open_flags('wronly','creat','excl'),384);if not fd then error('request') end
+  fd=nx.open(path,nx.open_flags('wronly','creat','excl'),'600');if not fd then error('request') end
   local n=fd:writeall(body);local closed=fd:close();fd=nil;if n~=#body or not closed then error('request') end
   local out=require('luci.sys').exec(root.."/ddns-ui '"..path.."' 2>/dev/null")
   if type(out)~='string' or #out>65536 then error('response') end

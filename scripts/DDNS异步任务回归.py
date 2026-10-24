@@ -16,6 +16,10 @@ class Static(unittest.TestCase):
   self.assertNotIn(b'rm -r',b)
   for n in ['ddns-job.lua','homegate-ddns-job.lua','ddns-ui-policy.lua','homegate-ddns-ui.lua']:LuaRuntime().compile((PROTO/n).read_bytes())
  def specimen(self):return {'api_version':1,'prototype':True,'ok':True,'phase':'ddns-job','job':'a'*32,'rule':'ddns_a','configuration_revision':3,'pending':False,'state':'interrupted','result':False,'last_effect':'unknown','reason':'interrupted','effect':'none','write_ready':False}
+ def test_retained_history_schema_is_bounded_sorted_and_still_strict(self):
+  lua=LuaRuntime(unpack_returned_tuples=True);policy=lua.execute((PROTO/'ddns-job.lua').read_bytes());table=lambda d:lua.table_from(d,recursive=True)
+  d={'api_version':1,'prototype':True,'ok':True,'phase':'ddns-jobs','jobs':[{**self.specimen(),'job':format(n,'032x')} for n in range(1,33)],'effect':'none','write_ready':False};self.assertTrue(policy.response('jobs','',table(d)))
+  for jobs in [d['jobs']+[self.specimen()],list(reversed(d['jobs'])),[d['jobs'][0]]*2,[{**d['jobs'][0],'secret':'SECRET_SENTINEL'}]]:self.assertFalse(policy.response('jobs','',table({**d,'jobs':jobs})))
  def test_public_job_schema_rejects_secret_fields_success_on_unknown_and_foreign_scope(self):
   lua=LuaRuntime(unpack_returned_tuples=True);p=lua.execute((PROTO/'ddns-job.lua').read_bytes());d=self.specimen();table=lambda x:lua.table_from(x,recursive=True)
   self.assertTrue(p.response('submit','a'*32+':ddns_a',table(d)))
@@ -61,6 +65,17 @@ class Ali(JobMixin,AliBase):pass
 class DNP(JobMixin,DNPBase):pass
 class HW(JobMixin,HWBase):pass
 class Boundaries(CF):
+ def test_pending_observation_does_not_race_mutable_result_stage(self):
+  self.seed();self.launch();self.wait_job();path=self.job_dir/format(1,'032x');stage=path/'result.next';probe=self.base/'mutable-stage-inspected';before=self.files(self.job_dir);calls=len(self.calls)
+  # Represent a publisher's lock after all actual TLS work has finished. The
+  # command fault must not change an in-flight provider worker's tool set.
+  with (path/'lock').open('rb') as held:
+   fcntl.flock(held,fcntl.LOCK_EX|fcntl.LOCK_NB);stage.touch(mode=0o600)
+   self.fault('stat','from pathlib import Path\nif sys.argv[-1:]==['+repr(str(stage))+']:\n Path('+repr(str(stage))+').unlink(missing_ok=True);Path('+repr(str(probe))+').touch();sys.exit(1)')
+   try:
+    out=self.job_call('list');self.assertTrue(out['jobs'][0]['pending']);self.assertEqual(out['jobs'][0]['last_effect'],'unknown');self.assertFalse(probe.exists());self.assertTrue(stage.exists())
+   finally:self.restore_tool('stat');stage.unlink(missing_ok=True)
+  self.assertEqual(self.wait_job()['result']['status'],'unchanged');self.assertEqual(self.files(self.job_dir),before);self.assertEqual(len(self.calls),calls)
  def test_empty_read_does_not_create_and_gate_does_not_accept_environment(self):
   self.assertEqual(self.job_call('list')['jobs'],[]);self.assertFalse(self.job_dir.exists());self.job_helper.write_text(self.job_helper.read_text().replace('ddns_ui_jobs_enabled=true','ddns_ui_jobs_enabled=false'));self.launch(expected=2);self.assertEqual(self.job_call('check-quiescent')['jobs'],[]);self.assertEqual(self.calls,[])
  def test_missing_consent_bad_job_and_foreign_commands_are_pre_io(self):

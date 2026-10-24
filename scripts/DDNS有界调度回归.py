@@ -105,8 +105,12 @@ class Boundaries(CF):
     def test_budget_stops_after_three_due_rounds_without_polling_http(self):
         self.seed();self.accelerate();out=self.finish(self.start());self.assertEqual((out['reason'],out['ticks']),('budget',3));self.assertEqual(self.netlog.read_text().splitlines(),['addresses','routes']*3);self.assertEqual(self.mutations(),[]);self.control_call('reap')
     def test_tick_limit_stops_even_inside_remaining_budget(self):
-        current=self.cli('status')['revision'];body=(self.store/f'gen-{current}/public.conf').read_bytes().replace(b"option ddns_interval '300'",b"option ddns_interval '60'");p=self.cli('preview',payload=body);tx=self.cli('commit-apply-projection',p['confirmation']);self.cli('projection-publish',tx['apply_handle'],'apply');self.cli('apply-finish-projection',tx['apply_handle']);p=self.auth('preview-rules','ddns_a,ddns_b');self.auth('commit',p['confirmation']);self.baseline_config=self.config_bytes()
+        # One explicitly authorized member is sufficient to exercise all eight
+        # real admissions. Two-member pacing remains covered by the budget test
+        # and provider cases; repeating it here exhausted the 200s wall budget.
+        current=self.cli('status')['revision'];body=(self.store/f'gen-{current}/public.conf').read_bytes().replace(b"option ddns_interval '300'",b"option ddns_interval '60'");p=self.cli('preview',payload=body);tx=self.cli('commit-apply-projection',p['confirmation']);self.cli('projection-publish',tx['apply_handle'],'apply');self.cli('apply-finish-projection',tx['apply_handle']);p=self.auth('preview','ddns_a');self.auth('commit',p['confirmation']);self.baseline_config=self.config_bytes()
         self.seed();self.accelerate(60);out=self.finish(self.start(),timeout=200);self.assertEqual((out['reason'],out['ticks']),('ticks',8));self.assertEqual(self.netlog.read_text().splitlines(),['addresses','routes']*8);self.assertEqual(self.mutations(),[])
+        self.assertEqual(len(self.calls),16);self.assertTrue((self.state_dir/'ddns_a').is_file());self.assertFalse((self.state_dir/'ddns_b').exists())
     def test_cli_gate_concurrent_run_and_shared_locks_refuse(self):
         import fcntl
         for args in [[],['run'],['run','--confirm-closeouts'],['stop'],['reap','bad']]:self.control_call('run',2,args=args)

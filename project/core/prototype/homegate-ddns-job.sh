@@ -56,15 +56,16 @@ fallback() { printf '{"rule":"%s","provider":"%s","status":"%s","effect":"%s","e
 report() {
  # Caller holds catalog lock. No common business lock is acquired by observation.
  p=$1;private_dir "$p" && read_meta "$p" && [ "${p##*/}" = "$jid" ] || return 1
- members=0
- for member in "$p/"* "$p/".[!.]* "$p/"..?*;do
-  exists "$member" || continue;members=$((members+1));[ "$members" -le 11 ] && private_file "$member" || return 1
-  case "${member##*/}" in meta|lock|start|raw|result|result.next|proof|maintenance|maintenance.next|maintenance-used|maintained|maintained.next) ;; *) return 1;; esac
- done
  private_file "$p/lock" && [ "$(stat -c %s "$p/lock")" -eq 0 ] || return 1
  exec 5>>"$p/lock" || return 1;bound 5 "$p/lock" || return 1
  pending=false;state=interrupted;reason=interrupted;last=unknown;row=false
  if flock -n 5;then
+  bound 5 "$p/lock" || return 1
+  members=0
+  for member in "$p/"* "$p/".[!.]* "$p/"..?*;do
+   exists "$member" || continue;members=$((members+1));[ "$members" -le 11 ] && private_file "$member" || return 1
+   case "${member##*/}" in meta|lock|start|raw|result|result.next|proof|maintenance|maintenance.next|maintenance-used|maintained|maintained.next) ;; *) return 1;; esac
+  done
   if exists "$p/result";then
    private_file "$p/start" && [ "$(stat -c %s "$p/start")" -eq 0 ] && read_frame "$p/result" HGDDNSUIRESULT1 || return 1
    reason=${data%%:*};row=${data#*:}
@@ -74,6 +75,9 @@ report() {
    last=$(printf '%s\n' "$row" | lua "$dir/homegate-ddns-job.lua" effect "$jrule") || return 1;state=finished
    ! exists "$p/result.next" || return 1
    if exists "$p/maintained";then
+    # Only a fully published maintenance releases a working slot. Staged or
+    # leftover confirmations remain evidence, never a capacity grant.
+    ! exists "$p/maintained.next" && ! exists "$p/maintenance" && ! exists "$p/maintenance.next" || return 1
     saved_row=$row;saved_last=$last
     read_frame "$p/maintained" HGDDNSUIMAINTAINED1 || return 1
     hash "$p/meta" || return 1;hm=$h;hash "$p/result" || return 1
@@ -81,7 +85,11 @@ report() {
     row=$saved_row;last=$saved_last
    fi
   fi
- else pending=true;state=pending;reason=accepted;fi
+ else
+  # The worker owns mutable members through publication. Observe only stable
+  # metadata and the bound lock; never race rename or trust partial results.
+  pending=true;state=pending;reason=accepted
+ fi
  exec 5>&-
  printf '{"api_version":1,"prototype":true,"ok":true,"phase":"ddns-job","job":"%s","rule":"%s","configuration_revision":%s,"pending":%s,"state":"%s","result":%s,"last_effect":"%s","reason":"%s","effect":"none","write_ready":false}' "$jid" "$jrule" "$revision" "$pending" "$state" "$row" "$last" "$reason"
 }
@@ -107,6 +115,20 @@ origin() {
  origin_info=$(lua "$dir/homegate-ddns-job.lua" origin "$jrule" "$revision" "$provider" "$identity" "$generation" "$boot" 3<"$manifest" 4<"$terminal" < "$p/raw") || return 1
  hash "$manifest" || return 1;h_manifest=$h;hash "$terminal" || return 1
  origin_data=$origin_info:$h_manifest:$h
+}
+preview_frame() {
+ # A staged preview is never a grant. Recovery accepts only its exact current
+ # source binding; expiry may pass, but a future or malformed clock may not.
+ read_frame "$1" HGDDNSUIMAINTENANCE1 || return 1
+ prefix=$binding:;case "$data" in "$prefix"*) rest=${data#"$prefix"};; *) return 1;; esac
+ old_ifs=$IFS;IFS=:;set -- $rest;IFS=$old_ifs
+ [ "$#" -eq 3 ] && hex "$1" 32 || return 1
+ saved_nonce=$1;preview_start=$2;preview_finish=$3
+ [ "$rest" = "$saved_nonce:$preview_start:$preview_finish" ] || return 1
+ case "$preview_start:$preview_finish" in *[!0-9:]*) return 1;; esac
+ case "$preview_start" in ''|0?*) return 1;; esac;case "$preview_finish" in ''|0?*) return 1;; esac
+ [ "${#preview_start}" -le 9 ] && [ "${#preview_finish}" -le 9 ] &&
+  [ "$preview_finish" -eq "$((preview_start+300))" ] && [ "$preview_start" -ge "$created" ] && [ "$current_now" -ge "$preview_start" ]
 }
 if [ "$action" = work ];then
  # Only the fixed detached child receives these three open lock descriptions.
@@ -139,10 +161,11 @@ if ! exists "$catalog";then [ "$action" = submit ] && (set -C; : > "$catalog") |
 private_file "$catalog" && [ "$(stat -c %s "$catalog")" -eq 0 ] || fail
 exec 9>>"$catalog" || fail;bound 9 "$catalog" && flock -n 9 || fail 4
 bound 9 "$catalog" || fail
-count=0;joined=;sep=;existing=;unresolved=false
+count=0;retained=0;joined=;sep=;existing=;unresolved=false
 for p in "$root/"* "$root/".[!.]* "$root/"..?*;do
- exists "$p" || continue;count=$((count+1));[ "$count" -le 8 ] || fail
+ exists "$p" || continue;retained=$((retained+1));[ "$retained" -le 32 ] || fail
  one=$(report "$p") || fail
+ case "$one" in *'"reason":"archived"'*|*'"reason":"compacted"'*) ;; *) count=$((count+1));; esac
  case "$one" in *'"state":"finished"'*) case "$one" in *'"last_effect":"unknown"'*) unresolved=true;; esac;; *) unresolved=true;; esac
  joined=$joined$sep$one;sep=,
  if [ "$action" = submit ] && [ "${p##*/}" = "$job" ];then read_meta "$p" && [ "$jrule" = "$rule" ] || fail 4;existing=$one;fi
@@ -170,16 +193,21 @@ case "$action" in maintain-preview|maintain-commit)
  binding=$job:$hm:$hr:$raw_hash:$proof_hash:$operation:$current_boot
  if [ "$action" = maintain-preview ];then
   nonce=$(cat /proc/sys/kernel/random/uuid) || fail;old_ifs=$IFS;IFS=-;set -- $nonce;IFS=$old_ifs;[ "$#" -eq 5 ] || fail;nonce=$1$2$3$4$5;hex "$nonce" 32 || fail
-  for f in "$p/maintenance" "$p/maintenance.next";do ! exists "$f" || private_file "$f" || fail;done
-  ! exists "$p/maintenance.next" || fail
+  for f in "$p/maintenance" "$p/maintenance.next";do
+   if exists "$f";then preview_frame "$f" && [ "$saved_nonce" != "$nonce" ] || fail;fi
+  done
+  if exists "$p/maintenance.next";then
+   ! exists "$p/maintenance-used" || private_file "$p/maintenance-used" || fail
+   # Retire the old published nonce first. Every failure leaves either a
+   # blocking stage or no published confirmation; no old consent revives.
+   if exists "$p/maintenance";then mv -f "$p/maintenance" "$p/maintenance-used" && fsync "$p/maintenance-used" "$p" || fail;fi
+   mv -f "$p/maintenance.next" "$p/maintenance-used" && fsync "$p/maintenance-used" "$p" || fail
+  fi
   (set -C;frame HGDDNSUIMAINTENANCE1 "$binding:$nonce:$current_now:$((current_now+300))" > "$p/maintenance.next") && fsync "$p/maintenance.next" "$p" && mv -f "$p/maintenance.next" "$p/maintenance" && fsync "$p/maintenance" "$p" || fail
   printf '{"api_version":1,"prototype":true,"ok":true,"phase":"ddns-maintenance","job":"%s","rule":"%s","operation":"%s","confirmation":"%s","expires_in":300,"effect":"none","write_ready":false}\n' "$job" "$jrule" "$operation" "$nonce";exit 0
  fi
- read_frame "$p/maintenance" HGDDNSUIMAINTENANCE1 || fail 5
- prefix=$binding:$confirmation:;case "$data" in "$prefix"*) times=${data#"$prefix"};; *) fail 5;; esac
- start=${times%%:*};finish=${times#*:};case "$start:$finish" in *[!0-9:]*) fail 5;; esac
- case "$start" in ''|0?*) fail 5;; esac;case "$finish" in ''|0?*) fail 5;; esac
- [ "${#start}" -le 9 ] && [ "${#finish}" -le 9 ] && [ "$finish" -eq "$((start+300))" ] && [ "$current_now" -ge "$start" ] && [ "$current_now" -le "$finish" ] || fail 5
+ ! exists "$p/maintenance.next" || fail 5
+ preview_frame "$p/maintenance" && [ "$saved_nonce" = "$confirmation" ] && [ "$current_now" -le "$preview_finish" ] || fail 5
  ! exists "$p/maintenance-used" || private_file "$p/maintenance-used" || fail
  mv -f "$p/maintenance" "$p/maintenance-used" && fsync "$p/maintenance-used" "$p" || fail
  if [ "$operation" = archive ];then
@@ -198,7 +226,7 @@ if [ "$action" != submit ];then
  printf '{"api_version":1,"prototype":true,"ok":true,"phase":"ddns-jobs","jobs":[%s],"effect":"none","write_ready":false}\n' "$joined";exit 0
 fi
 if [ -n "$existing" ];then printf '%s\n' "$existing";exit 0;fi
-[ "$unresolved" = false ] && [ "$count" -lt 8 ] || fail 4
+[ "$unresolved" = false ] && [ "$count" -lt 8 ] && [ "$retained" -lt 32 ] || fail 4
 business_locks || fail 4
 snapshot || fail
 provider=$(ash "$dir/homegate-ddns-state.sh" status "$rule" | lua "$dir/homegate-ddns-job.lua" status "$rule") || fail 4

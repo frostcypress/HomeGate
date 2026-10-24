@@ -73,12 +73,12 @@ package.preload['luci.http']=function() return {
 package.preload['luci.jsonc']=function() return {stringify=encode,parse=decode} end
 package.preload['nixio.util']=function() return {} end
 package.preload['nixio.fs']=function() return {
- mkdir=function(path,mode) captured.dir=path; assert(mode==448); return not fail_mkdir end,
+ mkdir=function(path,mode) captured.dir=path; assert(mode=='700'); return not fail_mkdir end,
  unlink=function(path)captured.unlinked=path;return true end,
  rmdir=function(path)captured.removed=path;return true end} end
 package.preload['nixio']=function() return {
  open_flags=function(...) assert(table.concat({...},',')=='wronly,creat,excl'); return 1 end,
- open=function(path,flags,mode) assert(mode==384); captured.path=path; return {
+ open=function(path,flags,mode) assert(mode=='600'); captured.path=path; return {
  writeall=function(self,body) captured.private_body=body; if fail_write then error('SECRET_SENTINEL') end; return short_write and 0 or #body end,
  close=function()captured.closed=(captured.closed or 0)+1; return true end} end} end
 package.preload['luci.sys']=function() return {exec=function(command)

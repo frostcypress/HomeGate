@@ -19,8 +19,8 @@ package.preload['luci.dispatcher']=function()return {context={authtoken=csrf}}en
 package.preload['luci.model.homegate.backup']=function()return backup_codec end
 package.preload['luci.jsonc']=function()return {parse=decode}end
 package.preload['nixio.util']=function()return {}end
-package.preload['nixio.fs']=function()return {mkdir=function(p,m)captured.dir=p;assert(m==448);return true end,unlink=function(p)captured.unlink=p end,rmdir=function(p)captured.rmdir=p end}end
-package.preload['nixio']=function()return {open_flags=function(...)return 1 end,open=function(p,f,m)captured.path=p;assert(m==384);return {writeall=function(self,s)captured.private=s;if broken then error('SECRET_SENTINEL')end;return short and 0 or #s end,close=function()captured.closed=(captured.closed or 0)+1;return true end}end}end
+package.preload['nixio.fs']=function()return {mkdir=function(p,m)captured.dir=p;assert(m=='700');return true end,unlink=function(p)captured.unlink=p end,rmdir=function(p)captured.rmdir=p end}end
+package.preload['nixio']=function()return {open_flags=function(...)return 1 end,open=function(p,f,m)captured.path=p;assert(m=='600');return {writeall=function(self,s)captured.private=s;if broken then error('SECRET_SENTINEL')end;return short and 0 or #s end,close=function()captured.closed=(captured.closed or 0)+1;return true end}end}end
 package.preload['luci.sys']=function()return {exec=function(c)captured.command=c;return response end}end
 io.open=function(p,m)assert(p=='/proc/sys/kernel/random/uuid');return {read=function()return '12345678-1234-1234-1234-123456789abc\\n'end,close=function()return true end}end
 ''')
@@ -61,6 +61,8 @@ io.open=function(p,m)assert(p=='/proc/sys/kernel/random/uuid');return {read=func
    out=self.call('submit',{**form,k:v});self.assertFalse(out['ok']);self.assertEqual(out['effect'],'unknown')
  def test_jobs_read_does_not_require_csrf_and_rejects_wrong_scope_or_secret(self):
   self.lua.globals().method='GET';self.result.update(operation='jobs',report={'api_version':1,'prototype':True,'ok':True,'phase':'ddns-jobs','jobs':[self.job()],'effect':'none','write_ready':False});self.assertTrue(self.call('jobs',{})['ok']);self.result['report']['jobs'][0]['secret']='SECRET_SENTINEL';out=self.call('jobs',{});self.assertFalse(out['ok']);self.assertNotIn('SECRET_SENTINEL',json.dumps(out))
+ def test_retained_identifier_ceiling_survives_native_read_transport(self):
+  self.lua.globals().method='GET';jobs=[{**self.job(),'job':format(n,'032x')} for n in range(1,33)];self.result.update(operation='jobs',report={'api_version':1,'prototype':True,'ok':True,'phase':'ddns-jobs','jobs':jobs,'effect':'none','write_ready':False});self.assertTrue(self.call('jobs',{})['ok']);self.result['report']['jobs'].append({**self.job(),'job':format(33,'032x')});self.assertFalse(self.call('jobs',{})['ok']);c=self.lua.globals().captured;self.assertEqual(c.unlink,c.path);self.assertEqual(c.rmdir,c.dir);self.assertIn('"action":"jobs"',c.private);self.assertNotIn('csrf',c.private)
  def test_submit_lost_or_wrong_response_never_claims_no_effect(self):
   self.result.update(operation='submit',effect='none',report=self.job());form={'job':'a'*32,'rule':'ddns_a','consent':'1','token':'csrf'};out=self.call('submit',form);self.assertFalse(out['ok']);self.assertEqual(out['effect'],'unknown');self.result['effect']='unknown';self.result['report']['rule']='other';self.assertFalse(self.call('submit',form)['ok'])
  def test_maintenance_requires_csrf_fresh_nonce_and_exact_receipt_scope(self):

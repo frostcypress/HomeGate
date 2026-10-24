@@ -5,12 +5,13 @@ from pathlib import Path
 from urllib.parse import parse_qs
 from playwright.sync_api import sync_playwright
 from project import ROOT
-UI=ROOT/'project/luci/prototype';OUT=ROOT/'docs/验证/r76-页面截图'
+UI=ROOT/'project/luci/prototype';OUT=ROOT/'build/ddns-ui-regressions'
 class Browser(unittest.TestCase):
  @classmethod
  def setUpClass(cls):
+  OUT.mkdir(parents=True,exist_ok=True)
   cls.pw=sync_playwright().start();edge=Path(r'C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe');executable=os.environ.get('HOMEGATE_BROWSER') or (str(edge) if edge.exists() else None)
-  cls.browser=cls.pw.chromium.launch(**({'executable_path':executable} if executable else {}),headless=True);OUT.mkdir(exist_ok=True)
+  cls.browser=cls.pw.chromium.launch(**({'executable_path':executable} if executable else {}),headless=True)
  @classmethod
  def tearDownClass(cls):cls.browser.close();cls.pw.stop()
  def open(self,variant):
@@ -125,7 +126,21 @@ var m=new Function('view','rpc','L','E',MODULE)(view,rpc,L,E);Promise.resolve(m.
  def test_interrupted_and_full_retention_block_submission(self):
   for variant in self.variants():
    with self.subTest(variant=variant):
-    self.open(variant);self.retained=[self.job(state='interrupted')];self.page.get_by_role('button',name='刷新状态',exact=True).click();self.page.get_by_text('ddns_a · 任务中断，结果未知',exact=False).wait_for();self.choose();self.assertTrue(self.page.get_by_role('button',name='同步所选规则一次').is_disabled());self.retained=[self.job(format(i,'032x'),state='finished',effect='none') for i in range(1,9)];self.page.get_by_role('button',name='刷新状态',exact=True).click();self.page.get_by_text('已保留 8 份任务；需要后续明确维护。').wait_for();self.assertTrue(self.page.get_by_role('button',name='同步所选规则一次').is_disabled())
+    self.open(variant);self.retained=[self.job(state='interrupted')];self.page.get_by_role('button',name='刷新状态',exact=True).click();self.page.get_by_text('ddns_a · 任务中断，结果未知',exact=False).wait_for();self.choose();self.assertTrue(self.page.get_by_role('button',name='同步所选规则一次').is_disabled());self.retained=[self.job(format(i,'032x'),state='finished',effect='none') for i in range(1,9)];self.page.get_by_role('button',name='刷新状态',exact=True).click();self.page.get_by_text('已有 8 份任务等待明确维护；维护成功后可释放任务名额。').wait_for();self.assertTrue(self.page.get_by_role('button',name='同步所选规则一次').is_disabled())
+ def test_explicit_maintenance_frees_slot_with_nine_retained_tickets(self):
+  for variant in self.variants():
+   with self.subTest(variant=variant):
+    self.open(variant);self.retained=[self.job(format(i,'032x'),state='finished',effect='confirmed') for i in range(1,9)];self.page.get_by_role('button',name='刷新状态',exact=True).click();self.page.get_by_text('已有 8 份任务等待明确维护；维护成功后可释放任务名额。').wait_for();self.choose();run=self.page.get_by_role('button',name='同步所选规则一次');self.assertTrue(run.is_disabled());self.page.get_by_role('button',name='预览维护 ddns_a',exact=True).first.click();self.page.get_by_text('维护预览尚未执行，请核对后勾选确认。').wait_for();self.assertTrue(run.is_disabled());self.page.locator('#hg-ddns-maintain-consent').check();self.page.get_by_role('button',name='确认此次维护',exact=True).click();self.page.get_by_text('ddns_a · 回执已归档，保留原摘要',exact=False).wait_for();self.assertTrue(run.is_enabled());self.assertEqual(sum(a=='maintain_commit' for a,f in self.calls),1);self.assertNotIn('submit',[a for a,f in self.calls])
+    self.retained.append(self.job(format(9,'032x'),state='finished',effect='none'));self.page.get_by_role('button',name='刷新状态',exact=True).click();self.page.get_by_text('已有 8 份任务等待明确维护；维护成功后可释放任务名额。').wait_for();self.assertTrue(run.is_disabled());self.assertEqual(self.page.get_by_role('list',name='保留的 DDNS 任务').locator('li').count(),9)
+ def test_identifier_ceiling_and_invalid_history_never_enable_submission(self):
+  for variant in self.variants():
+   with self.subTest(variant=variant):
+    self.open(variant);self.retained=[self.job(format(i,'032x'),state='finished',effect='none') for i in range(1,33)]
+    for j in self.retained:j['reason']='compacted'
+    self.page.get_by_role('button',name='刷新状态',exact=True).click();self.page.get_by_text('本次启动已保留 32 个标识；为保留防重放依据，停止接受新任务。').wait_for();self.choose();run=self.page.get_by_role('button',name='同步所选规则一次');self.assertTrue(run.is_disabled());self.assertEqual(self.page.get_by_role('list',name='保留的 DDNS 任务').locator('li').count(),32)
+    for invalid in [self.retained+[self.job(format(33,'032x'),state='finished',effect='none')],[{**self.retained[0],'last_effect':'unknown'}]]:
+     self.retained=invalid;self.page.get_by_role('button',name='刷新状态',exact=True).click();self.page.get_by_text('任务读取未确认，请刷新读取；不要重复提交。').wait_for();self.assertTrue(run.is_disabled())
+    self.assertNotIn('submit',[a for a,f in self.calls]);self.assertEqual(self.page.evaluate('localStorage.length+sessionStorage.length'),0)
  def test_job_malformed_success_is_rejected_without_retry(self):
   for variant in self.variants():
    with self.subTest(variant=variant):

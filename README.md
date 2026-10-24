@@ -28,6 +28,12 @@ python3 scripts/frontend-source-regressions.py
 
 配置备份只导出允许的公共字段，排除凭据、私钥和带认证地址；恢复后总开关关闭。生产配置迁移与完整生命周期仍需完成，见 [重构设计](docs/重构设计.md)。
 
+目标设备的只读接口核实、SDK/ABI 与真实 LuCI/rpcd 的验证边界见 [目标验证入口](docs/目标SDK与LuCI验证入口.md)。
+
+`sh scripts/check-luci.sh` 验证固定宿主的真实会话、POST/CSRF，以及 LuCI HTTP 到 Shell DDNS 状态/任务只读链路；依赖已准备的 BusyBox 1.33.2。所有原候选门禁保持关闭，详见 [只读链路边界](docs/LuCI与ShellDDNS只读链路验证.md)。
+
+同一入口还验证 [HTTP/rpcd 到 Shell 只读链路](docs/HTTPRPC与ShellDDNS只读链路验证.md)，包括只读角色、旧式RPC及Bearer会话授权；临时夹具开启候选副本不表示生产接入完成。
+
 ## 构建与分发
 
 工作流从同一提交检查源码；只有目标 SDK、ABI、核心和包名迁移满足门禁时才允许构建 Core、LuCI、中文语言三包。Lua/JS 与 IPK/APK 分开按目标选择。历史 Go 打包工具仅用于显式启用的对照验证，不能作为新三包交付。

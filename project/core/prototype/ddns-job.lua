@@ -29,7 +29,7 @@ function M.response(action,payload,d)
   return keys(d,fields,n) and d.api_version==1 and d.prototype==true and d.ok==true and d.phase=='ddns-maintenance' and d.job==payload:sub(1,32) and hex(d.job) and id(d.rule) and (d.operation=='compact' or d.operation=='archive') and d.effect=='none' and d.write_ready==false and ((action=='maintain_preview' and hex(d.confirmation) and d.expires_in==300) or (action=='maintain_commit' and d.completed==true))
  end
  if action=='submit' then return M.report(d) and d.job..':'..d.rule==payload end
- if action~='jobs' or not keys(d,{api_version=true,prototype=true,ok=true,phase=true,jobs=true,effect=true,write_ready=true},7) or d.api_version~=1 or d.prototype~=true or d.ok~=true or d.phase~='ddns-jobs' or d.effect~='none' or d.write_ready~=false or type(d.jobs)~='table' or #d.jobs>8 then return false end
+ if action~='jobs' or not keys(d,{api_version=true,prototype=true,ok=true,phase=true,jobs=true,effect=true,write_ready=true},7) or d.api_version~=1 or d.prototype~=true or d.ok~=true or d.phase~='ddns-jobs' or d.effect~='none' or d.write_ready~=false or type(d.jobs)~='table' or #d.jobs>32 then return false end
  local prev='';for k,v in pairs(d.jobs) do if type(k)~='number' or k<1 or k>#d.jobs or k~=math.floor(k) then return false end end
  for _,v in ipairs(d.jobs) do if not M.report(v) or prev>=v.job then return false end;prev=v.job end;return true
 end

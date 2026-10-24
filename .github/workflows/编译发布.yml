@@ -56,7 +56,7 @@ jobs:
       - name: 安装 BusyBox、语法解析与页面回归依赖
         run: |
           sudo apt-get update
-          sudo apt-get install --no-install-recommends -y build-essential lua5.1 liblua5.1-0-dev libjson-c-dev libssl-dev
+          sudo apt-get install --no-install-recommends -y build-essential lua5.1 liblua5.1-0-dev libjson-c-dev libssl-dev cmake pkg-config libcrypt-dev bubblewrap zstd
           mkdir -p build/busybox-runtime
           curl --fail --location --connect-timeout 15 --max-time 120 \
             https://busybox.net/downloads/busybox-1.33.2.tar.bz2 \
@@ -93,6 +93,14 @@ jobs:
           python3 scripts/准备UCI解析回归.py
           python3 scripts/准备服务采样回归.py
           python3 scripts/准备curl回归.py
+      - name: 验证宿主ucode与DDNS候选关闭门禁
+        run: sh scripts/check-ucode.sh
+      - name: 验证隔离rpcd参数与DDNS会话ACL
+        run: sh scripts/check-rpcd.sh
+      - name: 验证真实HTTP会话授权与拒绝路径
+        run: sh scripts/check-http.sh
+      - name: 验证Lua会话CSRF及Lua与RPC的Shell只读链路
+        run: sh scripts/check-luci.sh
       - name: 验证固定来源持久旧配置迁移
         run: |
           build/verify-venv/bin/python scripts/持久旧配置迁移回归.py

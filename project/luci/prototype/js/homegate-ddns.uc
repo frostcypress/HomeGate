@@ -1,6 +1,6 @@
 'use strict';
 import { mkdir, open, unlink, rmdir, popen } from 'fs';
-// Candidate rpcd service; rpcd supplies session ACL enforcement. Not installed.
+// Candidate only. HTTP transport must enforce rpcd session ACL before dispatch; local ubus does not. Not installed.
 const native_ddns_rpc_enabled = false;
 function denied(action) { return {api_version:1,prototype:true,ok:false,phase:'ddns-ui',effect:action=='submit'?'unknown':'none',write_ready:false,error:'DDNS UI request refused'}; }
 function execute(action,args) {

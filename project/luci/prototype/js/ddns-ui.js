@@ -23,7 +23,7 @@ function mount(root,request){
  var run=button('同步所选规则一次',submit);actions.appendChild(run);
  var jobNotice=node('p','正在读取保留任务…');jobNotice.setAttribute('role','status');root.appendChild(jobNotice);
  var jobList=node('ul');jobList.setAttribute('aria-label','保留的 DDNS 任务');root.appendChild(jobList);
- root.appendChild(node('p','每次仅同步一条规则，最多保留 8 份内存任务。不会自动重发、清理或收尾；重启后任务摘要丢失，原持久回执仍需明确处理。'));
+ root.appendChild(node('p','每次仅同步一条规则，最多 8 份任务等待明确维护，本次启动累计保留 32 个标识。维护完成后释放任务名额，旧标识仍保留防重放；不会自动重发、清理或收尾。重启后任务摘要丢失，原持久回执仍需明确处理。'));
  var pane=node('div');pane.hidden=true;pane.setAttribute('aria-live','polite');root.appendChild(pane);
  var scope=node('p'),consent=node('input');consent.type='checkbox';consent.id='hg-ddns-consent';
  var label=node('label','我确认允许这些规则执行 DDNS');label.htmlFor=consent.id;
@@ -42,7 +42,8 @@ function mount(root,request){
   });
  });mpane.appendChild(mscope);mpane.appendChild(mconsent);mpane.appendChild(mlabel);mpane.appendChild(mcommit);mpane.appendChild(button('关闭维护预览',invalidate));mconsent.onchange=controls;
  function selected(){return Object.keys(chosen).filter(function(k){return chosen[k];}).sort();}
- function controls(){refresh.disabled=busy;preview.disabled=busy||selected().length===0;revoke.disabled=busy;commit.disabled=busy||!staged||!consent.checked;mcommit.disabled=busy||!mstaged||!mconsent.checked;maintenanceButtons.forEach(function(b){b.disabled=busy||jobBusy||uncertain;});run.disabled=busy||jobBusy||!jobsKnown||uncertain||selected().length!==1||jobs.length>=8||jobs.some(function(j){return j.pending||j.state==='interrupted'||j.last_effect==='unknown';});}
+ function waitingMaintenance(){return jobs.filter(function(j){return !['archived','compacted'].includes(j.reason);}).length;}
+ function controls(){refresh.disabled=busy;preview.disabled=busy||selected().length===0;revoke.disabled=busy;commit.disabled=busy||!staged||!consent.checked;mcommit.disabled=busy||!mstaged||!mconsent.checked;maintenanceButtons.forEach(function(b){b.disabled=busy||jobBusy||uncertain;});run.disabled=busy||jobBusy||!jobsKnown||uncertain||selected().length!==1||jobs.length>=32||waitingMaintenance()>=8||jobs.some(function(j){return j.pending||j.state==='interrupted'||j.last_effect==='unknown';});}
  function invalidate(){epoch++;staged=null;consent.checked=false;pane.hidden=true;mstaged=null;mconsent.checked=false;mpane.hidden=true;controls();}
  consent.onchange=controls;
  function valid(d,action){return d&&d.api_version===1&&d.prototype===true&&d.ok===true&&d.phase==='ddns-ui'&&d.operation===action&&d.effect===(action==='submit'?'unknown':'none')&&d.write_ready===false&&d.report&&d.report.ok===true;}
@@ -62,19 +63,19 @@ function mount(root,request){
   jobList.replaceChildren();maintenanceButtons=[];jobs.forEach(function(j){var text=j.pending?'等待或执行中':j.state==='interrupted'?'任务中断，结果未知':j.last_effect==='unknown'?'结果未知，保留证据，请核实':j.reason==='archived'?'回执已归档，保留原摘要':j.reason==='compacted'?'明细已释放，保留任务标识':({created:'已创建；需明确收尾',updated:'已更新；需明确收尾',unchanged:'记录未变',failed:'执行失败'}[j.result.status]||statuses[j.result.status]);var item=node('li',j.rule+' · '+text+' · '+j.job);jobList.appendChild(item);
    if(j.state==='finished'&&j.last_effect!=='unknown'&&!['archived','compacted'].includes(j.reason)){var b=button('预览维护 '+j.rule,function(){maintain(j);});maintenanceButtons.push(b);item.appendChild(b);}
   });
-  jobNotice.textContent=uncertain?'提交结果未确认，只读取保留任务；请勿重发。':jobs.length>=8?'已保留 8 份任务；需要后续明确维护。':jobs.some(function(j){return j.pending;})?'任务尚未完成，正在读取结果。':jobs.length?'保留任务已读取；未知或中断结果需要核实。':'当前没有保留任务。';
+  jobNotice.textContent=uncertain?'提交结果未确认，只读取保留任务；请勿重发。':jobs.length>=32?'本次启动已保留 32 个标识；为保留防重放依据，停止接受新任务。':waitingMaintenance()>=8?'已有 8 份任务等待明确维护；维护成功后可释放任务名额。':jobs.some(function(j){return j.pending;})?'任务尚未完成，正在读取结果。':jobs.length?'保留任务已读取；未知或中断结果需要核实。':'当前没有保留任务。';
  }
  function maintain(job){
   if(busy||jobBusy||uncertain)return;invalidate();perform('maintain_preview',{job:job.job},function(d){
    var r=d.report,operation=job.last_effect==='confirmed'?'archive':'compact';
    if(!exact(r,['api_version','prototype','ok','phase','job','rule','operation','confirmation','expires_in','effect','write_ready'])||r.phase!=='ddns-maintenance'||r.job!==job.job||r.rule!==job.rule||r.operation!==operation||!/^[0-9a-f]{32}$/.test(r.confirmation)||r.expires_in!==300||r.effect!=='none'||r.write_ready!==false)throw new Error();
-   mstaged=r;mscope.textContent=(operation==='archive'?'仅归档此任务的已确认原回执，不删除归档。':'仅释放此任务的已知未写入原始明细。')+'任务标识保留用于防重放，占用本次启动的 8 个标识预算；预览有效 300 秒。';mpane.hidden=false;notice.textContent='维护预览尚未执行，请核对后勾选确认。';
+   mstaged=r;mscope.textContent=(operation==='archive'?'仅归档此任务的已确认原回执，不删除归档。':'仅释放此任务的已知未写入原始明细。')+'维护成功后释放一个任务名额；标识仍占本次启动累计 32 个标识预算，用于防重放。预览有效 300 秒。';mpane.hidden=false;notice.textContent='维护预览尚未执行，请核对后勾选确认。';
   });
  }
  function loadJobs(){
   if(jobBusy)return;if(timer){global.clearTimeout(timer);timer=null;}jobBusy=true;controls();
   Promise.resolve().then(function(){return request('jobs',{});}).then(function(d){
-   var r=d&&d.report;if(!valid(d,'jobs')||!exact(r,['api_version','prototype','ok','phase','jobs','effect','write_ready'])||r.api_version!==1||r.prototype!==true||r.ok!==true||r.phase!=='ddns-jobs'||r.effect!=='none'||r.write_ready!==false||!Array.isArray(r.jobs)||r.jobs.length>8)throw new Error();
+   var r=d&&d.report;if(!valid(d,'jobs')||!exact(r,['api_version','prototype','ok','phase','jobs','effect','write_ready'])||r.api_version!==1||r.prototype!==true||r.ok!==true||r.phase!=='ddns-jobs'||r.effect!=='none'||r.write_ready!==false||!Array.isArray(r.jobs)||r.jobs.length>32)throw new Error();
    var previous='';r.jobs.forEach(function(j){if(!jobValid(j)||previous>=j.job)throw new Error();previous=j.job;});jobs=r.jobs;jobsKnown=true;
    if(ticket&&jobs.some(function(j){return j.job===ticket;})){uncertain=false;ticket=null;}drawJobs();
    if(jobs.some(function(j){return j.pending;})){if(polls<180){polls++;timer=global.setTimeout(loadJobs,1000);}else jobNotice.textContent='轮询已暂停；任务未被重发，请手动刷新读取。';}

@@ -2,7 +2,7 @@
 
 r74 本地专项完成。候选源码位于 project/luci/prototype，生产 LuCI/核心配方不安装，四个新门禁默认关闭。旧控制器、42条路由、Go桥接、生产菜单与ACL保持原字节，不能将本地候选称为完整生产UI或目标LuCI验收。
 
-Lua LuCI 页面使用受会话保护的 GET 状态和 POST 授权入口；模型重新校验POST和当前CSRF令牌，不能由请求自报已授权。JS LuCI 使用独立 homegate_ddns rpcd 服务：read ACL仅status，write ACL仅preview/commit/revoke；rpcd继续负责会话权限。候选安装时需分别放置控制器/模型/模板、共享脚本和JS view/rpcd/ACL；生产安装与菜单切换待后续统一，不自动启用候选。
+Lua LuCI 页面使用受会话保护的 GET 状态和 POST 授权入口；模型重新校验POST和当前CSRF令牌，不能由请求自报已授权。JS LuCI 使用独立 homegate_ddns rpcd 服务：read ACL仅status，write ACL仅preview/commit/revoke；HTTP入口须在派发前核实rpcd会话权限，直接本地ubus不会自动执行这项检查。候选安装时需分别放置控制器/模型/模板、共享脚本和JS view/rpcd/ACL；生产安装与菜单切换待后续统一，不自动启用候选。
 
 两端共用原生DOM紧凑列表及Bootstrap组件类，显示普通配置最多32条规则标识、供应商、状态和等待秒数。只读刷新不采样、不访问供应商、不创建调度缓存。选择规则后先POST预览，再核对绑定配置版本及完整规则集合，勾选同意并确认才提交原32位确认码。授权不会立即更新DNS、启动服务或打开旧UCI开关。多规则提交替换完整许可，规则以外的成员不会自动加入。明确撤销只调用原撤销入口，不替代正在进行的操作的停止或原持久收尾。
 
@@ -17,4 +17,4 @@ Lua LuCI 页面使用受会话保护的 GET 状态和 POST 授权入口；模型
 
 ## r75 扩展
 
-r74 描述为授权/状态基线。当前候选额外支持明确单条同步与异步只读结果，见 [DDNS单次异步任务](DDNS单次异步任务.md)。read ACL 增加 jobs，write ACL 增加 submit；原四门禁和新任务门禁均关闭，无真实 ucode/rpcd 验收或生产安装。
+r74 描述为授权/状态基线。当前候选额外支持明确单条同步与异步只读结果，见 [DDNS单次异步任务](DDNS单次异步任务.md)，并支持明确维护。当前read ACL为status/jobs，write ACL为preview/commit/revoke/submit/maintain_preview/maintain_commit；候选门禁均关闭。r81 增加[真实宿主 ucode 检查](DDNS候选ucode宿主验证.md)，r82 增加[隔离真实rpcd及会话ACL检查](DDNS候选rpcd与会话ACL验证.md)；r83 增加[宿主HTTP会话授权检查](DDNS候选HTTP会话授权验证.md)。r84 增加[固定官方Lua LuCI的真实CGI会话与POST/CSRF宿主入口](LuaLuCI会话与CSRF宿主验证.md)，并修正nixio私有权限参数。目标LuCI源码/兼容性、TLS、设备及生产安装仍未验收。

@@ -226,7 +226,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        group: [Aliyun, DNSPod, Huawei, DDNS执行, DDNS授权状态, DDNS全批, DDNS批次收尾, DDNS有界调度, DDNS生命周期CLI, DDNS原生授权UI, DDNS异步任务, DDNS明确维护]
+        group: [Aliyun, DNSPod, Huawei, DDNS执行, DDNS授权状态, DDNS授权收尾, DDNS全批, DDNS批次收尾, DDNS有界调度, DDNS生命周期CLI, DDNS原生授权UI, DDNS异步任务, DDNS明确维护]
     steps:
       - name: 检出相同源码
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1

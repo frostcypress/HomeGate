@@ -245,7 +245,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        group: [authority, tasks, receipts]
+        group: [authority, tasks, receipts-cloudflare, receipts-aliyun, receipts-dnspod, receipts-huawei]
     steps:
       - name: 检出相同源码
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1

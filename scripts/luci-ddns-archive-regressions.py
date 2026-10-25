@@ -19,8 +19,14 @@ CASES=('01','02','03','04','05','06')
 
 def setup_state(state):
     provider.setup_state(state)
+    enable_archive(state)
+
+
+def enable_archive(state,provider_name='cloudflare'):
+    if provider_name not in ('cloudflare','aliyun','dnspod','huaweicloud'):raise ValueError('Unsupported archive fixture provider')
+    reconcile=('dns_reconcile_enabled',) if provider_name=='cloudflare' else ('dns_reconcile_enabled',provider_name+'_reconcile_enabled')
     flags={'homegate-ddns-job.sh':('ddns_ui_maintenance_enabled',),
-           'homegate-cloudflare-read.sh':('ddns_closeout_enabled','dns_reconcile_enabled'),
+           'homegate-cloudflare-read.sh':('ddns_closeout_enabled',*reconcile),
            'homegate-dns-recovery.sh':('ddns_closeout_enabled',)}
     for name,names in flags.items():
         path=state/'project/core/prototype'/name;body=path.read_bytes()
@@ -42,6 +48,8 @@ os.execv('/usr/sbin/busybox',['busybox','fsync',*sys.argv[1:]])
 
 
 class Archive(provider.ProviderJobs):
+    ARCHIVE_RULE='ddns_1'
+
     def confirmed(self,session):
         row=self.run_job(session);self.assert_origin(row,'created')
         return provider.jobs.JOBS/('a'*32),row
@@ -66,7 +74,7 @@ class Archive(provider.ProviderJobs):
         keys |= {'confirmation','expires_in'} if action=='maintain_preview' else {'completed'}
         self.assertEqual(set(report),keys)
         self.assertTrue(report['api_version']==1 and report['prototype'] is True and report['ok'] is True and
-                        report['phase']=='ddns-maintenance' and report['job']==fields['job'] and report['rule']=='ddns_1' and
+                        report['phase']=='ddns-maintenance' and report['job']==fields['job'] and report['rule']==self.ARCHIVE_RULE and
                         report['operation']=='archive' and report['effect']=='none' and report['write_ready'] is False,
                         'Unexpected archive source scope; body suppressed')
         if action=='maintain_preview':

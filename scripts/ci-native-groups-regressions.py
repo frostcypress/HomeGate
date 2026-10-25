@@ -16,11 +16,14 @@ GROUPS={
     'authority':('luci-ddns-authority-regressions.py','rpc-ddns-authority-regressions.py'),
     'tasks':('luci-ddns-jobs-regressions.py','rpc-ddns-jobs-regressions.py',
              'luci-ddns-maintenance-regressions.py','rpc-ddns-maintenance-regressions.py'),
-    'receipts':('luci-ddns-provider-jobs-regressions.py','luci-ddns-archive-regressions.py',
-                'rpc-ddns-archive-regressions.py'),
+    'receipts-cloudflare':('luci-ddns-provider-jobs-regressions.py','luci-ddns-archive-regressions.py','rpc-ddns-archive-regressions.py'),
+    'receipts-aliyun':('luci-ddns-aliyun-jobs-regressions.py','luci-ddns-aliyun-archive-regressions.py','rpc-ddns-aliyun-archive-regressions.py'),
+    'receipts-dnspod':('luci-ddns-dnspod-jobs-regressions.py','luci-ddns-dnspod-archive-regressions.py','rpc-ddns-dnspod-archive-regressions.py'),
+    'receipts-huawei':('luci-ddns-huawei-jobs-regressions.py','luci-ddns-huawei-archive-regressions.py','rpc-ddns-huawei-archive-regressions.py'),
 }
 PREPARE=('prepare-ucode.py','prepare-rpcd.py','prepare-uhttpd.py','prepare-luci.py')
 ALL=tuple(name for group in GROUPS.values() for name in group)
+RECEIPTS=tuple(name for group,names in GROUPS.items() if group.startswith('receipts-') for name in names)
 
 
 class Dispatch(unittest.TestCase):
@@ -60,7 +63,7 @@ else:
         scripts=[Path(args[0]).name for args in calls if args[0]!='-c']
         return result,calls,scripts
 
-    def test_01_three_groups_partition_all_nine_suites(self):
+    def test_01_six_groups_partition_all_eighteen_suites(self):
         collected=[]
         for group,names in GROUPS.items():
             with self.subTest(group=group):
@@ -69,7 +72,7 @@ else:
                 self.assertEqual(scripts,list(PREPARE+names))
                 self.assertEqual(len([c for c in calls if c[0]=='-c']),4)
                 collected.extend(scripts[4:])
-        self.assertEqual(collected,list(ALL));self.assertEqual(len(set(collected)),9)
+        self.assertEqual(collected,list(ALL));self.assertEqual(len(set(collected)),18)
 
     def test_02_default_and_explicit_all_preserve_original_order(self):
         for args in [(),('--group','all')]:
@@ -79,7 +82,9 @@ else:
 
     def test_03_custom_runtime_paths_preserve_quoting_and_dependency_order(self):
         paths=[str(Path(self.temp.name)/(name+' runtime with spaces')) for name in ('lua','http','rpc','ucode')]
-        for args,names in [(paths,ALL),(['--group','tasks',*paths],GROUPS['tasks'])]:
+        variants=[(paths,ALL),(['--group','receipts',*paths],RECEIPTS)]
+        variants += [(['--group',group,*paths],names) for group,names in GROUPS.items()]
+        for args,names in variants:
             result,calls,scripts=self.run_entry(*args)
             self.assertEqual(result.returncode,0,result.stderr.decode())
             self.assertEqual(scripts,list(PREPARE+names))
@@ -91,7 +96,7 @@ else:
                 self.assertEqual(command[1:],['--runtime-dir',rpc,'--http-runtime-dir',http,'--luci-runtime-dir',lua])
 
     def test_04_invalid_group_or_arity_cannot_prepare_or_run(self):
-        for args in [('--group',),('--group','unknown'),('--group',''),('--unknown',),
+        for args in [('--group',),('--group','unknown'),('--group','receipts-unknown'),('--group','cloudflare'),('--group',''),('--unknown',),
                      tuple('abcde'),('--group','receipts',*tuple('abcde'))]:
             result,calls,_=self.run_entry(*args)
             self.assertEqual(result.returncode,2)
@@ -107,15 +112,32 @@ else:
                     self.assertEqual(result.stdout.count(b'checks passed'),index)
 
     def test_06_prepare_failure_never_enters_business_suites(self):
-        for index,name in enumerate(PREPARE):
-            result,_,scripts=self.run_entry('--group','receipts',fail=name)
-            self.assertEqual(result.returncode,17)
-            self.assertEqual(scripts,list(PREPARE[:index+1]))
+        for group in [*GROUPS,'receipts']:
+            for index,name in enumerate(PREPARE):
+                with self.subTest(group=group,failure=name):
+                    result,_,scripts=self.run_entry('--group',group,fail=name)
+                    self.assertEqual(result.returncode,17)
+                    self.assertEqual(scripts,list(PREPARE[:index+1]))
 
     def test_07_real_shell_syntax_and_lf(self):
         self.assertNotIn(b'\r',self.entry.read_bytes())
         result=subprocess.run([self.sh,'-n',str(self.entry)],capture_output=True,timeout=10)
         self.assertEqual(result.returncode,0,result.stderr.decode())
+
+    def test_08_legacy_receipts_alias_preserves_serial_order(self):
+        result,_,scripts=self.run_entry('--group','receipts')
+        self.assertEqual(result.returncode,0,result.stderr.decode())
+        self.assertEqual(scripts,list(PREPARE+RECEIPTS))
+        self.assertEqual(len(set(scripts[4:])),12)
+
+    def test_09_composite_failure_stops_later_providers(self):
+        for group,names in GROUPS.items():
+            if not group.startswith('receipts-'):continue
+            failure=names[0];index=RECEIPTS.index(failure)
+            result,_,scripts=self.run_entry('--group','receipts',fail=failure)
+            self.assertEqual(result.returncode,17)
+            self.assertEqual(scripts,list(PREPARE+RECEIPTS[:index+1]))
+            self.assertEqual(result.stdout.count(b'checks passed'),index)
 
 
 if __name__=='__main__':unittest.main(verbosity=2)

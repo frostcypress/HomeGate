@@ -31,7 +31,8 @@ def setup_state(state):
     rpc_read.enable_rpc(state)
 
 
-class HTTPArchive(scenario.Archive):
+class ArchiveTransport:
+    RPC_ARCHIVE_RULE='ddns_1'
     HTTP_TIMEOUT=18
     CGI_TIMEOUT=18
 
@@ -76,7 +77,7 @@ class HTTPArchive(scenario.Archive):
         keys |= {'confirmation','expires_in'} if action=='maintain_preview' else {'completed'}
         self.assertEqual(set(report),keys)
         self.assertTrue(report['api_version']==1 and report['prototype'] is True and report['ok'] is True and
-                        report['phase']=='ddns-maintenance' and report['job']==fields['job'] and report['rule']=='ddns_1' and
+                        report['phase']=='ddns-maintenance' and report['job']==fields['job'] and report['rule']==self.RPC_ARCHIVE_RULE and
                         report['operation']=='archive' and report['effect']=='none' and report['write_ready'] is False,
                         'Unexpected original archive scope; body suppressed')
         if action=='maintain_preview':
@@ -97,7 +98,7 @@ class HTTPArchive(scenario.Archive):
             writer,_=session;path,row=self.confirmed(session);original=self.tree(STORE/'dns-operation')
             preview=self.preview(session);valid={'job':'a'*32,'confirmation':preview['confirmation'],'consent':'1'}
             before=self.snapshot();calls=self.calls();requests=list(self.requests)
-            for action,args in [('maintain_preview',{'job':[]}),('maintain_preview',{'job':'a'*32,'rule':'ddns_1'}),
+            for action,args in [('maintain_preview',{'job':[]}),('maintain_preview',{'job':'a'*32,'rule':self.RPC_ARCHIVE_RULE}),
                 ('maintain_commit',{**valid,'confirmation':True}),('maintain_commit',{**valid,'consent':1}),
                 ('maintain_commit',{**valid,'command':'cleanup'})]:
                 self.http_call(writer,action,args,status=2)
@@ -170,6 +171,10 @@ class HTTPArchive(scenario.Archive):
             self.archived(session,path,row,original);self.assertEqual(self.requests,requests)
 
 
+class HTTPArchive(ArchiveTransport,scenario.Archive):
+    pass
+
+
 def main():
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--runtime-dir',type=Path,default=ROOT/'build/rpcd')
@@ -182,7 +187,7 @@ def main():
     rpc.WORK,luci.HTTP,luci.LUA=args.runtime_dir.resolve(),args.http_runtime_dir.resolve(),args.luci_runtime_dir.resolve()
     if args.inside_net:
         rpc.OUTER_NET,rpc.OUTER_UID=args.inside_net,args.inside_uid
-        names=[n for n in sorted(HTTPArchive.__dict__) if n.startswith('test_rpc_archive_') and n.split('_')[3]==args.case]
+        names=[n for n in sorted(ArchiveTransport.__dict__) if n.startswith('test_rpc_archive_') and n.split('_')[3]==args.case]
         if len(names)!=1:raise ValueError('Expected one original RPC archive scenario')
         return 0 if unittest.TextTestRunner(verbosity=2).run(unittest.TestSuite(HTTPArchive(n) for n in names)).wasSuccessful() else 1
     luci.runtime.validate_runtime(luci.LUA,rpc.WORK);http.runtime.validate_runtime(luci.HTTP,rpc.WORK)

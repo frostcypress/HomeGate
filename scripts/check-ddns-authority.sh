@@ -1,13 +1,13 @@
 #!/bin/sh
 set -eu
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
-usage() { printf '%s\n' 'Usage: sh scripts/check-ddns-authority.sh [--group all|authority|tasks|receipts] [LuCI-runtime] [HTTP-runtime] [RPC-runtime] [ucode-runtime]' >&2; exit 2; }
+usage() { printf '%s\n' 'Usage: sh scripts/check-ddns-authority.sh [--group all|authority|tasks|receipts|receipts-cloudflare|receipts-aliyun|receipts-dnspod|receipts-huawei] [LuCI-runtime] [HTTP-runtime] [RPC-runtime] [ucode-runtime]' >&2; exit 2; }
 GROUP=all
 case "${1-}" in
   --group) [ "$#" -ge 2 ] || usage; GROUP=$2; shift 2;;
   --*) usage;;
 esac
-case "$GROUP" in all|authority|tasks|receipts) ;; *) usage;; esac
+case "$GROUP" in all|authority|tasks|receipts|receipts-cloudflare|receipts-aliyun|receipts-dnspod|receipts-huawei) ;; *) usage;; esac
 [ "$#" -le 4 ] || usage
 LUA="${1:-$ROOT/build/luci}"
 HTTP="${2:-$ROOT/build/uhttpd}"
@@ -42,12 +42,42 @@ case "$GROUP" in
     ;;
 esac
 case "$GROUP" in
-  all|receipts)
+  all|receipts|receipts-cloudflare)
     python3 "$ROOT/scripts/luci-ddns-provider-jobs-regressions.py" --runtime-dir "$RPC" --http-runtime-dir "$HTTP" --luci-runtime-dir "$LUA"
     echo 'Pinned curl/TLS provider tasks: 4 private result/original-receipt checks passed; no public DNS or production installation'
     python3 "$ROOT/scripts/luci-ddns-archive-regressions.py" --runtime-dir "$RPC" --http-runtime-dir "$HTTP" --luci-runtime-dir "$LUA"
     echo 'Pinned Lua confirmed task archive: 6 private source/fresh-consent/recovery checks passed; no public DNS or archive retirement'
     python3 "$ROOT/scripts/rpc-ddns-archive-regressions.py" --runtime-dir "$RPC" --http-runtime-dir "$HTTP" --luci-runtime-dir "$LUA"
     echo 'Pinned HTTP/rpcd confirmed task archive: 10 private original-receipt/ACL/consent checks passed; no public DNS or archive retirement'
+    ;;
+esac
+case "$GROUP" in
+  all|receipts|receipts-aliyun)
+    python3 "$ROOT/scripts/luci-ddns-aliyun-jobs-regressions.py" --runtime-dir "$RPC" --http-runtime-dir "$HTTP" --luci-runtime-dir "$LUA"
+    echo 'Pinned curl/TLS Aliyun tasks: 4 private signed-result/original-receipt checks passed; no public DNS or production installation'
+    python3 "$ROOT/scripts/luci-ddns-aliyun-archive-regressions.py" --runtime-dir "$RPC" --http-runtime-dir "$HTTP" --luci-runtime-dir "$LUA"
+    echo 'Pinned Lua Aliyun task archive: 6 private original-receipt/fresh-consent/recovery checks passed; no public DNS or archive retirement'
+    python3 "$ROOT/scripts/rpc-ddns-aliyun-archive-regressions.py" --runtime-dir "$RPC" --http-runtime-dir "$HTTP" --luci-runtime-dir "$LUA"
+    echo 'Pinned HTTP/rpcd Aliyun archive: 10 private task/original-receipt/ACL/consent checks passed; no public DNS or archive retirement'
+    ;;
+esac
+case "$GROUP" in
+  all|receipts|receipts-dnspod)
+    python3 "$ROOT/scripts/luci-ddns-dnspod-jobs-regressions.py" --runtime-dir "$RPC" --http-runtime-dir "$HTTP" --luci-runtime-dir "$LUA"
+    echo 'Pinned curl/TLS DNSPod tasks: 4 private TC3-result/original-receipt checks passed; no public DNS or production installation'
+    python3 "$ROOT/scripts/luci-ddns-dnspod-archive-regressions.py" --runtime-dir "$RPC" --http-runtime-dir "$HTTP" --luci-runtime-dir "$LUA"
+    echo 'Pinned Lua DNSPod archive: 6 private original-receipt/fresh-consent/recovery checks passed; no public DNS or archive retirement'
+    python3 "$ROOT/scripts/rpc-ddns-dnspod-archive-regressions.py" --runtime-dir "$RPC" --http-runtime-dir "$HTTP" --luci-runtime-dir "$LUA"
+    echo 'Pinned HTTP/rpcd DNSPod archive: 10 private task/original-receipt/ACL/consent checks passed; no public DNS or archive retirement'
+    ;;
+esac
+case "$GROUP" in
+  all|receipts|receipts-huawei)
+    python3 "$ROOT/scripts/luci-ddns-huawei-jobs-regressions.py" --runtime-dir "$RPC" --http-runtime-dir "$HTTP" --luci-runtime-dir "$LUA"
+    echo 'Pinned curl/TLS Huawei tasks: 4 private SDK-HMAC-result/original-receipt checks passed; no public DNS or production installation'
+    python3 "$ROOT/scripts/luci-ddns-huawei-archive-regressions.py" --runtime-dir "$RPC" --http-runtime-dir "$HTTP" --luci-runtime-dir "$LUA"
+    echo 'Pinned Lua Huawei archive: 6 private original-receipt/fresh-consent/recovery checks passed; no public DNS or archive retirement'
+    python3 "$ROOT/scripts/rpc-ddns-huawei-archive-regressions.py" --runtime-dir "$RPC" --http-runtime-dir "$HTTP" --luci-runtime-dir "$LUA"
+    echo 'Pinned HTTP/rpcd Huawei archive: 10 private task/original-receipt/ACL/consent checks passed; no public DNS or archive retirement'
     ;;
 esac

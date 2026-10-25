@@ -41,6 +41,8 @@ jobs:
         run: |
           python3 scripts/project.py --check
           python3 scripts/重构回归.py
+      - name: 验证宿主专项分组与失败阻断
+        run: python3 scripts/ci-native-groups-regressions.py
       - name: 检查 Shell 语法
         run: |
           find scripts project/core/files project/core/prototype -type f -name '*.sh' -print0 | xargs -0 -r -n1 sh -n
@@ -236,9 +238,30 @@ jobs:
         run: sh scripts/准备扩展CI环境.sh
       - name: 串行执行本组必要专项
         run: build/verify-venv/bin/python scripts/扩展集中回归.py '${{ matrix.group }}'
+  native:
+    name: 宿主接合回归 · ${{ matrix.group }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        group: [authority, tasks, receipts]
+    steps:
+      - name: 检出相同源码
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: 准备固定版本的隔离回归依赖
+        run: sh scripts/准备扩展CI环境.sh
+      - name: 准备宿主运行时构建依赖
+        run: sudo apt-get install --no-install-recommends -y cmake pkg-config libcrypt-dev bubblewrap zstd
+      - name: 核实宿主私有隔离前置
+        run: python3 scripts/prepare-ci-isolation.py
+      - name: 串行验证本组Lua及RPC接合
+        run: sh scripts/check-ddns-authority.sh --group '${{ matrix.group }}'
   build:
     name: 已核实 SDK 三包构建
-    needs: [source, extended]
+    needs: [source, extended, native]
     if: github.event_name == 'workflow_dispatch' && inputs.mode != '仅检查源码'
     runs-on: ubuntu-24.04
     timeout-minutes: 60

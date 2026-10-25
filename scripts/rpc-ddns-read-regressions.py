@@ -21,6 +21,10 @@ BaseReadOnly = read.ReadOnly
 
 def setup_state(state):
     read.setup_state(state)
+    enable_rpc(state)
+
+
+def enable_rpc(state):
     # Plumbing ACLs only. The actual HomeGate reader/writer ACL is copied unchanged.
     (state/'acl/http-fixture.json').write_text(json.dumps({
         'unauthenticated':{'read':{'ubus':{'session':['login']}}},
@@ -35,6 +39,20 @@ def setup_state(state):
     (state/'www/index.html').write_bytes(b'HomeGate isolated HTTP fixture\n')
 
 
+def start_rpc_http(cls):
+    try:
+        with socket.socket() as listener:
+            listener.bind(('127.0.0.1',0));cls.port=listener.getsockname()[1]
+        command=[str(luci.HTTP/'prefix/bin/uhttpd'),'-f','-p','127.0.0.1:'+str(cls.port),
+                 '-h','/teststate/www','-c','/etc/httpd.fixture.conf','-u','/ubus','-U',rpc.SOCKET,
+                 '-t',str(getattr(cls,'CGI_TIMEOUT',6)),'-T',str(getattr(cls,'CGI_TIMEOUT',6))]
+        log=(rpc.STATE/'uhttpd-rpc-read.log').open('wb');cls.logs.append(log)
+        cls.processes.append(subprocess.Popen(command,stdout=log,stderr=subprocess.STDOUT))
+        cls.wait_for(lambda:http.HostHTTP.listening.__func__(cls))
+    except BaseException:
+        cls.tearDownClass();raise
+
+
 class HTTPRead(BaseReadOnly):
     response=http.HostHTTP.response
     request=staticmethod(http.HostHTTP.request)
@@ -45,16 +63,7 @@ class HTTPRead(BaseReadOnly):
     @classmethod
     def setUpClass(cls):
         super().setUpClass()
-        try:
-            with socket.socket() as listener:
-                listener.bind(('127.0.0.1',0));cls.port=listener.getsockname()[1]
-            command=[str(luci.HTTP/'prefix/bin/uhttpd'),'-f','-p','127.0.0.1:'+str(cls.port),
-                     '-h','/teststate/www','-c','/etc/httpd.fixture.conf','-u','/ubus','-U',rpc.SOCKET,'-t','6','-T','6']
-            log=(rpc.STATE/'uhttpd-rpc-read.log').open('wb');cls.logs.append(log)
-            cls.processes.append(subprocess.Popen(command,stdout=log,stderr=subprocess.STDOUT))
-            cls.wait_for(lambda:http.HostHTTP.listening.__func__(cls))
-        except BaseException:
-            cls.tearDownClass();raise
+        start_rpc_http(cls)
 
     @contextmanager
     def rpc_session(self,role='reader'):

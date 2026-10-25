@@ -54,7 +54,8 @@ class LuaLuCI(unittest.TestCase):
             with socket.socket() as listener:
                 listener.bind(('127.0.0.1', 0));cls.port = listener.getsockname()[1]
             command = [str(HTTP / 'prefix/bin/uhttpd'), '-f', '-p', '127.0.0.1:' + str(cls.port),
-                       '-h', '/teststate/www', '-c', '/etc/httpd.fixture.conf', '-t', '6', '-T', '6']
+                       '-h', '/teststate/www', '-c', '/etc/httpd.fixture.conf',
+                       '-t', str(getattr(cls, 'CGI_TIMEOUT', 6)), '-T', str(getattr(cls, 'CGI_TIMEOUT', 6))]
             log = (rpc.STATE / 'uhttpd.log').open('wb');cls.logs.append(log)
             cls.processes.append(subprocess.Popen(command, stdout=log, stderr=subprocess.STDOUT))
             cls.wait_for(lambda: http.HostHTTP.listening.__func__(cls))

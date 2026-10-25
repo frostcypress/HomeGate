@@ -63,7 +63,7 @@ class HostHTTP(rpc.HostRpcd):
 
     def exchange(self, payload=None, *, path='/ubus', verb='POST', headers=None, raw=None):
         body = json.dumps(payload).encode() if raw is None else raw
-        connection = http.client.HTTPConnection('127.0.0.1', self.port, timeout=6)
+        connection = http.client.HTTPConnection('127.0.0.1', self.port, timeout=getattr(self, 'HTTP_TIMEOUT', 6))
         try:
             connection.request(verb, path, body=body,
                                headers={'Content-Type': 'application/json', **(headers or {})})

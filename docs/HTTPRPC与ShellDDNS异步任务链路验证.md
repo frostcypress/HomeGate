@@ -31,3 +31,15 @@
 新增RPC启动器复用DNSPod真实Lua任务、独立TC3签名验证及原worker/HGDNPJOURNAL1/proof，8项覆盖指定接口无变化、真实创建与原回执、缺失接口known-none、写后unknown不重试、类型/同意和地址/接口覆盖拒绝、身份ACL与reader观察、Bearer/旧入口重放、批量逐元素ACL及重复ID单次执行。混合授权仍为Cloudflare/auto(ddns_1)+DNSPod/interface(ddns_2)，公开任务结果不泄露地址和设备。
 
 共用RPC传输代码与全部project业务/候选代码保持r117字节；旧DNSPod归档场景单独回归。仅临时本地TLS，华为云指定接口Web及生产/目标SDK/三包/实机仍待。第10开发步只做本地冻结，下一轮单独准备和投递CI。
+
+## r119 华为云Lua指定接口真实任务
+
+真实Lua会话、POST与CSRF确认Cloudflare/auto(ddns_1)+Huawei/interface(ddns_3)混合授权，只提交华为云指定接口任务；默认WAN与指定接口地址不同。新增5场景覆盖指定接口无变化、真实POST创建与原HGHWJOURNAL1/task proof及重放屏障、缺失接口known-none不回退WAN、CSRF及预览后接口变化拒绝、写后unknown保留原证据且不重试。
+
+保留原独立SDK-HMAC签名验证、固定region/domain ID来源、真实OpenSSL和固定curl/TLS/CA/SNI；混合任务公开结果也拒绝泄露DOMAIN/HOST/凭据标记。全部project业务/候选代码和共用测试传输不变；仅临时本地TLS，华为云RPC指定接口任务与生产/目标SDK/三包/实机仍待，实际本地结果单独记录。
+
+## r120 华为云RPC指定接口真实任务
+
+新增华为云HTTP/rpcd启动器，复用原SDK-HMAC签名验证、真实worker及HGHWJOURNAL1/task proof；授权组合为Cloudflare/auto(ddns_1)+Huawei/interface(ddns_3)，只执行选中华为云指定接口任务。8项覆盖无变化、真实创建与原回执、缺失接口known-none、写后unknown不重试、类型/同意及地址接口覆盖拒绝、身份ACL/reader观察、Bearer/旧入口重放、批量逐元素ACL及重复ID单次执行。
+
+所有RPC任务结果同时检查地址、设备、Huawei domain ID、endpoint和凭据标记不外泄。共用RPC传输及全部project业务/候选代码保持r119字节；原Huawei RPC回执归档另做兼容回归。至此四家指定接口Lua/RPC隔离合同均已覆盖；生产接合、目标SDK/ABI、三包、实机和公网验收仍单独进行，本地结果不替代其完成条件。

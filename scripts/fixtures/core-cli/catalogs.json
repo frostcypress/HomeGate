@@ -1,0 +1,146 @@
+{
+  "schema": 1,
+  "origin": "manually audited current Go reference catalog literals and JSON tags; not execution evidence",
+  "reference_source_sha256": {
+    "project/core/src/internal/dnsprovider/catalog.go": "c3683ba6b5424f73e422c0b082aa0d7a9ecace16df85574ad288d35968d8c0c5",
+    "project/core/src/internal/dnsprovider/provider.go": "4d90c53673e9b73193428487f47af932e1bff6d801e2ffecd68e2f1ea3614627",
+    "project/core/src/internal/acmeca/preset.go": "8aae6b2adb688d3e17324112e6d39cd48a33f41d5bb75434b1a00ccb3bfc6773"
+  },
+  "catalogs": {
+    "dns-provider-catalog": {
+      "phase": "dns-provider",
+      "providers": [
+        {
+          "name": "aliyun",
+          "display_name": "Aliyun DNS",
+          "aliases": [
+            "alidns"
+          ],
+          "credentials": [
+            {
+              "name": "key_id",
+              "label": "AccessKey ID",
+              "secret": false,
+              "required": true
+            },
+            {
+              "name": "secret",
+              "label": "AccessKey Secret",
+              "secret": true,
+              "required": true
+            }
+          ],
+          "capabilities": {
+            "credentials_validation": true,
+            "ddns": true,
+            "dns01": true,
+            "zone_discovery": true
+          }
+        },
+        {
+          "name": "cloudflare",
+          "display_name": "Cloudflare",
+          "aliases": [
+            "cf"
+          ],
+          "credentials": [
+            {
+              "name": "secret",
+              "label": "API Token",
+              "secret": true,
+              "required": true
+            }
+          ],
+          "capabilities": {
+            "credentials_validation": true,
+            "ddns": true,
+            "dns01": true,
+            "zone_discovery": true
+          }
+        },
+        {
+          "name": "dnspod",
+          "display_name": "Tencent DNSPod",
+          "aliases": [
+            "tencent",
+            "tencentcloud"
+          ],
+          "credentials": [
+            {
+              "name": "key_id",
+              "label": "SecretId",
+              "secret": false,
+              "required": true
+            },
+            {
+              "name": "secret",
+              "label": "SecretKey",
+              "secret": true,
+              "required": true
+            }
+          ],
+          "capabilities": {
+            "credentials_validation": true,
+            "ddns": true,
+            "dns01": true,
+            "zone_discovery": true
+          }
+        },
+        {
+          "name": "huaweicloud",
+          "display_name": "Huawei Cloud DNS",
+          "aliases": [
+            "huawei",
+            "hwcloud"
+          ],
+          "credentials": [
+            {
+              "name": "key_id",
+              "label": "Access Key ID",
+              "secret": false,
+              "required": true
+            },
+            {
+              "name": "secret",
+              "label": "Secret Access Key",
+              "secret": true,
+              "required": true
+            },
+            {
+              "name": "account_id",
+              "label": "Account ID",
+              "secret": false,
+              "required": true
+            },
+            {
+              "name": "endpoint",
+              "label": "DNS API Endpoint",
+              "secret": false,
+              "required": true,
+              "placeholder": "https://dns.<region>.myhuaweicloud.com"
+            }
+          ],
+          "capabilities": {
+            "credentials_validation": true,
+            "ddns": true,
+            "dns01": true,
+            "zone_discovery": true
+          }
+        }
+      ]
+    },
+    "acme-ca-catalog": {
+      "phase": "acme-ca",
+      "cas": [
+        {
+          "name": "letsencrypt",
+          "display_name": "Let's Encrypt",
+          "directories": {
+            "production": "https://acme-v02.api.letsencrypt.org/directory",
+            "staging": "https://acme-staging-v02.api.letsencrypt.org/directory"
+          }
+        }
+      ]
+    }
+  }
+}

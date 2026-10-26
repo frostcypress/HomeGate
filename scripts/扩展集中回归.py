@@ -17,12 +17,21 @@ GROUPS={
  'DDNS有界调度':['DDNS有界调度回归.py'],
  'DDNS混合调度':['DDNS有界调度回归.py'],
  'DDNS生命周期CLI':['DDNS生命周期CLI回归.py'],
+ '核心DNS只读CLI':['DDNS生命周期CLI回归.py'],
+ '核心网络配置CLI':['DDNS生命周期CLI回归.py'],
+ '核心健康恢复CLI':['DDNS生命周期CLI回归.py'],
+ 'DDNS恢复摘要CLI':['DDNS生命周期CLI回归.py'],
  'DDNS原生授权UI':['DDNS原生授权UI回归.py'],
  'DDNS异步任务':['DDNS异步任务回归.py'],
  'DDNS明确维护':['DDNS明确维护回归.py'],
 }
 # Static checks run once; runtime source partitions are disjoint and exhaustive.
 MODES={
+ 'DDNS生命周期CLI':((),('--runtime','--partition','lifecycle')),
+ '核心DNS只读CLI':(('--runtime','--partition','dns'),),
+ '核心网络配置CLI':(('--runtime','--partition','network-config'),),
+ '核心健康恢复CLI':(('--runtime','--partition','health-recovery'),),
+ 'DDNS恢复摘要CLI':(('--runtime','--partition','ddns-recovery'),),
  'DDNS全批':((),('--runtime','--auto-only')),
  'DDNS混合全批':(('--runtime','--mixed-only'),),
  'DDNS有界调度':((),('--runtime','--auto-only')),

@@ -4,6 +4,7 @@ set -u
 umask 077
 export LC_ALL=C
 ddns_state_enabled=false
+ddns_recovery_publish_enabled=false
 ddns_batch_enabled=false
 fail() { printf '{"api_version":1,"prototype":true,"ok":false,"phase":"ddns-state","effect":"none","write_ready":false,"error":"DDNS state is unavailable"}\n';exit "${1:-7}"; }
 [ "$ddns_state_enabled" = true ] || fail 2
@@ -69,6 +70,7 @@ fi
 for p in "$next" "$result"; do ! exists "$p" || incomplete=true;done
 if exists "$file"; then private_file "$file" && [ "$(stat -c %s "$file")" -le 4096 ] || fail;exec 8<"$file" || fail;else exec 8</dev/null;fi
 codec() { lua "$dir/homegate-ddns-state.lua" "$1" "$revision" "$rule" "$provider" "$account" "$identity" "$generation" "$boot" "$now" "$interval" "$blocked" "$authorized" "$incomplete" ${2:+"$2"} 2>/dev/null; }
+publish_recovery() { [ "$ddns_recovery_publish_enabled" != true ] || ash "$dir/homegate-ddns-recovery.sh" publish-internal 3>&- 4>&- 5>&- 8>&- 9>&- >/dev/null 2>/dev/null; }
 if [ "$action" = status ]; then codec status || fail;exit 0;fi
 if [ "$action" = reset ]; then
     [ "$blocked" = false ] || fail 4
@@ -77,6 +79,7 @@ if [ "$action" = reset ]; then
         for p in "$file" "$next" "$result"; do if exists "$p"; then private_file "$p" && [ "$(stat -c %s "$p")" -le 65536 ] && rm -f "$p" || fail;fi;done
         fsync "$cache" 2>/dev/null || fail
     fi
+    publish_recovery || fail
     printf '{"api_version":1,"prototype":true,"ok":true,"phase":"ddns-state","state_reset":true,"effect":"none","write_ready":false}\n';exit 0
 fi
 decision=$(codec decision) || fail
@@ -88,6 +91,7 @@ publish() { private_file "$next" && [ "$(stat -c %s "$next")" -le 4096 ] && fsyn
 (set -C; : > "$next") 2>/dev/null || fail
 codec begin > "$next" && publish || fail
 exec 8<&-
+publish_recovery || fail
 (set -C; : > "$result") 2>/dev/null || fail
 rc=0
 if [ "$batch" = true ]; then
@@ -104,4 +108,5 @@ exec 8<"$file" || fail
 codec finish "$rc" < "$result" > "$next" && publish || fail
 exec 5<"$result" || fail
 rm -f "$result" && fsync "$cache" 2>/dev/null || fail
+publish_recovery || fail
 cat <&5;exit "$rc"

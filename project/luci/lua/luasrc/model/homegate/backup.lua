@@ -299,7 +299,14 @@ local function parse(body, legacy, capture_ddns_switches)
         end
         local switches={}
         if capture_ddns_switches then
-            for _,s in ipairs(doc) do if s.kind=="ddns_rule" then switches[s.name]=s.values.enabled or DEFAULTS.ddns_rule.enabled end end
+            for _,s in ipairs(doc) do
+                if capture_ddns_switches=="all" then
+                    local row={kind=s.kind}
+                    if DEFAULTS[s.kind].enabled then row.enabled=s.values.enabled or DEFAULTS[s.kind].enabled end
+                    if s.kind=="homegate" then row.access_enabled=s.values.access_enabled or DEFAULTS.homegate.access_enabled end
+                    switches[s.name]=row
+                elseif s.kind=="ddns_rule" then switches[s.name]=s.values.enabled or DEFAULTS.ddns_rule.enabled end
+            end
         end
         local normalized,err=normalize(doc)
         if not normalized then return nil,err end
@@ -326,6 +333,32 @@ function M.private_ddns_switches(body)
     if not doc or type(switches)~="table" then return nil end
     for _,enabled in pairs(switches) do if enabled~="0" and enabled~="1" then return nil end end
     return switches
+end
+-- Private validation only. Preserve source switches before backup normalization;
+-- never pass this structure to export, preview or a public response.
+function M.private_configuration(body)
+    local doc,slots,switches=parse(body,true,"all")
+    local public_projection=false
+    if not doc then
+        -- Ordinary publication is already canonical public data; its private
+        -- slots remain in the separately validated generation, never in UCI.
+        if M.canonical(body)~=body then return nil end
+        doc=M.parse(body); if not doc then return nil end
+        slots={};switches={};public_projection=true
+        for _,s in ipairs(doc) do
+            local row={kind=s.kind}
+            if DEFAULTS[s.kind].enabled then row.enabled=s.values.enabled end
+            if s.kind=="homegate" then row.access_enabled=s.values.access_enabled end
+            switches[s.name]=row
+        end
+    end
+    if type(slots)~="table" or type(switches)~="table" then return nil end
+    for _,row in pairs(switches) do
+        for key,value in pairs(row) do
+            if key~="kind" and value~="0" and value~="1" then return nil end
+        end
+    end
+    return {configuration=doc,credentials=slots,switches=switches,public_projection=public_projection}
 end
 local function quote(v) return "'"..v:gsub("'","'\\''").."'" end
 local function ordered(doc)

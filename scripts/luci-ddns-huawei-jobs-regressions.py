@@ -20,7 +20,8 @@ read,luci,rpc=signed.read,signed.luci,signed.rpc
 STORE,RUN,STATE=signed.STORE,signed.RUN,signed.STATE
 HOST='dns.cn-north-4.myhuaweicloud.com'
 DOMAIN='1'*32
-CASES=('01','02','03','04')
+MIXED_CASES=('05','06','07','08','09')
+CASES=('01','02','03','04')+MIXED_CASES
 
 
 def setup_state(state):
@@ -31,6 +32,10 @@ def setup_state(state):
     updated=original.replace('PRIVATE_ACCOUNT',DOMAIN)+" option endpoint 'https://"+HOST+"'\n"
     source.write_text(body.replace(original,updated))
 
+
+def setup_mixed_state(state):
+    setup_state(state)
+    signed.provider.configure_mixed_source(state,'ddns_3')
 
 def authorization(method,path,query,date,payload):
     names='content-type;host;x-domain-id;x-sdk-date'
@@ -145,6 +150,43 @@ class HuaweiJobs(signed.AliyunJobs):
             self.assertEqual(self.requests,requests)
 
 
+class HuaweiMixedJobs(HuaweiJobs):
+    MIXED_RULES=('ddns_1','ddns_3')
+    authorize=signed.provider.MixedJobs.authorize
+    def run_mixed_job(self,session):
+        row=signed.provider.MixedJobs.run_mixed_job(self,session);raw=json.dumps(row).encode()
+        self.assertTrue(all(value not in raw for value in (DOMAIN.encode(),HOST.encode(),b'FIXTURE_ID',b'SECRET_SENTINEL')),
+                        'Private Huawei configuration escaped; body suppressed')
+        return row
+    test_huawei_07_missing_interface=signed.provider.MixedJobs.test_provider_07_missing_interface_finishes_without_wan_fallback_or_proof
+    test_huawei_08_csrf_and_changed_interface=signed.provider.MixedJobs.test_provider_08_csrf_and_changed_interface_preserve_confirmation
+
+    def test_huawei_05_mixed_interface_noop_retains_scoped_task(self):
+        self.db['1']=record(1,['2001:db8:2::9'])
+        with self.session() as session:
+            row=self.run_mixed_job(session)
+            self.assertEqual((row['state'],row['last_effect'],row['result']['status']),('finished','none','unchanged'))
+            self.assertTrue(self.requests and all(event['authenticated'] for event in self.requests));self.assertEqual(self.mutations(),[])
+            self.assertFalse((STORE/'dns-operation').exists());self.assertFalse((signed.provider.jobs.JOBS/('a'*32)/'proof').exists())
+            before=self.snapshot();requests=list(self.requests);self.assertEqual(self.submit(session),row)
+            self.assertEqual(before,self.snapshot());self.assertEqual(requests,self.requests)
+    def test_huawei_06_interface_create_keeps_original_signed_receipt(self):
+        with self.session() as session:
+            row=self.run_mixed_job(session);self.assert_origin(row,'created');self.assertEqual(self.mutations(),['POST'])
+            self.assertTrue(len(self.db)==1 and next(iter(self.db.values()))['records']==['2001:db8:2::9'])
+            before=self.snapshot();requests=list(self.requests);self.assertEqual(self.submit(session),row);self.submit(session,job='b'*32,expected=503)
+            self.assertEqual(before,self.snapshot());self.assertEqual(requests,self.requests)
+    def test_huawei_09_unknown_interface_attempt_keeps_original_evidence(self):
+        type(self).fail_after_mutation=True
+        with self.session() as session:
+            row=self.run_mixed_job(session)
+            self.assertTrue(row['state']=='finished' and row['last_effect']=='unknown' and row['result']['effect']=='unknown')
+            self.assertEqual(self.mutations(),['POST']);self.assertTrue(len(self.db)==1 and next(iter(self.db.values()))['records']==['2001:db8:2::9'])
+            self.assertTrue((STORE/'dns-operation').exists());self.assertFalse((signed.provider.jobs.JOBS/('a'*32)/'proof').exists())
+            before=self.snapshot();requests=list(self.requests);self.assertEqual(self.submit(session),row);self.submit(session,job='b'*32,expected=503)
+            self.assertEqual(before,self.snapshot());self.assertEqual(requests,self.requests)
+
+
 def main():
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--runtime-dir',type=Path,default=ROOT/'build/rpcd')
@@ -157,9 +199,10 @@ def main():
     rpc.WORK,luci.HTTP,luci.LUA=args.runtime_dir.resolve(),args.http_runtime_dir.resolve(),args.luci_runtime_dir.resolve()
     if args.inside_net:
         rpc.OUTER_NET,rpc.OUTER_UID=args.inside_net,args.inside_uid
-        names=[n for n in sorted(HuaweiJobs.__dict__) if n.startswith('test_huawei_') and n.split('_')[2]==args.case]
+        cls=HuaweiMixedJobs if args.case in MIXED_CASES else HuaweiJobs
+        names=[n for n in sorted(cls.__dict__) if n.startswith('test_huawei_') and n.split('_')[2]==args.case]
         if len(names)!=1:raise ValueError('Expected one Huawei task scenario')
-        return 0 if unittest.TextTestRunner(verbosity=2).run(unittest.TestSuite(HuaweiJobs(n) for n in names)).wasSuccessful() else 1
+        return 0 if unittest.TextTestRunner(verbosity=2).run(unittest.TestSuite(cls(n) for n in names)).wasSuccessful() else 1
     luci.runtime.validate_runtime(luci.LUA,rpc.WORK);luci.http.runtime.validate_runtime(luci.HTTP,rpc.WORK)
     curl=subprocess.run([str(signed.provider.CURL),'--version'],capture_output=True,check=True)
     if not curl.stdout.startswith(b'curl 7.83.1 '):raise ValueError('Use pinned curl7.83.1')
@@ -171,7 +214,7 @@ def main():
                 (state/'models',luci.LUA/'prefix/lib/lua/luci/model'),(state/'libexec','/usr/libexec'),
                 (state/'tools','/usr/sbin'),(state/'curl-transport','/usr/bin/curl'),(state/'openssl-real','/usr/bin/openssl')),
             extra_rw_mounts=lambda state:((state/'etc/homegate','/etc/homegate'),(state/'etc/config','/etc/config')),
-            state_setup=setup_state,guest_args=('--http-runtime-dir',str(luci.HTTP),'--luci-runtime-dir',str(luci.LUA),'--case',case))
+            state_setup=setup_mixed_state if case in MIXED_CASES else setup_state,guest_args=('--http-runtime-dir',str(luci.HTTP),'--luci-runtime-dir',str(luci.LUA),'--case',case))
         if result:break
     if any(p.read_bytes()!=body for p,body in original.items()):raise ValueError('Original source changed during Huawei task checks')
     luci.runtime.validate_runtime(luci.LUA,rpc.WORK);luci.http.runtime.validate_runtime(luci.HTTP,rpc.WORK)

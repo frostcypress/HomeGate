@@ -3,6 +3,15 @@
 import argparse,json,os,re,subprocess,time,unittest
 from pathlib import Path
 from project import ROOT
+from 核心目录CLI回归 import Static as CatalogStatic, Runtime as CatalogRuntime
+from 核心账户CLI回归 import suite as status_suite
+from 核心区域CLI回归 import suite as zones_suite
+from 核心网络CLI回归 import suite as network_suite
+from 核心配置校验回归 import suite as configuration_suite
+from 核心健康CLI回归 import suite as health_suite
+from 核心恢复CLI回归 import suite as recovery_suite
+from DDNS恢复生产回归 import suite as ddns_recovery_suite
+from DDNS恢复收尾回归 import suite as ddns_repair_suite
 from DDNS有界调度回归 import CF as CFBase,Ali as AliBase,DNP as DNPBase,HW as HWBase
 from DDNS计划回归 import fixture_uid
 from 生命周期准备回归 import Runtime as PrepareBase
@@ -129,9 +138,34 @@ class Cold(PrepareBase):
         script=self.engine.parent/'homegate-store-bootstrap-prototype.sh';b=script.read_text();script.write_text(b.replace('set -u','set -u\nflock -n '+str(self.native.lockdir/'ddns-schedule.lock')+' '+self.busybox+' true && exit 99',1))
         self.run_prepare();self.assertTrue(self.store.exists())
 
+PARTITIONS=('lifecycle','dns','network-config','health-recovery','ddns-recovery')
+
+
+def build_suite(runtime,partition=None):
+    if partition is not None and (not runtime or partition not in PARTITIONS):
+        raise ValueError('Runtime partition required')
+    suite=unittest.TestSuite()
+    def selected(name):return partition is None or partition==name
+    if selected('lifecycle'):
+        for cls in ([CF,Ali,DNP,HW,Boundaries,Cold,CatalogRuntime] if runtime else [Static,CatalogStatic]):
+            members=CLIMixin.__dict__ if cls in [CF,Ali,DNP,HW] else cls.__dict__
+            suite.addTests(cls(n) for n,v in members.items() if n.startswith('test_') and callable(v))
+    for name,builders in [
+        ('dns',[status_suite,zones_suite]),
+        ('network-config',[network_suite,configuration_suite]),
+        ('health-recovery',[health_suite,recovery_suite]),
+        ('ddns-recovery',[ddns_recovery_suite,ddns_repair_suite]),
+    ]:
+        if selected(name):
+            for builder in builders:suite.addTests(builder(runtime))
+    return suite
+
+
 if __name__=='__main__':
-    p=argparse.ArgumentParser();p.add_argument('--runtime',action='store_true');a=p.parse_args();suite=unittest.TestSuite()
-    for cls in ([CF,Ali,DNP,HW,Boundaries,Cold] if a.runtime else [Static]):
-        members=CLIMixin.__dict__ if cls in [CF,Ali,DNP,HW] else cls.__dict__
-        suite.addTests(cls(n) for n,v in members.items() if n.startswith('test_') and callable(v))
+    p=argparse.ArgumentParser();p.add_argument('--runtime',action='store_true')
+    p.add_argument('--partition',choices=PARTITIONS);p.add_argument('--list-tests',action='store_true');a=p.parse_args()
+    if a.partition and not a.runtime:p.error('Partition selection requires --runtime')
+    suite=build_suite(a.runtime,a.partition)
+    if a.list_tests:
+        print(json.dumps([test.id() for test in suite]));raise SystemExit(0)
     r=unittest.TextTestRunner(verbosity=2).run(suite);raise SystemExit(not r.wasSuccessful())

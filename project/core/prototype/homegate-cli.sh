@@ -9,11 +9,18 @@ action=${1:-};rule=
 case "$action" in
     ddns-status|ddns-sync) [ "$#" -ge 1 ] && [ "$#" -le 2 ] || fail 2
         if [ "$#" -eq 2 ]; then rule=$2;case "$rule" in ''|*[!a-zA-Z0-9_-]*) fail 2;; esac;[ "${#rule}" -le 64 ] || fail 2;fi;;
+    dns-provider-catalog|acme-ca-catalog) [ "$#" -eq 1 ] || fail 2;;
+    network-resolve|status|check|recovery-status|recovery-summary-check) [ "$#" -eq 1 ] || fail 2;;
+    recovery-summary-finish) [ "$#" -eq 3 ] && [ "$3" = --confirm ] || fail 2
+        case "$2" in ''|*[!0-9a-f]*) fail 2;; esac;[ "${#2}" -eq 64 ] || fail 2;;
+    dns-provider-status|dns-zones) [ "$#" -eq 2 ] || fail 2
+        case "$2" in ''|*[!a-zA-Z0-9_-]*) fail 2;; esac
+        [ "${#2}" -le 64 ] || fail 2;;
     schedule-status|schedule-quiescent|lifecycle-prepare|lifecycle-resume) [ "$#" -eq 1 ] || fail 2;;
     schedule-run|schedule-stop|schedule-reap) [ "$#" -eq 2 ] && [ "$2" = --confirm ] || fail 2;;
     *) fail 2;;
 esac
-case "$action" in schedule-status|schedule-stop|schedule-reap|schedule-quiescent) ;; *) [ "$native_cli_enabled" = true ] || fail 2;; esac
+case "$action" in dns-provider-catalog|acme-ca-catalog|schedule-status|schedule-stop|schedule-reap|schedule-quiescent) ;; *) [ "$native_cli_enabled" = true ] || fail 2;; esac
 PATH=/usr/sbin:/usr/bin:/sbin:/bin;export PATH
 unset IPKG_INSTROOT INIT_TRACE LUA_INIT LUA_PATH LUA_CPATH HOMEGATE_CONFIG_PROTO_STORE
 exec 2>/dev/null
@@ -23,6 +30,16 @@ dir=$(CDPATH= cd "$(dirname "$0")" && pwd) || fail
 # internal plan frames. The fixed helper obtains and validates its own locks.
 exec 3>&- 4>&- 5>&- 6>&- 7>&- 8>&- 9>&-
 case "$action" in
+    dns-provider-catalog|acme-ca-catalog)
+        catalog=$(lua "$dir/homegate-cli-catalog.lua" "$action") || fail
+        printf '%s\n' "$catalog"; exit 0;;
+    dns-provider-status) exec ash "$dir/homegate-dns-status.sh" "$2";;
+    dns-zones) exec ash "$dir/homegate-dns-status.sh" "$2" --zones;;
+    network-resolve) exec ash "$dir/homegate-network-read.sh";;
+    status|check) exec ash "$dir/homegate-health-read.sh" "$action";;
+    recovery-status) exec ash "$dir/homegate-recovery-read.sh";;
+    recovery-summary-check) exec ash "$dir/homegate-ddns-recovery-control.sh" check;;
+    recovery-summary-finish) exec ash "$dir/homegate-ddns-recovery-control.sh" finish "$2" --confirm;;
     schedule-status) exec ash "$dir/homegate-ddns-schedule.sh" status;;
     schedule-quiescent) exec ash "$dir/homegate-ddns-schedule.sh" quiescent;;
     schedule-run) exec ash "$dir/homegate-ddns-schedule.sh" run --confirm;;

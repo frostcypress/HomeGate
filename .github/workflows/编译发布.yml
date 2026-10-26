@@ -230,7 +230,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        group: [Aliyun, DNSPod, Huawei, DDNS执行, DDNS授权状态, DDNS状态退避, DDNS授权收尾, DDNS全批, DDNS混合全批, DDNS批次收尾, DDNS有界调度, DDNS混合调度, DDNS生命周期CLI, DDNS原生授权UI, DDNS异步任务, DDNS明确维护]
+        group: [Aliyun, DNSPod, Huawei, DDNS执行, DDNS授权状态, DDNS状态退避, DDNS授权收尾, DDNS全批, DDNS混合全批, DDNS批次收尾, DDNS有界调度, DDNS混合调度, DDNS生命周期CLI, 核心DNS只读CLI, 核心网络配置CLI, 核心健康恢复CLI, DDNS恢复摘要CLI, DDNS原生授权UI, DDNS异步任务, DDNS明确维护]
     steps:
       - name: 检出相同源码
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1

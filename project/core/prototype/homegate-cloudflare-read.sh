@@ -4,6 +4,7 @@ set -u
 umask 077
 export LC_ALL=C
 dns_read_enabled=false
+dns_status_read_enabled=false
 ddns_sync_enabled=false
 ddns_work_enabled=false
 ddns_runtime_enabled=false
@@ -62,6 +63,7 @@ fail() {
 }
 [ "$dns_read_enabled" = true ] || fail 2
 provider=cloudflare
+runtime_check=false
 ddns_dispatch=false;runtime_dispatch=false;runtime_recovery=false;runtime_closeout=false
 case "${1:-}" in
     --runtime-collect-orphan-internal|--runtime-collect-receipt-internal|--runtime-retire-archive-internal)
@@ -92,7 +94,18 @@ if [ "${1:-}" = --ddns-sync-internal ]; then
         *) fail 2;;
     esac
 fi
-if [ "${1:-}" = --aliyun-internal ]; then
+if [ "${1:-}" = --runtime-check-internal ] || [ "${1:-}" = --runtime-zones-internal ]; then
+    [ "$dns_status_read_enabled" = true ] && [ "$#" -eq 3 ] || fail 2
+    case "$2" in
+        cloudflare) ;;
+        aliyun) [ "$aliyun_read_enabled" = true ] || fail 2;;
+        dnspod) [ "$dnspod_read_enabled" = true ] || fail 2;;
+        huaweicloud) [ "$huaweicloud_read_enabled" = true ] || fail 2;;
+        *) fail 2;;
+    esac
+    runtime_check=true;provider=$2
+    if [ "$1" = --runtime-zones-internal ]; then set -- "$3" --zones;else set -- "$3";fi
+elif [ "${1:-}" = --aliyun-internal ]; then
     [ "$aliyun_read_enabled" = true ] || fail 2
     provider=aliyun;shift
 elif [ "${1:-}" = --huaweicloud-internal ]; then
@@ -181,15 +194,15 @@ fi
 watchdog_mode=--cloudflare-check
 if [ "$provider" = aliyun ]; then
     case "$mode" in check|zones) ;; collect|retire|repair|orphan|checkpoint) [ "$aliyun_settlement_enabled" = true ] && [ "$aliyun_receipt_enabled" = true ] && [ "$dns_receipt_enabled" = false ] || fail 2;; reconcile) [ "$aliyun_reconcile_enabled" = true ] && [ "$dns_receipt_enabled" = false ] || fail 2;; records) [ "$aliyun_records_enabled" = true ] && [ "$dns_receipt_enabled" = false ] || fail 2;; *) fail 2;; esac
-    [ "$dns_migrated_read_enabled" = true ] || fail 2;migrated_read=true
+    if [ "$runtime_check" != true ]; then [ "$dns_migrated_read_enabled" = true ] || fail 2;migrated_read=true;fi
     codec=aliyun-reader.lua;watchdog_mode=--aliyun-check
 elif [ "$provider" = dnspod ]; then
     case "$mode" in check|zones) ;; records) [ "$dnspod_records_enabled" = true ] && [ "$dns_receipt_enabled" = false ] || fail 2;; reconcile) [ "$dnspod_reconcile_enabled" = true ] && [ "$dns_receipt_enabled" = false ] || fail 2;; collect|retire|repair|orphan|checkpoint) [ "$dnspod_settlement_enabled" = true ] && [ "$dnspod_receipt_enabled" = true ] && [ "$dns_receipt_enabled" = false ] || fail 2;; *) fail 2;; esac
-    [ "$dns_migrated_read_enabled" = true ] || fail 2;migrated_read=true
+    if [ "$runtime_check" != true ]; then [ "$dns_migrated_read_enabled" = true ] || fail 2;migrated_read=true;fi
     codec=dnspod-reader.lua;watchdog_mode=--dnspod-check
 elif [ "$provider" = huaweicloud ]; then
     case "$mode" in check|zones) ;; records) [ "$huaweicloud_records_enabled" = true ] && [ "$dns_receipt_enabled" = false ] || fail 2;; reconcile) [ "$huaweicloud_records_enabled" = true ] && [ "$huaweicloud_reconcile_enabled" = true ] && [ "$dns_receipt_enabled" = false ] || fail 2;; collect|retire|repair|orphan|checkpoint) [ "$huaweicloud_settlement_enabled" = true ] && [ "$huaweicloud_receipt_enabled" = true ] && [ "$dns_receipt_enabled" = false ] || fail 2;; *) fail 2;;esac
-    [ "$dns_migrated_read_enabled" = true ] || fail 2;migrated_read=true
+    if [ "$runtime_check" != true ]; then [ "$dns_migrated_read_enabled" = true ] || fail 2;migrated_read=true;fi
     codec=huaweicloud-reader.lua;watchdog_mode=--huaweicloud-check
 fi
 if [ "$ddns_dispatch" = true ]; then
@@ -226,6 +239,7 @@ if [ "$ddns_dispatch" = true ]; then
     [ "$#" -eq 6 ] && [ "$2" = "$ddns_job" ] || fail
 fi
 check_command=writer-check;snapshot_command=snapshot-read
+if [ "$runtime_check" = true ]; then snapshot_command=runtime-ddns-snapshot-read;fi
 if { [ "$mode" = reconcile ] || [ "$mode" = collect ] || [ "$mode" = retire ] || [ "$mode" = repair ] || [ "$mode" = checkpoint ] || [ "$mode" = orphan ]; } && [ "$dns_receipt_enabled" = true ]; then check_command=dns-recovery-check;snapshot_command=dns-recovery-snapshot-read; fi
 if { [ "$provider" = aliyun ] || [ "$provider" = dnspod ] || [ "$provider" = huaweicloud ]; } && { [ "$mode" = reconcile ] || [ "$mode" = collect ] || [ "$mode" = retire ] || [ "$mode" = repair ] || [ "$mode" = orphan ] || [ "$mode" = checkpoint ]; }; then check_command=dns-recovery-check;snapshot_command=migration-source-recovery-snapshot-read;migrated_read=false;fi
 if [ "$runtime_dispatch" = true ]; then migrated_read=false;snapshot_command=runtime-ddns-snapshot-read;fi

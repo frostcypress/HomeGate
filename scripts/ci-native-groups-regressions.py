@@ -19,7 +19,7 @@ GROUPS={
     'receipts-cloudflare':('luci-ddns-provider-jobs-regressions.py','rpc-ddns-provider-jobs-regressions.py','luci-ddns-archive-regressions.py','rpc-ddns-archive-regressions.py'),
     'receipts-aliyun':('luci-ddns-aliyun-jobs-regressions.py','rpc-ddns-aliyun-provider-jobs-regressions.py','luci-ddns-aliyun-archive-regressions.py','rpc-ddns-aliyun-archive-regressions.py'),
     'receipts-dnspod':('luci-ddns-dnspod-jobs-regressions.py','rpc-ddns-dnspod-provider-jobs-regressions.py','luci-ddns-dnspod-archive-regressions.py','rpc-ddns-dnspod-archive-regressions.py'),
-    'receipts-huawei':('luci-ddns-huawei-jobs-regressions.py','luci-ddns-huawei-archive-regressions.py','rpc-ddns-huawei-archive-regressions.py'),
+    'receipts-huawei':('luci-ddns-huawei-jobs-regressions.py','rpc-ddns-huawei-provider-jobs-regressions.py','luci-ddns-huawei-archive-regressions.py','rpc-ddns-huawei-archive-regressions.py'),
 }
 PREPARE=('prepare-ucode.py','prepare-rpcd.py','prepare-uhttpd.py','prepare-luci.py')
 ALL=tuple(name for group in GROUPS.values() for name in group)
@@ -63,7 +63,7 @@ else:
         scripts=[Path(args[0]).name for args in calls if args[0]!='-c']
         return result,calls,scripts
 
-    def test_01_six_groups_partition_all_twenty_one_suites(self):
+    def test_01_six_groups_partition_all_twenty_two_suites(self):
         collected=[]
         for group,names in GROUPS.items():
             with self.subTest(group=group):
@@ -72,7 +72,7 @@ else:
                 self.assertEqual(scripts,list(PREPARE+names))
                 self.assertEqual(len([c for c in calls if c[0]=='-c']),4)
                 collected.extend(scripts[4:])
-        self.assertEqual(collected,list(ALL));self.assertEqual(len(set(collected)),21)
+        self.assertEqual(collected,list(ALL));self.assertEqual(len(set(collected)),22)
 
     def test_02_default_and_explicit_all_preserve_original_order(self):
         for args in [(),('--group','all')]:
@@ -128,7 +128,7 @@ else:
         result,_,scripts=self.run_entry('--group','receipts')
         self.assertEqual(result.returncode,0,result.stderr.decode())
         self.assertEqual(scripts,list(PREPARE+RECEIPTS))
-        self.assertEqual(len(set(scripts[4:])),15)
+        self.assertEqual(len(set(scripts[4:])),16)
 
     def test_09_composite_failure_stops_later_providers(self):
         for group,names in GROUPS.items():

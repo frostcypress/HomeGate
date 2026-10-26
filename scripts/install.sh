@@ -2,7 +2,7 @@
 set -eu
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 [ "$(id -u)" = 0 ] || { echo '请通过 root SSH 执行'; exit 1; }
-VERSION=1.3.0-118
+VERSION=1.3.0-130
 . "$ROOT/arm64-profile.sh"
 [ "$(uname -m)" = aarch64 ] || { echo "需要 ARM64 系统，实际为 $(uname -m)"; exit 1; }
 if command -v apk >/dev/null 2>&1 && ! command -v opkg >/dev/null 2>&1; then

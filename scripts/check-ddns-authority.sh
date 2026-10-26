@@ -80,7 +80,9 @@ esac
 case "$GROUP" in
   all|receipts|receipts-huawei)
     python3 "$ROOT/scripts/luci-ddns-huawei-jobs-regressions.py" --runtime-dir "$RPC" --http-runtime-dir "$HTTP" --luci-runtime-dir "$LUA"
-    echo 'Pinned curl/TLS Huawei tasks: 4 private SDK-HMAC-result/original-receipt checks passed; no public DNS or production installation'
+    echo 'Pinned curl/TLS Huawei tasks: 9 private auto/mixed-interface SDK-HMAC-result/original-receipt checks passed; no public DNS or production installation'
+    python3 "$ROOT/scripts/rpc-ddns-huawei-provider-jobs-regressions.py" --runtime-dir "$RPC" --http-runtime-dir "$HTTP" --luci-runtime-dir "$LUA"
+    echo 'Pinned HTTP/rpcd Huawei mixed-interface tasks: 8 private SDK-HMAC-receipt/ACL/typed/Bearer/batch checks passed; no public DNS or production installation'
     python3 "$ROOT/scripts/luci-ddns-huawei-archive-regressions.py" --runtime-dir "$RPC" --http-runtime-dir "$HTTP" --luci-runtime-dir "$LUA"
     echo 'Pinned Lua Huawei archive: 6 private original-receipt/fresh-consent/recovery checks passed; no public DNS or archive retirement'
     python3 "$ROOT/scripts/rpc-ddns-huawei-archive-regressions.py" --runtime-dir "$RPC" --http-runtime-dir "$HTTP" --luci-runtime-dir "$LUA"

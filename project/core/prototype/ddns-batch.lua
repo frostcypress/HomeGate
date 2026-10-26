@@ -11,18 +11,39 @@ function M.slice(snapshot,intent,plan,rule,planner,authority,network,records,jso
     table.sort(names)
     local expected=authority.intent(snapshot,table.concat(names,','),planner.id)
     if not expected or json(expected)~=json(intent) or intent.switches[rule]~='1' then return nil end
-    local wan
+    local rules,samples={},{}
+    for _,section in ipairs(snapshot.configuration) do
+        if section.kind=='ddns_rule' then rules[section.name]=section.values end
+    end
+    local function key(source,interface)
+        if source==nil or source=='auto' then return 'auto' end
+        if source=='interface' and type(interface)=='string' then return 'interface:'..interface end
+    end
     for _,e in ipairs(plan.entries) do
         if type(e)~='table' then return nil end
-        if e.status=='ready' and not wan then
-            if type(e.request)~='table' or not network.public_ipv6(e.request.value,records) or network.device(e.device)~=e.device or e.source~='public-ip' then return nil end
-            wan={address=e.request.value,device=e.device,source=e.source}
+        if e.status=='ready' or e.status=='network_unavailable' then
+            local values=rules[e.rule]
+            if not values or intent.switches[e.rule]~='1' then return nil end
+            local group=key(values.source,values.interface);if not group then return nil end
+            local sample=false
+            if e.status=='ready' then
+                if type(e.request)~='table' or not network.public_ipv6(e.request.value,records) or
+                    type(e.device)~='string' or e.device=='' or network.device(e.device)~=e.device or e.source~='public-ip' then return nil end
+                if values.source=='interface' and (e.interface~=values.interface or e.device~=values.interface) then return nil end
+                sample={address=e.request.value,device=e.device,source=e.source}
+            end
+            if samples[group]~=nil and json(samples[group])~=json(sample) then return nil end
+            samples[group]=sample
         end
     end
-    local rebuilt=planner.build(snapshot,'',function()return wan end,records,intent)
+    local function sample(source,interface)
+        local group=key(source,interface)
+        return group and samples[group] or nil
+    end
+    local rebuilt=planner.build(snapshot,'',sample,records,intent)
     if not rebuilt or json(rebuilt)~=json(plan) then return nil end
     local narrow=authority.intent(snapshot,rule,planner.id)
-    return planner.build(snapshot,rule,function()return wan end,records,narrow),narrow
+    return planner.build(snapshot,rule,sample,records,narrow),narrow
 end
 function M.row(raw,d,revision,rule,rc,planner,sync,parse)
     if type(d)~='table' or not planner.id(rule) or (rc~='0' and rc~='1' and rc~='4') then return nil end

@@ -25,6 +25,21 @@ class Static(unittest.TestCase):
   self.assertTrue(p.response('submit','a'*32+':ddns_a',table(d)))
   for k,v in [('secret','SECRET_SENTINEL'),('last_effect','none'),('pending',True),('job','b'*32),('result',{'status':'created'})]:self.assertFalse(p.response('submit','a'*32+':ddns_a',table({**d,k:v})))
   self.assertFalse(p.row(table({'rule':'a','provider':'cloudflare','status':'created','effect':'unknown','error_kind':'','retryable':False,'retry_in':0}),'a'))
+ def test_network_unavailable_is_only_a_strict_known_none_job_row(self):
+  lua=LuaRuntime(unpack_returned_tuples=True);policy=lua.execute((PROTO/'ddns-job.lua').read_bytes());table=lambda d:lua.table_from(d,recursive=True)
+  row={'rule':'ddns_a','provider':'cloudflare','status':'network_unavailable','effect':'none','error_kind':'network_unavailable','retryable':True,'retry_in':0}
+  self.assertTrue(policy.row(table(row),'ddns_a'))
+  report={**self.specimen(),'state':'finished','reason':'completed','result':row,'last_effect':'none'};self.assertTrue(policy.report(table(report)))
+  for field,value in [('effect','unknown'),('effect','confirmed'),('error_kind','temporary'),('error_kind',''),('retryable',False),('retry_in',1),('extra','PRIVATE_SENTINEL')]:self.assertFalse(policy.row(table({**row,field:value}),'ddns_a'))
+  self.assertFalse(policy.report(table({**report,'last_effect':'unknown'})))
+ def test_canonical_preflight_failure_adapts_without_downgrading_unknown(self):
+  lua=LuaRuntime(unpack_returned_tuples=True);table=lambda d:lua.table_from(d,recursive=True)
+  policy=lua.execute((PROTO/'ddns-job.lua').read_bytes());planner=lua.execute((PROTO/'ddns-plan.lua').read_bytes());batch=lua.execute((PROTO/'ddns-batch.lua').read_bytes());sync=lua.execute((PROTO/'ddns-sync.lua').read_bytes())
+  rows=table([{'rule':'ddns_a','provider':'cloudflare','status':'network_unavailable'}]);raw,_=planner.report('3','ddns_a',rows)
+  row,effect=batch.row(raw,table(json.loads(raw)),'3','ddns_a','1',planner,sync,lambda body:table(json.loads(body)))
+  self.assertEqual(effect,'none');self.assertTrue(policy.row(table(json.loads(row)),'ddns_a'));self.assertEqual(json.loads(row)['status'],'network_unavailable')
+  changed=json.loads(raw);changed['effect']='unknown';raw=json.dumps(changed,separators=(',',':'))+'\n'
+  self.assertIsNone(batch.row(raw,table(changed),'3','ddns_a','1',planner,sync,lambda body:table(json.loads(body))))
  def test_submit_consent_exact_ticket_and_read_acl(self):
   lua=LuaRuntime(unpack_returned_tuples=True);p=lua.execute((PROTO/'ddns-ui-policy.lua').read_bytes());select=lua.execute((PROTO/'ddns-authority.lua').read_bytes()).selection;id=lua.execute((PROTO/'ddns-plan.lua').read_bytes()).id
   d={'action':'submit','job':'a'*32,'rule':'ddns_a','consent':'1'};table=lambda x:lua.table_from(x,recursive=True)

@@ -44,7 +44,9 @@ esac
 case "$GROUP" in
   all|receipts|receipts-cloudflare)
     python3 "$ROOT/scripts/luci-ddns-provider-jobs-regressions.py" --runtime-dir "$RPC" --http-runtime-dir "$HTTP" --luci-runtime-dir "$LUA"
-    echo 'Pinned curl/TLS provider tasks: 4 private result/original-receipt checks passed; no public DNS or production installation'
+    echo 'Pinned curl/TLS provider tasks: 9 private auto/mixed-interface result/original-receipt checks passed; no public DNS or production installation'
+    python3 "$ROOT/scripts/rpc-ddns-provider-jobs-regressions.py" --runtime-dir "$RPC" --http-runtime-dir "$HTTP" --luci-runtime-dir "$LUA"
+    echo 'Pinned HTTP/rpcd mixed-interface provider tasks: 8 private receipt/ACL/typed/Bearer/batch checks passed; no public DNS or production installation'
     python3 "$ROOT/scripts/luci-ddns-archive-regressions.py" --runtime-dir "$RPC" --http-runtime-dir "$HTTP" --luci-runtime-dir "$LUA"
     echo 'Pinned Lua confirmed task archive: 6 private source/fresh-consent/recovery checks passed; no public DNS or archive retirement'
     python3 "$ROOT/scripts/rpc-ddns-archive-regressions.py" --runtime-dir "$RPC" --http-runtime-dir "$HTTP" --luci-runtime-dir "$LUA"
@@ -54,7 +56,9 @@ esac
 case "$GROUP" in
   all|receipts|receipts-aliyun)
     python3 "$ROOT/scripts/luci-ddns-aliyun-jobs-regressions.py" --runtime-dir "$RPC" --http-runtime-dir "$HTTP" --luci-runtime-dir "$LUA"
-    echo 'Pinned curl/TLS Aliyun tasks: 4 private signed-result/original-receipt checks passed; no public DNS or production installation'
+    echo 'Pinned curl/TLS Aliyun tasks: 9 private auto/mixed-interface signed-result/original-receipt checks passed; no public DNS or production installation'
+    python3 "$ROOT/scripts/rpc-ddns-aliyun-provider-jobs-regressions.py" --runtime-dir "$RPC" --http-runtime-dir "$HTTP" --luci-runtime-dir "$LUA"
+    echo 'Pinned HTTP/rpcd Aliyun mixed-interface tasks: 8 private signed-receipt/ACL/typed/Bearer/batch checks passed; no public DNS or production installation'
     python3 "$ROOT/scripts/luci-ddns-aliyun-archive-regressions.py" --runtime-dir "$RPC" --http-runtime-dir "$HTTP" --luci-runtime-dir "$LUA"
     echo 'Pinned Lua Aliyun task archive: 6 private original-receipt/fresh-consent/recovery checks passed; no public DNS or archive retirement'
     python3 "$ROOT/scripts/rpc-ddns-aliyun-archive-regressions.py" --runtime-dir "$RPC" --http-runtime-dir "$HTTP" --luci-runtime-dir "$LUA"
@@ -64,7 +68,9 @@ esac
 case "$GROUP" in
   all|receipts|receipts-dnspod)
     python3 "$ROOT/scripts/luci-ddns-dnspod-jobs-regressions.py" --runtime-dir "$RPC" --http-runtime-dir "$HTTP" --luci-runtime-dir "$LUA"
-    echo 'Pinned curl/TLS DNSPod tasks: 4 private TC3-result/original-receipt checks passed; no public DNS or production installation'
+    echo 'Pinned curl/TLS DNSPod tasks: 9 private auto/mixed-interface TC3-result/original-receipt checks passed; no public DNS or production installation'
+    python3 "$ROOT/scripts/rpc-ddns-dnspod-provider-jobs-regressions.py" --runtime-dir "$RPC" --http-runtime-dir "$HTTP" --luci-runtime-dir "$LUA"
+    echo 'Pinned HTTP/rpcd DNSPod mixed-interface tasks: 8 private TC3-receipt/ACL/typed/Bearer/batch checks passed; no public DNS or production installation'
     python3 "$ROOT/scripts/luci-ddns-dnspod-archive-regressions.py" --runtime-dir "$RPC" --http-runtime-dir "$HTTP" --luci-runtime-dir "$LUA"
     echo 'Pinned Lua DNSPod archive: 6 private original-receipt/fresh-consent/recovery checks passed; no public DNS or archive retirement'
     python3 "$ROOT/scripts/rpc-ddns-dnspod-archive-regressions.py" --runtime-dir "$RPC" --http-runtime-dir "$HTTP" --luci-runtime-dir "$LUA"

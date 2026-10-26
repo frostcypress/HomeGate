@@ -95,6 +95,8 @@ jobs:
           python3 scripts/准备UCI解析回归.py
           python3 scripts/准备服务采样回归.py
           python3 scripts/准备curl回归.py
+      - name: 核实扩展分组覆盖与失败阻断
+        run: build/verify-venv/bin/python scripts/ci-extended-groups-regressions.py
       - name: 核实私有隔离并补齐官方bwrap配置
         run: python3 scripts/prepare-ci-isolation.py
       - name: 验证宿主ucode与DDNS候选关闭门禁
@@ -228,7 +230,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        group: [Aliyun, DNSPod, Huawei, DDNS执行, DDNS授权状态, DDNS授权收尾, DDNS全批, DDNS批次收尾, DDNS有界调度, DDNS生命周期CLI, DDNS原生授权UI, DDNS异步任务, DDNS明确维护]
+        group: [Aliyun, DNSPod, Huawei, DDNS执行, DDNS授权状态, DDNS状态退避, DDNS授权收尾, DDNS全批, DDNS混合全批, DDNS批次收尾, DDNS有界调度, DDNS混合调度, DDNS生命周期CLI, DDNS原生授权UI, DDNS异步任务, DDNS明确维护]
     steps:
       - name: 检出相同源码
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1

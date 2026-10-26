@@ -35,6 +35,22 @@ class Static(PlanStatic):
             old=plan[k];plan[k]=v;self.assertIsNone(self.sync.bind(snapshot,intent,plan,b'ddns_a',self.planner,self.network,self.records,self.codec.json));plan[k]=old
         for value in [b'::',b'fd00::1',b'fe80::1',b'::ffff:192.0.2.1']:
             plan[b'entries'][1][b'request'][b'value']=value;self.assertIsNone(self.sync.bind(snapshot,intent,plan,b'ddns_a',self.planner,self.network,self.records,self.codec.json))
+    def test_interface_plan_binds_configured_device_and_source_mode(self):
+        snapshot,intent,_=self.bound();rule=next(x for _,x in snapshot[b'configuration'].items() if x[b'kind']==b'ddns_rule')
+        rule[b'values'][b'source']=b'interface';rule[b'values'][b'interface']=b'odd-uplink'
+        plan=self.planner.build(snapshot,b'ddns_a',lambda source,dev:self.table({'address':'2001:db8:2::9','device':'odd-uplink','source':'public-ip'}),self.records,intent)
+        bind=lambda:self.sync.bind(snapshot,intent,plan,b'ddns_a',self.planner,self.network,self.records,self.codec.json)
+        self.assertIsNotNone(bind());entry=plan[b'entries'][1]
+        for field,value in [(b'device',b'pppoe-wan'),(b'interface',b'other-uplink'),(b'interface',None),(b'device',None),(b'device',b''),(b'revision',4)]:
+            target=plan if field==b'revision' else entry;old=target[field];target[field]=value;self.assertIsNone(bind());target[field]=old
+        rule[b'values'][b'interface']=b'other-uplink';self.assertIsNone(bind())
+        rule[b'values'][b'interface']=b'odd-uplink';rule[b'values'][b'source']=b'auto';self.assertIsNone(bind())
+    def test_ready_automatic_plan_requires_a_real_device_name(self):
+        snapshot,intent,plan=self.bound()
+        for value in [None,b'',b'eth0@if2',b'eth0;id']:
+            plan[b'entries'][1][b'device']=value
+            self.assertIsNone(self.sync.bind(snapshot,intent,plan,b'ddns_a',self.planner,self.network,self.records,self.codec.json))
+
     def receipt(self,provider='cloudflare',result='created',effect='confirmed',affected=1,kind='',retry=False):
         raw=('{'+'"api_version":1,"prototype":true,"ok":'+str(not kind).lower()+',"phase":"dns-provider","provider":"'+provider+'","account":"dns_a","configuration_revision":3,"check_scope":"record-operation","error_kind":"'+kind+'","retryable":'+str(retry).lower()+',"provider_code":"","result":"'+result+'","effect":"'+effect+'","affected":'+str(affected)+',"reconciliation_required":'+str(effect=='unknown').lower()+'}\n').encode();return raw,json.loads(raw)
     def test_four_provider_receipts_preserve_effect_and_no_sensitive_data(self):

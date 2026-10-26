@@ -4,6 +4,7 @@ import argparse,copy,hashlib,json,os,re,signal,subprocess,threading,time,unittes
 from pathlib import Path
 from project import ROOT
 from DDNS全批协调回归 import CF as CFBase,Ali as AliBase,DNP as DNPBase,HW as HWBase,Static as BaseStatic
+from DDNS全批协调回归 import MixedCF as MixedCFBase,MixedAli as MixedAliBase,MixedDNP as MixedDNPBase,MixedHW as MixedHWBase
 from DDNS计划回归 import fixture_uid
 PROTO=ROOT/'project/core/prototype'
 
@@ -29,6 +30,34 @@ class Static(BaseStatic):
         self.assertEqual(check(raw,d),b'none');self.assertIsNone(check(raw+b' ',d))
         for key,value in [('rule','other'),('effect','unknown'),('status','created'),('extra','SECRET_SENTINEL')]:
             bad=copy.deepcopy(d);bad['rules'][0][key]=value;self.assertIsNone(check(json.dumps(bad,separators=(',',':')).encode()+b'\n',bad))
+    def test_interface_retry_wait_and_recovery_preserve_independent_state(self):
+        state=self.lua.execute((PROTO/'ddns-state.lua').read_bytes())
+        context={'rule':'ddns_b','provider':'cloudflare','revision':3,'identity':'a'*64,'generation':'b'*64,'boot':'11111111-1111-1111-1111-111111111111','interval':300}
+        failed=state.finish(state.begin(self.table(context),None,1000),1000,b'failed',b'network_unavailable',b'none',True)
+        self.assertTrue(state.valid(failed));self.assertEqual((failed[b'failures'],failed[b'delay']),(1,300))
+        self.assertEqual(state.decision(failed,self.table(context),1299,False,True,False),(b'retry_wait',1))
+        self.assertEqual(state.decision(failed,self.table(context),1300,False,True,False),(b'ready',0))
+        restored=state.finish(state.begin(self.table(context),failed,1300),1300,b'unchanged',b'',b'none',False)
+        self.assertEqual((restored[b'failures'],restored[b'delay'],restored[b'outcome']),(0,300,b'unchanged'))
+        self.assertEqual(state.decision(restored,self.table(context),1599,False,True,False),(b'waiting',1))
+    def test_repeated_interface_network_failure_has_bounded_backoff(self):
+        state=self.lua.execute((PROTO/'ddns-state.lua').read_bytes())
+        context=self.table({'rule':'ddns_b','provider':'cloudflare','revision':3,'identity':'a'*64,'generation':'b'*64,'boot':'11111111-1111-1111-1111-111111111111','interval':300})
+        old=None;now=1000
+        for attempt in range(1,11):
+            old=state.finish(state.begin(context,old,now),now,b'failed',b'network_unavailable',b'none',True)
+            failures=min(attempt,8);delay=max(300,min(3600,60*2**(failures-1)))
+            self.assertEqual((old[b'failures'],old[b'delay']),(failures,delay));self.assertTrue(state.valid(old))
+            self.assertEqual(state.decision(old,context,now+delay-1,False,True,False),(b'retry_wait',1));now+=delay
+    def test_mixed_batch_network_error_and_unknown_receipts_keep_distinct_effects(self):
+        def row(rule,status='unchanged',effect='none',kind='',retry=False):return {'rule':rule,'provider':'cloudflare','status':status,'effect':effect,'error_kind':kind,'retryable':retry,'retry_in':0}
+        rows=[row('ddns_a'),row('ddns_b','network_unavailable',kind='network_unavailable',retry=True),row('ddns_c')]
+        doc={'api_version':1,'prototype':True,'ok':False,'phase':'ddns-batch','configuration_revision':3,'effect':'none','sampled':True,'write_ready':False,'rules':rows}
+        check=lambda:self.policy.batch(json.dumps(doc,separators=(',',':')).encode()+b'\n',self.table(doc),b'3',b'1',self.table(['ddns_a','ddns_b','ddns_c']),self.codec.json)
+        self.assertEqual(check(),b'none')
+        rows[1]=row('ddns_b','failed','unknown','temporary');rows[2]=row('ddns_c','blocked');doc['effect']='unknown';self.assertEqual(check(),b'unknown')
+        rows[1]['retryable']=True;self.assertIsNone(check())
+
     def test_gate_grammar_fixed_paths_and_no_signal_or_closeout(self):
         import tree_sitter,tree_sitter_bash
         parser=tree_sitter.Parser(tree_sitter.Language(tree_sitter_bash.language()));body=(PROTO/'homegate-ddns-schedule.sh').read_bytes();self.assertFalse(parser.parse(body).root_node.has_error);self.assertNotIn(b'\r',body);self.assertEqual(body.count(b'ddns_schedule_enabled=false'),1)
@@ -148,9 +177,77 @@ class Boundaries(CF):
             self.boot_id.write_text('22222222-2222-2222-2222-222222222222\n');self.control_call('reap');self.assertIsNone(foreign.poll())
         finally:foreign.terminate();foreign.communicate(timeout=5)
 
+class MixedScheduleMixin(ScheduleMixin):
+    def seed_all_mixed(self):
+        for name,value in [('ddns_a','2001:db8::2'),('ddns_b','2001:db8:2::9'),('ddns_c','2001:db8:3::8')]:self.seed_mixed(name,value)
+    def wait_tick(self,process,ticks,timeout=90):
+        end=time.monotonic()+timeout
+        while time.monotonic()<end:
+            if process.poll() is not None:self.fail(self.finish(process,process.returncode))
+            report=self.schedule_dir/'report'
+            if report.exists():
+                doc=json.loads(report.read_bytes().splitlines()[0])
+                if doc['status']=='waiting' and doc['ticks']==ticks:return doc
+            time.sleep(.05)
+        self.fail('Mixed schedule did not finish bounded tick '+str(ticks))
+    def stop_waiting(self,process):
+        # Nonblocking control-lock contention is exit 4, not durable corruption.
+        # Retry only this explicit stop intent, with a fixed local deadline.
+        end=time.monotonic()+5;calls=len(self.calls)
+        while time.monotonic()<end:
+            request=subprocess.run([self.busybox,'ash',str(self.schedule),'stop','--confirm'],env=self.env,capture_output=True,timeout=12)
+            self.assertEqual(request.stderr,b'');self.assertEqual(len(self.calls),calls)
+            if request.returncode==0:return self.public(request.stdout)
+            self.assertEqual(request.returncode,4,(request.stdout,request.stderr));self.public(request.stdout)
+            self.assertIsNone(process.poll(),'Schedule ended before explicit stop could be accepted');time.sleep(.02)
+        self.fail('Schedule control lock stayed busy beyond bounded stop deadline')
+    def test_interface_withdrawal_wait_and_recovery_use_fresh_independent_samples(self):
+        self.seed_all_mixed();original=self.settings['addresses'];process=self.start();self.wait_tick(process,1)
+        self.assertEqual(self.netlog.read_text().splitlines(),['addresses','routes'])
+        self.settings['addresses']=''.join(line+'\n' for line in original.splitlines() if 'odd-uplink' not in line);self.control.write_text(json.dumps(self.settings));self.clock.write_text('1300\n');self.wait_tick(process,2)
+        failed=json.loads((self.state_dir/'ddns_b').read_bytes());self.assertEqual((failed['outcome'],failed['error_kind'],failed['failures']),('retry_wait','network_unavailable',1))
+        for name in ['ddns_a','ddns_c']:
+            good=json.loads((self.state_dir/name).read_bytes());self.assertEqual((good['outcome'],good['failures']),('unchanged',0))
+        sample=self.netlog.read_bytes();self.settings['addresses']=original;self.control.write_text(json.dumps(self.settings));self.clock.write_text('1599\n')
+        self.assertEqual(self.control_call('status')['ticks'],2);self.assertEqual(self.netlog.read_bytes(),sample)
+        self.clock.write_text('1600\n');self.wait_tick(process,3);restored=json.loads((self.state_dir/'ddns_b').read_bytes());self.assertEqual((restored['outcome'],restored['failures']),('unchanged',0))
+        self.stop_waiting(process);out=self.finish(process);self.assertEqual((out['ticks'],out['reason'],out['last_effect']),(3,'stopped','none'))
+        self.assertEqual(self.netlog.read_text().splitlines(),['addresses','routes']*3);self.assertEqual(self.mutations(),[]);self.assertFalse(self.journal.exists());self.control_call('reap')
+    def test_changed_interface_address_stops_with_original_confirmed_receipt(self):
+        self.seed_all_mixed();self.settings['addresses']=self.settings['addresses'].replace('2001:db8:2::9','2001:db8:2::7');self.control.write_text(json.dumps(self.settings))
+        out=self.finish(self.start(),4);self.assertEqual((out['ticks'],out['reason'],out['last_effect']),(1,'blocked','confirmed'))
+        batch=json.loads((self.schedule_dir/'batch').read_bytes());self.assertEqual([row['status'] for row in batch['rules']],['unchanged','updated','blocked'])
+        slot=self.journal/('slot-'+(self.journal/'current').read_text().strip());self.assertEqual(json.loads((slot/'context').read_bytes())['request'],{'operation':'upsert','kind':'ddns','resource':'ddns_b','value':'2001:db8:2::7'})
+        before=self.files(self.journal);calls=len(self.calls);self.control_call('reap',4);self.control_call('run',4)
+        self.assertEqual(self.files(self.journal),before);self.assertEqual(len(self.calls),calls);self.assertEqual(len(self.mutations()),1);self.assertFalse(self.archive.exists());self.assertFalse((self.store/'dns-batch-results').exists())
+
+class MixedCF(MixedScheduleMixin,MixedCFBase):pass
+class MixedAli(MixedScheduleMixin,MixedAliBase):pass
+class MixedDNP(MixedScheduleMixin,MixedDNPBase):pass
+class MixedHW(MixedScheduleMixin,MixedHWBase):pass
+class MixedBoundaries(MixedCF):
+    def test_mixed_interface_configuration_change_stops_next_admission(self):
+        self.seed_all_mixed();process=self.start();self.wait_tick(process,1);sample=self.netlog.read_bytes();calls=len(self.calls)
+        self.source.write_bytes(self.source.read_bytes().replace(b'odd-uplink',b'another-uplink'));self.baseline_config=self.config_bytes();self.clock.write_text('1300\n')
+        out=self.finish(process,4);self.assertEqual((out['reason'],out['ticks']),('changed',1));self.assertEqual(self.netlog.read_bytes(),sample);self.assertEqual(len(self.calls),calls);self.assertEqual(self.mutations(),[])
+    def test_unknown_middle_interface_result_stops_without_retry_or_closeout(self):
+        self.seed_mixed('ddns_a','2001:db8::2');self.seed_mixed('ddns_c','2001:db8:3::8')
+        def hook(*args):
+            if args[0]!='GET':self.seed_mixed('ddns_b','2001:db8:2::9');return 500,{'success':False,'errors':[]}
+        self.hook=hook;out=self.finish(self.start(),4);self.hook=None;self.assertEqual((out['ticks'],out['reason'],out['last_effect']),(1,'reconciliation_required','unknown'))
+        before=self.files(self.journal);calls=len(self.calls);sample=self.netlog.read_bytes();self.control_call('reap',4);self.control_call('run',4)
+        self.assertEqual(self.files(self.journal),before);self.assertEqual(len(self.calls),calls);self.assertEqual(self.netlog.read_bytes(),sample);self.assertEqual(len(self.mutations()),1);self.assertFalse(self.archive.exists())
+
 if __name__=='__main__':
-    p=argparse.ArgumentParser();p.add_argument('--runtime',action='store_true');a=p.parse_args();suite=unittest.TestSuite()
-    for cls in ([CF,Ali,DNP,HW,Boundaries] if a.runtime else [Static]):
-        methods=Boundaries.__dict__ if cls is Boundaries else ScheduleMixin.__dict__ if a.runtime else Static.__dict__
-        suite.addTests(cls(n) for n,v in methods.items() if n.startswith('test_') and callable(v))
+    p=argparse.ArgumentParser();p.add_argument('--runtime',action='store_true')
+    mode=p.add_mutually_exclusive_group();mode.add_argument('--mixed-only',action='store_true');mode.add_argument('--auto-only',action='store_true')
+    p.add_argument('--list-tests',action='store_true');p.add_argument('--case');a=p.parse_args();suite=unittest.TestSuite()
+    if (a.mixed_only or a.auto_only) and not a.runtime:p.error('Source selection requires --runtime')
+    mixed=[MixedCF,MixedAli,MixedDNP,MixedHW,MixedBoundaries]
+    for cls in ((mixed if a.mixed_only else [CF,Ali,DNP,HW,Boundaries] if a.auto_only else [CF,Ali,DNP,HW,Boundaries]+mixed) if a.runtime else [Static]):
+        methods=MixedBoundaries.__dict__ if cls is MixedBoundaries else MixedScheduleMixin.__dict__ if cls in mixed else Boundaries.__dict__ if cls is Boundaries else ScheduleMixin.__dict__ if a.runtime else Static.__dict__
+        suite.addTests(cls(n) for n,v in methods.items() if n.startswith('test_') and callable(v) and (not a.case or a.case==n))
+    if not suite.countTestCases():p.error('No cases')
+    if a.list_tests:
+        print(json.dumps([test.id() for test in suite]));raise SystemExit(0)
     result=unittest.TextTestRunner(verbosity=2).run(suite);raise SystemExit(not result.wasSuccessful())

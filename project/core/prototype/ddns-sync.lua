@@ -6,8 +6,14 @@ function M.bind(snapshot,intent,plan,selected,planner,network,records,json)
     local e=plan.entries[1]
     if type(e)~='table' or (e.status~='ready' and e.status~='disabled') then return nil end
     if e.status=='ready' and (type(e.request)~='table' or not network.public_ipv6(e.request.value,records) or
-        network.device(e.device)~=e.device or e.source~='public-ip') then return nil end
-    local rebuilt=planner.build(snapshot,selected,function()if not e.request then return nil end;return {address=e.request.value,device=e.device,source=e.source} end,records,intent)
+        type(e.device)~='string' or e.device=='' or network.device(e.device)~=e.device or e.source~='public-ip') then return nil end
+    local function sample(source,interface)
+        if not e.request then return nil end
+        -- The selected configuration device and observed owner must both bind.
+        if source=='interface' and (interface~=e.device or e.interface~=interface) then return nil end
+        return {address=e.request.value,device=e.device,source=e.source}
+    end
+    local rebuilt=planner.build(snapshot,selected,sample,records,intent)
     if not rebuilt or json(rebuilt)~=json(plan) then return nil end
     return e
 end

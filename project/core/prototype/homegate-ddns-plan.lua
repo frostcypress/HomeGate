@@ -27,7 +27,7 @@ if not snapshot or snapshot.revision~=tonumber(revision) then write(3,planner.re
 local network=assert(loadfile(dir..'/wan6-plan.lua'))()
 local records=assert(loadfile(dir..'/cloudflare-record-plan.lua'))()
 local commands={addresses='/sbin/ip -6 -o addr show scope global',routes='/sbin/ip -6 route show default',wan6='/bin/ubus call network.interface.wan6 status'}
-local function run(kind)
+local function execute(kind)
     local command=commands[kind];if not command then return nil,false end
     local pipe=io.popen("rc=0; "..command.." 0</dev/null 2>/dev/null 3>&- 4>&- 5>&- 6>&- 7>&- 8>&- 9>&- || rc=$?; printf '\\nHGNET:%s\\n' \"$rc\"",'r')
     if not pipe then return nil,false end
@@ -35,12 +35,18 @@ local function run(kind)
     if #raw>65536 then return nil,false end
     local body,rc=raw:match('^(.*)\nHGNET:(%d+)\n$');return body,rc=='0'
 end
+-- Reuse one bounded command result across automatic and explicit-device rules.
+local samples={}
+local function run(kind)
+    if not samples[kind] then local raw,ok=execute(kind);samples[kind]={raw,ok} end
+    return samples[kind][1],samples[kind][2]
+end
 -- Intent FD is opened only by the fixed worker after the producer reaches EOF.
 local f=io.open('/proc/self/fd/5','rb');local intent_raw=f and (f:read(65537) or '')
 if not f or not f:close() or #intent_raw>65536 then os.exit(1) end
 local intent=shared.parse(intent_raw)
 if not intent or codec.json(intent)..'\n'~=intent_raw then write(3,planner.report(revision,selected,{},'invalid_configuration'));os.exit(1) end
-local plan,code=planner.build(snapshot,selected,function()return network.sample(run,shared.parse,records) end,records,intent)
+local plan,code=planner.build(snapshot,selected,function(source,interface)return network.sample(run,shared.parse,records,source=='interface' and interface or nil) end,records,intent)
 if not plan then write(3,planner.report(revision,selected,{},code));os.exit(1) end
 local private=codec.json(plan)..'\n';if #private>262144 then os.exit(1) end;write(4,private)
 local public,ok=planner.report(revision,selected,plan.entries)

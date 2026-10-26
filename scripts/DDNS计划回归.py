@@ -75,7 +75,7 @@ class Static(Codec):
         for _,e in plan[b'entries'].items():self.assertEqual(e[b'request'][b'value'],b'2001:db8::2');self.assertEqual(e[b'request'][b'resource'],e[b'rule'])
     def test_disabled_and_unsupported_never_sample(self):
         snapshot=self.parse(self.frame());rule=next(s for _,s in snapshot[b'configuration'].items() if s[b'kind']==b'ddns_rule');calls=[]
-        for field,value,status in [(b'enabled',b'0',b'disabled'),(b'source',b'url',b'unsupported'),(b'source',b'interface',b'unsupported'),(b'type',b'A',b'unsupported')]:
+        for field,value,status in [(b'enabled',b'0',b'disabled'),(b'source',b'url',b'unsupported'),(b'source',b'interface',b'invalid_rule'),(b'type',b'A',b'unsupported')]:
             old=rule[b'values'][field];rule[b'values'][field]=value
             intent=self.intent(snapshot)
             if field==b'enabled':intent[b'switches'][b'ddns_a']=b'0'
@@ -92,6 +92,36 @@ class Static(Codec):
             out=self.planner.build(snapshot,b'',lambda:calls.append(1),self.records,self.table(intent));self.assertEqual(out,(None,b'invalid_configuration'))
         self.assertEqual(calls,[])
         raw,_=self.planner.report(b'3',b'',self.table([]),b'rule_failure');self.assertIsNone(self.planner.validate(raw,self.table(json.loads(raw)),b'3',b'',b'1'))
+    def test_explicit_device_has_no_route_or_wan_fallback(self):
+        addresses=(ADDR+'14: odd-uplink inet6 2001:db8:2::9/64 scope global dynamic\n').encode()
+        for requested,wanted in [(b'odd-uplink',b'2001:db8:2::9'),(b'pppoe-wan',b'2001:db8::2'),(b'absent',None)]:
+            calls=[]
+            def run(kind):calls.append(kind);return addresses,True
+            out=self.network.sample(run,lambda raw:None,self.records,requested)
+            row=out[0] if isinstance(out,tuple) else out
+            self.assertEqual(row[b'address'] if row else None,wanted);self.assertEqual(calls,[b'addresses'])
+            if wanted is not None:self.assertFalse(isinstance(out,tuple),'Successful exact-device selection must not return an error')
+    def test_invalid_explicit_device_refused_before_any_command(self):
+        calls=[]
+        for dev in [b'',b'-'*33,b'eth0@if2',b'eth0:',b'eth0;id',b'eth0\n',b'$(id)',b'../eth0']:
+            self.assertEqual(self.network.sample(lambda kind:calls.append(kind),lambda raw:None,self.records,dev),(None,b'invalid_rule'))
+        self.assertEqual(calls,[])
+    def test_explicit_device_rejects_unusable_address_without_other_owner_fallback(self):
+        for flag in ['tentative','dadfailed','deprecated']:
+            calls=[]
+            raw=ADDR+'14: odd-uplink inet6 2001:db8:2::9/64 scope global '+flag+'\n'
+            out=self.network.sample(lambda kind:(calls.append(kind) or raw.encode(),True),lambda raw:None,self.records,b'odd-uplink')
+            self.assertEqual(out,(None,b'network_unavailable'));self.assertEqual(calls,[b'addresses'])
+    def test_planner_keeps_source_specific_cache_and_does_not_sample_disabled(self):
+        snapshot=self.parse(self.frame());sections=snapshot[b'configuration']
+        rule=next(s for _,s in sections.items() if s[b'kind']==b'ddns_rule');rule[b'values'][b'source']=b'interface';rule[b'values'][b'interface']=b'odd-uplink'
+        copy=self.table({'kind':'ddns_rule','name':'ddns_b','values':dict(rule[b'values'].items())});sections[len(sections)+1]=copy
+        calls=[]
+        def sample(source,dev):calls.append((source,dev));return self.table({'address':'2001:db8:2::9','device':'odd-uplink','source':'public-ip'})
+        plan=self.planner.build(snapshot,b'',sample,self.records,self.intent(snapshot))
+        self.assertEqual(calls,[(b'interface',b'odd-uplink')]);self.assertEqual(len(plan[b'entries']),2)
+        self.assertTrue(all(e[b'request'][b'value']==b'2001:db8:2::9' for _,e in plan[b'entries'].items()))
+
     def test_closed_gates_grammar_and_fixed_read_commands(self):
         import tree_sitter,tree_sitter_bash
         parser=tree_sitter.Parser(tree_sitter.Language(tree_sitter_bash.language()))
@@ -141,9 +171,39 @@ class Runtime(LifecycleRuntime):
     def test_unknown_rule_and_bad_argument_never_sample(self):
         self.assertEqual(self.read('missing',1)['error_kind'],'not_found');self.read('../bad',2);self.read('',2);self.assertEqual(self.net_calls(),[])
     def test_unsupported_sources_and_ipv4_skip_network(self):
-        for body in [self.business.replace(b"option source 'auto'",b"option source 'url'"),self.business.replace(b"option source 'auto'",b"option source 'interface'"),self.business.replace(b"config ddns_rule 'ddns_a'",b"config ddns_rule 'ddns_a'\n option type 'A'")]:
+        for body in [self.business.replace(b"option source 'auto'",b"option source 'url'"),self.business.replace(b"config ddns_rule 'ddns_a'",b"config ddns_rule 'ddns_a'\n option type 'A'")]:
             self.change(body);self.assertEqual(self.read(expected=1)['rules'][0]['status'],'unsupported')
         self.assertEqual(self.net_calls(),[])
+    def interface_rule(self,dev):
+        return self.business.replace(b"option source 'auto'",b"option source 'interface'\n option interface '"+dev+b"'")
+    def test_explicit_device_reads_exact_owner_without_routes_or_ubus(self):
+        self.change(self.interface_rule(b'odd-uplink'))
+        self.settings['addresses']['raw']=ADDR+'14: odd-uplink inet6 2001:db8:2::9/64 scope global dynamic\n';self.save()
+        self.read();row=json.loads(self.capture.read_bytes())['entries'][0]
+        self.assertEqual((row['device'],row['request']['value']),('odd-uplink','2001:db8:2::9'))
+        self.assertEqual([c['kind'] for c in self.net_calls()],['addresses'])
+    def test_missing_explicit_device_never_falls_back_to_automatic_wan(self):
+        self.change(self.interface_rule(b'absent'))
+        self.assertEqual(self.read(expected=1)['rules'][0]['status'],'network_unavailable')
+        self.assertEqual([c['kind'] for c in self.net_calls()],['addresses'])
+    def test_empty_explicit_device_is_invalid_without_sampling(self):
+        self.change(self.interface_rule(b''))
+        self.assertEqual(self.read(expected=1)['rules'][0]['status'],'invalid_rule');self.assertEqual(self.net_calls(),[])
+    def test_explicit_device_filters_stale_address_and_retains_other_rule(self):
+        self.change(self.interface_rule(b'odd-uplink')+b"\nconfig ddns_rule 'ddns_b'\n option enabled '1'\n option account 'dns_a'\n option zone 'example.test'\n option host 'other.example.test'\n option source 'auto'\n")
+        self.settings['addresses']['raw']=ADDR+'14: odd-uplink inet6 2001:db8:2::9/64 scope global deprecated\n';self.save()
+        out=self.read(expected=1);self.assertEqual([v['status'] for v in out['rules']],['network_unavailable','ready'])
+        self.assertEqual([c['kind'] for c in self.net_calls()],['addresses','routes'])
+    def test_mixed_auto_and_explicit_devices_share_one_address_read(self):
+        body=self.business
+        for name,dev in [('ddns_b','odd-uplink'),('ddns_c','other-uplink'),('ddns_d','odd-uplink')]:
+            body+=("\nconfig ddns_rule '"+name+"'\n option enabled '1'\n option account 'dns_a'\n option zone 'example.test'\n option host '"+name.replace('_','-')+".example.test'\n option source 'interface'\n option interface '"+dev+"'\n").encode()
+        self.change(body)
+        self.settings['addresses']['raw']=ADDR+'14: odd-uplink inet6 2001:db8:2::9/64 scope global\n15: other-uplink inet6 2001:db8:3::9/64 scope global\n';self.save()
+        self.read();entries=json.loads(self.capture.read_bytes())['entries']
+        self.assertEqual([v['request']['value'] for v in entries],['2001:db8::2','2001:db8:2::9','2001:db8:3::9','2001:db8:2::9'])
+        self.assertEqual([c['kind'] for c in self.net_calls()],['addresses','routes'])
+
     def test_four_provider_batch_samples_once(self):
         body=self.business
         for i,provider in enumerate(['aliyun','dnspod','huaweicloud'],1):body+=("\nconfig dns_account 'dns_"+str(i)+"'\n option provider '"+provider+"'\nconfig ddns_rule 'ddns_"+str(i)+"'\n option enabled '1'\n option account 'dns_"+str(i)+"'\n option zone 'example.test'\n option host 'www.example.test'\n").encode()

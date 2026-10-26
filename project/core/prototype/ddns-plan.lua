@@ -1,4 +1,4 @@
--- Configuration-bound automatic AAAA preflight. No provider mutation or URL read.
+-- Configuration-bound automatic or exact-device AAAA preflight. No provider mutation or URL read.
 local M={}
 local providers={cloudflare=true,aliyun=true,dnspod=true,huaweicloud=true}
 local function id(s)return type(s)=='string' and #s>=1 and #s<=64 and s:match('^[a-zA-Z0-9_-]+$') end
@@ -17,19 +17,26 @@ function M.build(snapshot,selected,sample,records,intent)
         end
     end
     for name in pairs(intent.switches) do if not seen[name] then return nil,'invalid_configuration' end end
-    local sampled,wan=false,nil
+    local sampled,cache=false,{}
     for _,s in ipairs(snapshot.configuration) do if s.kind=='ddns_rule' and (selected=='' or s.name==selected) then
         local v=s.values;local entry={rule=s.name,provider=providers[accounts[v.account]] and accounts[v.account] or '',status='ready'}
         if intent.switches[s.name]~='1' then entry.status='disabled'
-        elseif v.type~='AAAA' or v.source~='auto' then entry.status='unsupported'
+        elseif v.type~='AAAA' or (v.source~='auto' and v.source~='interface') then entry.status='unsupported'
+        elseif v.source=='interface' and (type(v.interface)~='string' or #v.interface==0 or #v.interface>32 or not v.interface:match('^[a-zA-Z0-9_.:%-]+$')) then entry.status='invalid_rule'
         elseif entry.provider=='' then entry.status='invalid_rule'
         else
-            if not sampled then sampled=true;wan=sample() end
+            local key=v.source=='auto' and 'auto' or 'interface:'..v.interface
+            if cache[key]==nil then
+                sampled=true
+                if v.source=='auto' then cache[key]=sample() or false
+                else cache[key]=sample('interface',v.interface) or false end
+            end
+            local wan=cache[key]
             if not wan then entry.status='network_unavailable'
             else
                 local q={operation='upsert',kind='ddns',resource=s.name,value=wan.address}
                 local c=records.bind(snapshot,v.account,tostring(snapshot.revision),q)
-                if not c then entry.status='invalid_rule' else entry.account=v.account;entry.request=q;entry.device=wan.device;entry.source=wan.source end
+                if not c then entry.status='invalid_rule' else entry.account=v.account;entry.request=q;entry.device=wan.device;entry.source=wan.source;if v.source=='interface' then entry.interface=v.interface end end
             end
         end
         entries[#entries+1]=entry

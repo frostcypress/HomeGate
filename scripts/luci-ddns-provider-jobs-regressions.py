@@ -35,7 +35,8 @@ GATES={
     'homegate-dns-recovery.sh':('dns_settlement_enabled',),
     'homegate-config-prototype.sh':('ddns_plan_enabled',),
 }
-CASES=('01','02','03','04')
+MIXED_CASES=('05','06','07','08','09')
+CASES=('01','02','03','04')+MIXED_CASES
 
 
 def setup_state(state):
@@ -88,6 +89,26 @@ with open('/teststate/network-samples','a') as f:f.write(kind+'\n')
 sys.stdout.write(body)
 ''')
     ip.chmod(0o755)
+
+
+def setup_mixed_state(state):
+    setup_state(state)
+    configure_mixed_source(state,'ddns_1')
+
+
+def configure_mixed_source(state,rule):
+    if rule not in ('ddns_0','ddns_1','ddns_2','ddns_3'):raise ValueError('Unsupported fixed fixture rule')
+    path=state/'etc/config/homegate';body=path.read_text()
+    marker="config ddns_rule '"+rule+"'\n"
+    if body.count(marker)!=1:raise ValueError('Expected one original rule in fixture')
+    path.write_text(body.replace(marker,marker+" option source 'interface'\n option interface 'odd-uplink'\n"))
+    (state/'interface-addresses').write_text('12: pppoe-wan inet6 2001:db8::2/64 scope global dynamic\n14: odd-uplink inet6 2001:db8:2::9/64 scope global dynamic\n')
+    script=state/'tools/ip'
+    script.write_text("#!/usr/bin/python3\nimport sys\nfrom pathlib import Path\nargs=sys.argv[1:]\n"
+        "if args==['-6','-o','addr','show','scope','global']:\n kind='addresses';body=Path('/teststate/interface-addresses').read_text()\n"
+        "elif args==['-6','route','show','default']:\n kind='routes';body='default via fe80::1 dev pppoe-wan metric 512\\n'\n"
+        "else:sys.exit(99)\nwith open('/teststate/network-samples','a') as f:f.write(kind+'\\n')\nsys.stdout.write(body)\n")
+    script.chmod(0o755)
 
 
 class ProviderJobs(jobs.Jobs):
@@ -275,6 +296,67 @@ class ProviderJobs(jobs.Jobs):
             self.assertEqual(self.requests,requests)
 
 
+class MixedJobs(ProviderJobs):
+    def authorize(self,session):
+        rules=getattr(self,'MIXED_RULES',('ddns_0','ddns_1'))
+        if rules not in (('ddns_0','ddns_1'),('ddns_1','ddns_2'),('ddns_1','ddns_3')):raise ValueError('Unsupported fixed mixed authority rules')
+        preview=self.post('preview',session,selection=','.join(reversed(rules)))
+        self.assertEqual(preview['rules'],list(rules));self.assertEqual(preview['provider'],'multiple')
+        result=self.post('commit',session,confirmation=preview['confirmation'],consent='1')
+        self.assertEqual(result['rules'],list(rules));self.expected_configuration=self.configuration_snapshot()
+        return preview
+    def run_mixed_job(self,session):
+        self.authorize(session);ack=self.submit(session)
+        self.assertTrue(ack['pending'] and ack['last_effect']=='unknown');row=self.settled(session)
+        self.assertTrue(all(event['authenticated'] for event in self.requests),'Provider credential binding changed')
+        self.assertEqual((STATE/'network-samples').read_text().splitlines(),['addresses'])
+        return row
+    def test_provider_05_mixed_grant_and_interface_noop_stay_scoped(self):
+        self.db['c'*32]={'id':'c'*32,'type':'AAAA','name':'www.example.test','content':'2001:db8:2::9','ttl':600}
+        with self.session() as session:
+            row=self.run_mixed_job(session)
+            self.assertEqual((row['state'],row['last_effect'],row['result']['status']),('finished','none','unchanged'))
+            self.assertTrue(self.requests and all(event['method']=='GET' for event in self.requests))
+            self.assertFalse((STORE/'dns-operation').exists());self.assertFalse((jobs.JOBS/('a'*32)/'proof').exists())
+            before=self.snapshot();requests=list(self.requests);self.assertEqual(self.submit(session),row)
+            self.assertEqual(before,self.snapshot());self.assertEqual(requests,self.requests)
+    def test_provider_06_interface_create_keeps_real_receipt_and_replay_barrier(self):
+        with self.session() as session:
+            row=self.run_mixed_job(session);self.assert_origin(row,'created')
+            self.assertEqual([event['method'] for event in self.requests if event['method']!='GET'],['POST'])
+            self.assertTrue(len(self.db)==1 and next(iter(self.db.values()))['content']=='2001:db8:2::9')
+            before=self.snapshot();requests=list(self.requests);self.assertEqual(self.submit(session),row);self.submit(session,job='b'*32,expected=503)
+            self.assertEqual(before,self.snapshot());self.assertEqual(requests,self.requests)
+    def test_provider_07_missing_interface_finishes_without_wan_fallback_or_proof(self):
+        (STATE/'interface-addresses').write_text('12: pppoe-wan inet6 2001:db8::2/64 scope global dynamic\n')
+        with self.session() as session:
+            row=self.run_mixed_job(session)
+            self.assertEqual((row['state'],row['last_effect'],row['result']['status']),('finished','none','network_unavailable'))
+            self.assertTrue(row['result']['retryable']);self.assertEqual(self.requests,[]);self.assertFalse((STORE/'dns-operation').exists());self.assertFalse((jobs.JOBS/('a'*32)/'proof').exists())
+            before=self.snapshot();self.assertEqual(self.submit(session),row);self.assertEqual(before,self.snapshot())
+    def test_provider_08_csrf_and_changed_interface_preserve_confirmation(self):
+        with self.session() as session:
+            calls=(STATE/'entry-calls').read_bytes() if (STATE/'entry-calls').exists() else b'';before=self.snapshot()
+            status,_,_=self.cgi(luci.BASE+'/ddns_native/submit',cookie=session[0],verb='POST',fields={'token':'wrong-fixture','job':'a'*32,'rule':getattr(self,'RULE','ddns_1'),'consent':'1'})
+            self.assertEqual(status,403);self.assertEqual(before,self.snapshot());self.assertEqual((STATE/'entry-calls').read_bytes() if (STATE/'entry-calls').exists() else b'',calls)
+            preview=self.post('preview',session,selection=','.join(getattr(self,'MIXED_RULES',('ddns_0','ddns_1'))));path=Path('/etc/config/homegate');original=path.read_bytes()
+            try:
+                path.write_bytes(original.replace(b'odd-uplink',b'another-uplink'))
+                self.refused('commit',session,confirmation=preview['confirmation'],consent='1')
+            finally:path.write_bytes(original)
+            self.expected_configuration=self.configuration_snapshot();self.assertEqual(self.requests,[]);self.assertFalse(jobs.JOBS.exists())
+    def test_provider_09_unknown_interface_attempt_keeps_original_evidence(self):
+        type(self).fail_after_mutation=True
+        with self.session() as session:
+            row=self.run_mixed_job(session)
+            self.assertTrue(row['state']=='finished' and row['last_effect']=='unknown' and row['result']['effect']=='unknown')
+            self.assertEqual([event['method'] for event in self.requests if event['method']!='GET'],['POST'])
+            self.assertTrue(len(self.db)==1 and next(iter(self.db.values()))['content']=='2001:db8:2::9')
+            self.assertTrue((STORE/'dns-operation').exists());self.assertFalse((jobs.JOBS/('a'*32)/'proof').exists())
+            before=self.snapshot();requests=list(self.requests);self.assertEqual(self.submit(session),row);self.submit(session,job='b'*32,expected=503)
+            self.assertEqual(before,self.snapshot());self.assertEqual(requests,self.requests)
+
+
 def main():
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--runtime-dir',type=Path,default=ROOT/'build/rpcd')
@@ -287,9 +369,10 @@ def main():
     rpc.WORK,luci.HTTP,luci.LUA=args.runtime_dir.resolve(),args.http_runtime_dir.resolve(),args.luci_runtime_dir.resolve()
     if args.inside_net:
         rpc.OUTER_NET,rpc.OUTER_UID=args.inside_net,args.inside_uid
-        names=[n for n in sorted(ProviderJobs.__dict__) if n.startswith('test_provider_') and n.split('_')[2]==args.case]
+        cls=MixedJobs if args.case in MIXED_CASES else ProviderJobs
+        names=[n for n in sorted(cls.__dict__) if n.startswith('test_provider_') and n.split('_')[2]==args.case]
         if len(names)!=1:raise ValueError('Expected one isolated provider result scenario')
-        return 0 if unittest.TextTestRunner(verbosity=2).run(unittest.TestSuite(ProviderJobs(n) for n in names)).wasSuccessful() else 1
+        return 0 if unittest.TextTestRunner(verbosity=2).run(unittest.TestSuite(cls(n) for n in names)).wasSuccessful() else 1
     luci.runtime.validate_runtime(luci.LUA,rpc.WORK);luci.http.runtime.validate_runtime(luci.HTTP,rpc.WORK)
     curl=subprocess.run([str(CURL),'--version'],capture_output=True,check=True)
     if not curl.stdout.startswith(b'curl 7.83.1 '):raise ValueError('Use the verified pinned curl7.83.1 runtime')
@@ -301,7 +384,7 @@ def main():
                 (state/'models',luci.LUA/'prefix/lib/lua/luci/model'),(state/'libexec','/usr/libexec'),
                 (state/'tools','/usr/sbin'),(state/'curl-transport','/usr/bin/curl')),
             extra_rw_mounts=lambda state:((state/'etc/homegate','/etc/homegate'),(state/'etc/config','/etc/config')),
-            state_setup=setup_state,guest_args=('--http-runtime-dir',str(luci.HTTP),'--luci-runtime-dir',str(luci.LUA),'--case',case))
+            state_setup=setup_mixed_state if case in MIXED_CASES else setup_state,guest_args=('--http-runtime-dir',str(luci.HTTP),'--luci-runtime-dir',str(luci.LUA),'--case',case))
         if result:break
     if any(p.read_bytes()!=b for p,b in original.items()):raise ValueError('Original business/candidate source changed during TLS task checks')
     luci.runtime.validate_runtime(luci.LUA,rpc.WORK);luci.http.runtime.validate_runtime(luci.HTTP,rpc.WORK)

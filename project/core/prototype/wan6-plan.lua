@@ -55,9 +55,16 @@ function M.choose(addresses,route,ubus,ubus_ok)
         for _,a in ipairs(addresses) do if a.device:sub(1,#prefix)==prefix and a.device:sub(1,3)~='br-' then return {address=a.address,device=a.device,source='public-ip'} end end
     end
 end
-function M.sample(run,parse,plan)
+function M.sample(run,parse,plan,requested)
+    -- Exact configured device only; never interpolate it into a command.
+    if requested~=nil and (requested=='' or device(requested)~=requested) then return nil,'invalid_rule' end
     local raw,ok=run('addresses');if not ok then return nil,'network_unavailable' end
     local addresses=M.addresses(raw,plan);if not addresses then return nil,'network_unavailable' end
+    if requested~=nil then
+        local selected=M.owner(addresses,requested)
+        if selected then return selected end
+        return nil,'network_unavailable'
+    end
     raw,ok=run('routes');local route=ok and M.route(raw) or ''
     local selected=M.owner(addresses,route);if selected then return selected end
     raw,ok=run('wan6');local u=ok and parse(raw) or nil

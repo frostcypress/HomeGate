@@ -9,8 +9,9 @@ local function id(s)return type(s)=='string' and #s<=64 and s:match('^[a-zA-Z0-9
 local function integer(n,max)return type(n)=='number' and n>=0 and n<=max and n==math.floor(n) end
 function M.row(d,rule)
  if not keys(d,{rule=true,provider=true,status=true,effect=true,error_kind=true,retryable=true,retry_in=true},7) or d.rule~=rule or not id(rule) or not ({cloudflare=true,aliyun=true,dnspod=true,huaweicloud=true})[d.provider] then return false end
- if not ({ready=true,stale=true,blocked=true,reconciliation_required=true,unauthorized=true,clock_invalid=true,paused=true,retry_wait=true,waiting=true,created=true,updated=true,unchanged=true,failed=true})[d.status] then return false end
+ if not ({ready=true,stale=true,blocked=true,reconciliation_required=true,unauthorized=true,clock_invalid=true,paused=true,retry_wait=true,waiting=true,created=true,updated=true,unchanged=true,failed=true,network_unavailable=true})[d.status] then return false end
  if not ({['']=true,authentication=true,not_found=true,unsupported=true,invalid_request=true,invalid_zone=true,temporary=true,network_unavailable=true,timeout=true,rate_limit=true,invalid_configuration=true})[d.error_kind] or type(d.retryable)~='boolean' or not integer(d.retry_in,999999999) then return false end
+ if d.status=='network_unavailable' then return d.effect=='none' and d.error_kind=='network_unavailable' and d.retryable==true and d.retry_in==0 end
  if d.status=='created' or d.status=='updated' then return d.effect=='confirmed' and d.error_kind=='' and not d.retryable end
  if d.status=='unchanged' then return d.effect=='none' and d.error_kind=='' and not d.retryable end
  return (d.status=='failed' and (d.effect=='none' or d.effect=='unknown')) or d.effect=='none'

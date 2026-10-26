@@ -116,11 +116,62 @@ class Boundaries(CF):
     def test_partial_runtime_outer_collection_resumes(self):
         self.grant();self.pending_success();self.fault('rm','sys.exit(1) if any("/.ddns-plan-" in a and a.endswith("/input") for a in sys.argv[1:]) else None');self.collect(7);self.restore_tool('rm');self.collect();self.assertFalse(self.outer.exists())
 
+class InterfaceMixin:
+    def migrated(self):
+        raw=self.source.read_bytes()
+        for source in [b"option source 'url'",b"option source 'auto'"]:
+            raw=raw.replace(source,b"option source 'interface'\n option interface 'odd-uplink'")
+        # The original fixture may rely on the implicit auto default.
+        if b"option source 'interface'" not in raw:
+            raw=raw.replace(b"config ddns_rule 'ddns_a'",b"config ddns_rule 'ddns_a'\n option source 'interface'\n option interface 'odd-uplink'")
+        self.source.write_bytes(raw);return super().migrated()
+    def setUp(self):
+        super().setUp()
+        self.settings['addresses']+='14: odd-uplink inet6 2001:db8:2::9/64 scope global dynamic\n'
+        self.control.write_text(json.dumps(self.settings))
+    def test_interface_preview_only_then_confirmed_create_keeps_original_receipt(self):
+        self.auth('preview','ddns_a');self.baseline_config=self.config_bytes();self.sync_call(7);self.assertEqual(self.calls,[]);self.assertFalse(self.netlog.exists())
+        self.grant();out=self.sync_call();self.assertEqual((out['provider'],out['result'],out['effect']),(self.provider,'created','confirmed'))
+        journal=self.store/'dns-operation';slot=journal/('slot-'+(journal/'current').read_text().strip())
+        self.assertEqual(json.loads((slot/'context').read_bytes())['request']['value'],'2001:db8:2::9')
+        self.assertEqual(json.loads((journal/'terminal').read_bytes())['result'],'created');self.assertEqual(self.netlog.read_text().splitlines(),['addresses'])
+        before=self.files(journal);n=len(self.calls);self.sync_call(4);self.assertEqual(len(self.calls),n);self.assertEqual(before,self.files(journal))
+    def test_interface_noop_then_update_stays_scoped(self):
+        self.grant();self.seed('2001:db8:2::9');out=self.sync_call();self.assertEqual((out['result'],out['effect']),('unchanged','none'));self.assertFalse((self.store/'dns-operation').exists());self.assertEqual(self.mutations(),[])
+        self.db.clear();self.seed('2001:db8:2::1');out=self.sync_call();self.assertEqual((out['result'],out['effect']),('updated','confirmed'));self.assertEqual(len(self.mutations()),1)
+        self.assertEqual(self.netlog.read_text().splitlines(),['addresses','addresses'])
+    def test_interface_unknown_attempt_is_durable_and_never_retried(self):
+        self.grant();SyncMixin.test_unknown_mutation_is_durable_and_not_retried(self)
+    def test_interface_missing_stale_and_private_addresses_never_fall_back(self):
+        self.grant()
+        for extra in ['', '14: odd-uplink inet6 2001:db8:2::9/64 scope global deprecated\n','14: odd-uplink inet6 fd00::9/64 scope global\n']:
+            self.settings['addresses']='12: pppoe-wan inet6 2001:db8::2/64 scope global\n'+extra;self.control.write_text(json.dumps(self.settings))
+            out=self.sync_call(1);self.assertEqual(out['effect'],'none');self.assertEqual(self.calls,[]);self.assertFalse((self.store/'dns-operation').exists())
+        self.assertEqual(self.netlog.read_text().splitlines(),['addresses']*3)
+
+class InterfaceCF(InterfaceMixin,CF):pass
+class InterfaceAli(InterfaceMixin,Ali):pass
+class InterfaceDNP(InterfaceMixin,DNP):pass
+class InterfaceHW(InterfaceMixin,HW):pass
+class InterfaceBoundaries(InterfaceCF):
+    def test_interface_plan_cannot_borrow_default_wan_device_and_address(self):
+        self.grant();p=self.engine.parent/'homegate-ddns-plan.lua';s=p.read_text();needle='local private=codec.json(plan)';self.assertEqual(s.count(needle),1)
+        p.write_text(s.replace(needle,"plan.entries[1].device='pppoe-wan';plan.entries[1].request.value='2001:db8::2'\n"+needle))
+        self.sync_call(7);self.assertEqual(self.calls,[]);self.assertFalse((self.store/'dns-operation').exists())
+    def test_interface_change_after_sampling_stops_before_provider(self):
+        self.grant();p=self.ip;p.write_text(p.read_text()+'\np=Path('+repr(str(self.source))+');p.write_bytes(p.read_bytes().replace(b"odd-uplink",b"other-uplink"))\n')
+        self.sync_call(7);self.assertEqual(self.calls,[])
+    def test_interface_change_after_preview_cannot_confirm_old_authority(self):
+        preview=self.auth('preview','ddns_a');self.source.write_bytes(self.source.read_bytes().replace(b'odd-uplink',b'other-uplink'))
+        self.auth('commit',preview['confirmation'],expected=7);self.assertFalse(self.active.exists());self.assertEqual(self.calls,[]);self.assertFalse(self.netlog.exists())
+
 Runtime=CF
 if __name__=='__main__':
-    p=argparse.ArgumentParser();p.add_argument('--runtime',action='store_true');p.add_argument('--case');a=p.parse_args();suite=unittest.TestSuite()
-    for cls in ([CF,Ali,DNP,HW,Boundaries] if a.runtime else [Static]):
-        methods=Boundaries.__dict__ if cls is Boundaries else NormalMixin.__dict__ if a.runtime else Static.__dict__
+    p=argparse.ArgumentParser();p.add_argument('--runtime',action='store_true');p.add_argument('--case');p.add_argument('--interface-only',action='store_true');a=p.parse_args();suite=unittest.TestSuite()
+    if a.interface_only and not a.runtime:p.error('--interface-only requires --runtime')
+    interfaces=[InterfaceCF,InterfaceAli,InterfaceDNP,InterfaceHW,InterfaceBoundaries]
+    for cls in ((interfaces if a.interface_only else [CF,Ali,DNP,HW,Boundaries]+interfaces) if a.runtime else [Static]):
+        methods=InterfaceBoundaries.__dict__ if cls is InterfaceBoundaries else InterfaceMixin.__dict__ if cls in interfaces else Boundaries.__dict__ if cls is Boundaries else NormalMixin.__dict__ if a.runtime else Static.__dict__
         suite.addTests(cls(n) for n,v in methods.items() if n.startswith('test_') and callable(v) and (not a.case or a.case==n))
     if not suite.countTestCases():p.error('No cases')
     r=unittest.TextTestRunner(verbosity=2).run(suite);raise SystemExit(not r.wasSuccessful())

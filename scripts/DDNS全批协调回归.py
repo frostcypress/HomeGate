@@ -33,6 +33,38 @@ class Static(BaseStatic):
         self.assertEqual(effect,b'none');self.assertEqual(json.loads(row)['status'],'unchanged')
         for key,value in [('extra','SECRET_SENTINEL'),('effect','confirmed'),('rule','other')]:
             doc=json.loads(result);doc[key]=value;bad=json.dumps(doc,separators=(',',':')).encode()+b'\n';self.assertIsNone(self.batch.row(bad,self.table(doc),b'3',b'ddns_a',b'0',self.planner,self.sync,lambda raw:self.table(json.loads(raw))))
+    def mixed_example(self):
+        snapshot=self.frame_snapshot();sections=snapshot[b'configuration']
+        for name,dev in [('ddns_b','odd-uplink'),('ddns_c','other-uplink'),('ddns_d','odd-uplink')]:
+            sections[len(sections)+1]=self.table({'kind':'ddns_rule','name':name,'values':{'account':'dns_a','zone':'example.test','host':name.replace('_','-')+'.example.test','type':'AAAA','source':'interface','interface':dev,'ttl':'600'}})
+        intent,_=self.authority.intent(snapshot,b'ddns_a,ddns_b,ddns_c,ddns_d',self.planner.id)
+        def sample(source=None,dev=None):
+            return self.table({'address':'2001:db8::2' if source is None else '2001:db8:2::9' if dev==b'odd-uplink' else '2001:db8:3::8','device':'pppoe-wan' if source is None else dev,'source':'public-ip'})
+        plan=self.planner.build(snapshot,b'',sample,self.records,intent)
+        return snapshot,intent,plan
+    def test_mixed_sources_slice_distinct_devices_and_values_without_borrowing(self):
+        s,i,p=self.mixed_example()
+        for name,dev,value in [(b'ddns_a',b'pppoe-wan',b'2001:db8::2'),(b'ddns_b',b'odd-uplink',b'2001:db8:2::9'),(b'ddns_c',b'other-uplink',b'2001:db8:3::8'),(b'ddns_d',b'odd-uplink',b'2001:db8:2::9')]:
+            plan,intent=self.slice(s,i,p,name);entry=plan[b'entries'][1]
+            self.assertEqual((entry[b'rule'],entry[b'device'],entry[b'request'][b'value']),(name,dev,value));self.assertEqual(sum(v==b'1' for v in intent[b'switches'].values()),1)
+    def test_mixed_source_plan_rejects_cross_interface_device_and_configuration(self):
+        for field,value in [(b'device',b'pppoe-wan'),(b'interface',b'other-uplink'),(b'device',None),(b'device',b'')]:
+            s,i,p=self.mixed_example();p[b'entries'][2][field]=value;self.assertIsNone(self.slice(s,i,p))
+        s,i,p=self.mixed_example();next(x for _,x in s[b'configuration'].items() if x[b'name']==b'ddns_b')[b'values'][b'interface']=b'other-uplink';self.assertIsNone(self.slice(s,i,p))
+    def test_same_source_group_must_agree_on_value_and_failure(self):
+        s,i,p=self.mixed_example();p[b'entries'][4][b'request'][b'value']=b'2001:db8:2::1';self.assertIsNone(self.slice(s,i,p))
+        s,i,p=self.mixed_example();p[b'entries'][4]=self.table({'rule':'ddns_d','provider':'cloudflare','status':'network_unavailable'});self.assertIsNone(self.slice(s,i,p))
+    def test_failed_interface_group_does_not_replace_other_group_samples(self):
+        s,i,p=self.mixed_example()
+        for index,name in [(2,'ddns_b'),(4,'ddns_d')]:p[b'entries'][index]=self.table({'rule':name,'provider':'cloudflare','status':'network_unavailable'})
+        failed,_=self.slice(s,i,p,b'ddns_b');good,_=self.slice(s,i,p,b'ddns_c')
+        self.assertEqual(failed[b'entries'][1][b'status'],b'network_unavailable');self.assertEqual(good[b'entries'][1][b'request'][b'value'],b'2001:db8:3::8')
+    def test_mixed_plan_missing_duplicate_extra_and_foreign_generation_refused(self):
+        s,i,p=self.mixed_example();p[b'entries'][4]=None;self.assertIsNone(self.slice(s,i,p))
+        s,i,p=self.mixed_example();p[b'entries'][4]=p[b'entries'][2];self.assertIsNone(self.slice(s,i,p))
+        s,i,p=self.mixed_example();p[b'extra']=b'PRIVATE_SENTINEL';self.assertIsNone(self.slice(s,i,p))
+        s,i,p=self.mixed_example();p[b'revision']=4;self.assertIsNone(self.slice(s,i,p))
+
     def test_gates_fixed_parent_descriptors_shell_lua_and_no_production_install(self):
         import tree_sitter,tree_sitter_bash
         parser=tree_sitter.Parser(tree_sitter.Language(tree_sitter_bash.language()))
@@ -107,9 +139,74 @@ class Boundaries(CF):
     def test_changed_source_after_sample_refuses_dispatch_and_keeps_outer_stage(self):
         self.ip.write_text(self.ip.read_text()+'\np=Path('+repr(str(self.source))+');p.write_bytes(p.read_bytes()+b"\\n")\n');self.batch_call(7);self.assertEqual(self.calls,[]);self.assertTrue(list(self.native.lockdir.glob('.ddns-plan-*')));self.assertFalse(self.journal.exists())
 
+class MixedMixin:
+    def setUp(self):
+        super().setUp()
+        current=self.cli('status')['revision'];body=(self.store/f'gen-{current}/public.conf').read_text()
+        for name,dev,host in [('ddns_a','', 'www.example.test'),('ddns_b','odd-uplink','b.example.test'),('ddns_c','other-uplink','c.example.test')]:
+            pattern=r"(?m)^config ddns_rule '"+name+r"'\n.*?(?=^config |\Z)"
+            def update(match):
+                block=match[0]
+                for field,value in [('source','interface' if dev else 'auto'),('interface',dev),('host',host)]:
+                    line=" option "+field+" '"+value+"'\n"
+                    pattern=r"(?m)^[ \t]*option "+field+r" '[^']*'\n"
+                    block,count=re.subn(pattern,lambda _:line,block)
+                    if not count:block=block.rstrip('\n')+'\n'+line+'\n'
+                return block
+            body,count=re.subn(pattern,update,body,flags=re.S);self.assertEqual(count,1)
+        preview=self.cli('preview',payload=body.encode());tx=self.cli('commit-apply-projection',preview['confirmation']);self.cli('projection-publish',tx['apply_handle'],'apply');self.cli('apply-finish-projection',tx['apply_handle'])
+        preview=self.auth('preview-rules','ddns_a,ddns_b,ddns_c');self.auth('commit',preview['confirmation']);self.baseline_config=self.config_bytes()
+        self.settings['addresses']+='14: odd-uplink inet6 2001:db8:2::9/64 scope global\n15: other-uplink inet6 2001:db8:3::8/64 scope global\n';self.control.write_text(json.dumps(self.settings))
+    def seed_mixed(self,name,value):
+        from DDNS执行回归 import rec,ali_record,dnp_record,hw_record
+        number={'ddns_a':1,'ddns_b':2,'ddns_c':3}[name];host={'ddns_a':'www','ddns_b':'b','ddns_c':'c'}[name]
+        record={'cloudflare':lambda:rec(number,name=host+'.example.test',value=value),'aliyun':lambda:ali_record(number,rr=host,value=value),'dnspod':lambda:dnp_record(number,rr=host,value=value),'huaweicloud':lambda:hw_record(number,name=host+'.example.test.',values=[value])}[self.provider]()
+        self.add(record)
+    def test_mixed_noops_keep_distinct_device_addresses_and_one_sample(self):
+        for name,value in [('ddns_a','2001:db8::2'),('ddns_b','2001:db8:2::9'),('ddns_c','2001:db8:3::8')]:self.seed_mixed(name,value)
+        out=self.batch_call();self.assertEqual([row['status'] for row in out['rules']],['unchanged']*3);self.assertEqual(self.mutations(),[]);self.assertEqual(self.netlog.read_text().splitlines(),['addresses','routes'])
+        calls=len(self.calls);out=self.batch_call(4);self.assertFalse(out['sampled']);self.assertEqual(len(self.calls),calls)
+    def test_failed_middle_interface_stays_isolated_from_two_good_rules(self):
+        self.seed_mixed('ddns_a','2001:db8::2');self.seed_mixed('ddns_c','2001:db8:3::8')
+        self.settings['addresses']=''.join(line+'\n' for line in self.settings['addresses'].splitlines() if 'odd-uplink' not in line);self.control.write_text(json.dumps(self.settings))
+        out=self.batch_call(1);self.assertEqual([row['status'] for row in out['rules']],['unchanged','network_unavailable','unchanged']);self.assertEqual(self.mutations(),[]);self.assertFalse(self.journal.exists());self.assertEqual(self.netlog.read_text().splitlines(),['addresses','routes'])
+    def test_confirmed_middle_rule_uses_own_address_and_preserves_global_fence(self):
+        self.seed_mixed('ddns_a','2001:db8::2');self.seed_mixed('ddns_c','2001:db8:3::8')
+        out=self.batch_call(4);self.assertEqual([row['status'] for row in out['rules']],['unchanged','created','blocked']);self.assertEqual(out['effect'],'confirmed')
+        slot=self.journal/('slot-'+(self.journal/'current').read_text().strip());self.assertEqual(json.loads((slot/'context').read_bytes())['request'],{'operation':'upsert','kind':'ddns','resource':'ddns_b','value':'2001:db8:2::9'})
+        before=self.files(self.journal);calls=len(self.calls);sample=self.netlog.read_bytes();self.batch_call(4);self.assertEqual(len(self.calls),calls);self.assertEqual(sample,self.netlog.read_bytes());self.assertEqual(before,self.files(self.journal))
+        self.maintenance('collect-receipt');self.maintenance('retire-archive');self.clock.write_text('1300\n');out=self.batch_call();self.assertEqual([row['status'] for row in out['rules']],['unchanged']*3);self.assertEqual(len(self.mutations()),1)
+
+class MixedCF(MixedMixin,CF):pass
+class MixedAli(MixedMixin,Ali):pass
+class MixedDNP(MixedMixin,DNP):pass
+class MixedHW(MixedMixin,HW):pass
+class MixedBoundaries(MixedCF):
+    def test_mixed_envelope_cannot_borrow_another_interface_sample(self):
+        p=self.engine.parent/'homegate-ddns-plan.lua';body=p.read_text();needle='local private=codec.json(plan)';self.assertEqual(body.count(needle),1)
+        p.write_text(body.replace(needle,"plan.entries[2].device=plan.entries[1].device;plan.entries[2].request.value=plan.entries[1].request.value\n"+needle))
+        self.batch_call(7);self.assertEqual(self.calls,[]);self.assertFalse(self.journal.exists())
+    def test_mixed_source_change_after_sample_blocks_before_any_provider(self):
+        self.ip.write_text(self.ip.read_text()+'\np=Path('+repr(str(self.source))+');p.write_bytes(p.read_bytes().replace(b"odd-uplink",b"another-uplink"))\n')
+        self.batch_call(7);self.assertEqual(self.calls,[]);self.assertFalse(self.journal.exists());self.assertTrue(list(self.native.lockdir.glob('.ddns-plan-*')))
+    def test_unknown_middle_rule_keeps_evidence_and_blocks_later_rules(self):
+        self.seed_mixed('ddns_a','2001:db8::2');self.seed_mixed('ddns_c','2001:db8:3::8')
+        def hook(*args):
+            action=args[0]
+            if action!='GET':self.seed_mixed('ddns_b','2001:db8:2::9');return 500,{'success':False,'errors':[]}
+        self.hook=hook;out=self.batch_call(1);self.hook=None;self.assertEqual([row['status'] for row in out['rules']],['unchanged','failed','blocked']);self.assertEqual(out['effect'],'unknown')
+        before=self.files(self.journal);calls=len(self.calls);self.clock.write_text('999999999\n');self.batch_call(4);self.assertEqual(len(self.calls),calls);self.assertEqual(before,self.files(self.journal))
+
 if __name__=='__main__':
-    p=argparse.ArgumentParser();p.add_argument('--runtime',action='store_true');a=p.parse_args();suite=unittest.TestSuite()
-    for cls in ([CF,Ali,DNP,HW,Boundaries] if a.runtime else [Static]):
-        methods=Boundaries.__dict__ if cls is Boundaries else BatchMixin.__dict__ if a.runtime else Static.__dict__
-        suite.addTests(cls(n) for n,v in methods.items() if n.startswith('test_') and callable(v))
+    p=argparse.ArgumentParser();p.add_argument('--runtime',action='store_true')
+    mode=p.add_mutually_exclusive_group();mode.add_argument('--mixed-only',action='store_true');mode.add_argument('--auto-only',action='store_true')
+    p.add_argument('--list-tests',action='store_true');p.add_argument('--case');a=p.parse_args();suite=unittest.TestSuite()
+    if (a.mixed_only or a.auto_only) and not a.runtime:p.error('Source selection requires --runtime')
+    mixed=[MixedCF,MixedAli,MixedDNP,MixedHW,MixedBoundaries]
+    for cls in ((mixed if a.mixed_only else [CF,Ali,DNP,HW,Boundaries] if a.auto_only else [CF,Ali,DNP,HW,Boundaries]+mixed) if a.runtime else [Static]):
+        methods=MixedBoundaries.__dict__ if cls is MixedBoundaries else MixedMixin.__dict__ if cls in mixed else Boundaries.__dict__ if cls is Boundaries else BatchMixin.__dict__ if a.runtime else Static.__dict__
+        suite.addTests(cls(n) for n,v in methods.items() if n.startswith('test_') and callable(v) and (not a.case or a.case==n))
+    if not suite.countTestCases():p.error('No cases')
+    if a.list_tests:
+        print(json.dumps([test.id() for test in suite]));raise SystemExit(0)
     result=unittest.TextTestRunner(verbosity=2).run(suite);raise SystemExit(not result.wasSuccessful())

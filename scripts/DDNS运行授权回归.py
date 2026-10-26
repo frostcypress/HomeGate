@@ -30,6 +30,22 @@ class Static(PlanStatic):
         r=next(x for _,x in s[b'configuration'].items() if x[b'kind']==b'ddns_rule')
         for k,v in [(b'type',b'A'),(b'source',b'url'),(b'source',b'interface'),(b'account',b'missing')]:
             old=r[b'values'][k];r[b'values'][k]=v;self.assertIsNone(self.authority.intent(s,b'ddns_a',self.planner.id));r[b'values'][k]=old
+    def test_single_interface_grant_preserves_snapshot_and_requires_valid_device(self):
+        for provider in ['cloudflare','aliyun','dnspod','huaweicloud']:
+            snapshot=self.frame_snapshot(provider);rule=next(x for _,x in snapshot[b'configuration'].items() if x[b'kind']==b'ddns_rule')
+            rule[b'values'][b'source']=b'interface';rule[b'values'][b'interface']=b'odd-uplink'
+            before=self.codec.json(snapshot);intent,p=self.authority.intent(snapshot,b'ddns_a',self.planner.id)
+            self.assertEqual(p,provider.encode());self.assertEqual(dict(intent[b'switches'].items()),{b'ddns_a':b'1'});self.assertEqual(before,self.codec.json(snapshot))
+            for dev in [b'',b'eth0@if3',b'eth0:',b'eth0;id',b'../eth0',b'x'*33]:
+                rule[b'values'][b'interface']=dev;self.assertIsNone(self.authority.intent(snapshot,b'ddns_a',self.planner.id))
+    def test_interface_mixed_scope_requires_every_member_to_be_valid(self):
+        snapshot=self.frame_snapshot();rule=next(x for _,x in snapshot[b'configuration'].items() if x[b'kind']==b'ddns_rule')
+        rule[b'values'][b'source']=b'interface';rule[b'values'][b'interface']=b'odd-uplink'
+        snapshot[b'configuration'][len(snapshot[b'configuration'])+1]=self.table({'kind':'ddns_rule','name':'ddns_b','values':{'account':'dns_a','source':'auto','type':'AAAA'}})
+        before=self.codec.json(snapshot);intent,provider=self.authority.intent(snapshot,b'ddns_a,ddns_b',self.planner.id)
+        self.assertEqual(provider,b'multiple');self.assertEqual(dict(intent[b'switches'].items()),{b'ddns_a':b'1',b'ddns_b':b'1'});self.assertEqual(self.codec.json(snapshot),before)
+        rule[b'values'][b'interface']=b'';self.assertIsNone(self.authority.intent(snapshot,b'ddns_a,ddns_b',self.planner.id))
+
     def test_closed_gates_grammar_and_no_service_or_cloud_action(self):
         import tree_sitter,tree_sitter_bash
         parser=tree_sitter.Parser(tree_sitter.Language(tree_sitter_bash.language()))

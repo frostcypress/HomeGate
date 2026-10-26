@@ -4,9 +4,7 @@ set -eu
 sudo apt-get update
 sudo apt-get install --no-install-recommends -y build-essential lua5.1 liblua5.1-0-dev libjson-c-dev libssl-dev
 mkdir -p build/busybox-runtime
-curl --fail --location --connect-timeout 15 --max-time 120 \
-  https://busybox.net/downloads/busybox-1.33.2.tar.bz2 \
-  -o build/busybox-runtime/busybox-1.33.2.tar.bz2
+python3 scripts/准备BusyBox归档.py
 printf '%s  %s\n' 6843ba7977081e735fa0fdb05893e3c002c8c5ad7c9c80da206e603cc0ac47e7 \
   build/busybox-runtime/busybox-1.33.2.tar.bz2 | sha256sum -c -
 tar -xjf build/busybox-runtime/busybox-1.33.2.tar.bz2 -C build/busybox-runtime

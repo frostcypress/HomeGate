@@ -178,6 +178,25 @@ class Boundaries(CF):
         finally:foreign.terminate();foreign.communicate(timeout=5)
 
 class MixedScheduleMixin(ScheduleMixin):
+    def track_wait_boundary(self):
+        # A waiting report is published before wake is calculated. Only the
+        # scheduler-owned real sleep proves the wake deadline used this clock.
+        self.waiting_probe=self.base/'schedule-wait-boundary'
+        self.fault('sleep',"from pathlib import Path\nimport json\n"
+            "if sys.argv[1:]==['1']:\n"
+            " lease=json.loads(Path("+repr(str(self.schedule_dir/'lease'))+").read_bytes().splitlines()[0])\n"
+            " if lease['pid']==str(os.getppid()):\n"
+            "  report=json.loads(Path("+repr(str(self.schedule_dir/'report'))+").read_bytes().splitlines()[0])\n"
+            "  if report['status']=='waiting':\n"
+            "   target=Path("+repr(str(self.waiting_probe))+");pending=target.with_suffix('.next')\n"
+            "   pending.write_text(json.dumps({'ticks':report['ticks'],'moment':Path("+repr(str(self.clock))+").read_text().strip()}))\n"
+            "   pending.chmod(0o600);os.replace(pending,target)\n")
+    def wait_boundary_reached(self,ticks):
+        probe=getattr(self,'waiting_probe',None)
+        if probe is None:return True
+        if not probe.exists():return False
+        doc=json.loads(probe.read_bytes())
+        return doc=={'ticks':ticks,'moment':self.clock.read_text().strip()}
     def seed_all_mixed(self):
         for name,value in [('ddns_a','2001:db8::2'),('ddns_b','2001:db8:2::9'),('ddns_c','2001:db8:3::8')]:self.seed_mixed(name,value)
     def wait_tick(self,process,ticks,timeout=90):
@@ -187,7 +206,7 @@ class MixedScheduleMixin(ScheduleMixin):
             report=self.schedule_dir/'report'
             if report.exists():
                 doc=json.loads(report.read_bytes().splitlines()[0])
-                if doc['status']=='waiting' and doc['ticks']==ticks:return doc
+                if doc['status']=='waiting' and doc['ticks']==ticks and self.wait_boundary_reached(ticks):return doc
             time.sleep(.05)
         self.fail('Mixed schedule did not finish bounded tick '+str(ticks))
     def stop_waiting(self,process):
@@ -202,7 +221,7 @@ class MixedScheduleMixin(ScheduleMixin):
             self.assertIsNone(process.poll(),'Schedule ended before explicit stop could be accepted');time.sleep(.02)
         self.fail('Schedule control lock stayed busy beyond bounded stop deadline')
     def test_interface_withdrawal_wait_and_recovery_use_fresh_independent_samples(self):
-        self.seed_all_mixed();original=self.settings['addresses'];process=self.start();self.wait_tick(process,1)
+        self.track_wait_boundary();self.seed_all_mixed();original=self.settings['addresses'];process=self.start();self.wait_tick(process,1)
         self.assertEqual(self.netlog.read_text().splitlines(),['addresses','routes'])
         self.settings['addresses']=''.join(line+'\n' for line in original.splitlines() if 'odd-uplink' not in line);self.control.write_text(json.dumps(self.settings));self.clock.write_text('1300\n');self.wait_tick(process,2)
         failed=json.loads((self.state_dir/'ddns_b').read_bytes());self.assertEqual((failed['outcome'],failed['error_kind'],failed['failures']),('retry_wait','network_unavailable',1))

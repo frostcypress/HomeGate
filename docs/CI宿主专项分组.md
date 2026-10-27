@@ -76,3 +76,23 @@ CI68已整轮结束，23项必需检查中22成功，混合调度的华为云撤
 r119在原华为云Lua任务脚本追加5个混合/指定接口场景，使用Cloudflare/auto(ddns_1)+Huawei/interface(ddns_3)固定组合，原SDK-HMAC、HGHWJOURNAL1/task proof及配置脱敏保持。原21脚本顺序、6 native/16 extended分组及25分钟上限不变，共179个native场景。新增5项及原华为云auto创建/原回执归档两条受影响路径本地验证，未受影响专项不重复。
 
 r120在华为云Lua任务后加入RPC混合/指定接口8场景；保留独立SDK-HMAC、原HGHWJOURNAL1/proof及所有旧场景，全部RPC场景的公开结果同时检查地址/接口和Huawei domain/endpoint/凭据标记。native现22脚本/187场景；6 native/16 extended和23项必需检查保持，原21脚本相对顺序不变。本地只测新增8项、原Huawei RPC归档1项及调度合同，不提前投递CI。
+
+## r132 启动配置接合场景登记
+
+新增启动配置静态3/运行13项，生命周期CLI完整运行由140增153，lifecycle分区由32增45（其余32/21/31/24保持），静态37增40且仍仅执行一次。20 extended/6 native、27项必需检查和25分钟上限不变；下一CI投递前继续核对累计用时。本轮仅本地验证，不重算进度或提前CI。
+
+## r133 启用意图场景登记
+
+新增启用意图静态3/运行11项，CLI静态43、完整运行注册164，lifecycle分区56，其余32/21/31/24保持。20 extended/6 native与27必需检查、25分钟上限不变；下一CI前复核累计用时。此为新开发r133，同轮CI修复仍沿用冻结r号。本轮仅定向本地验证，不提前CI。
+
+## r134 本地新增显式意图应用核对
+
+CLI完整注册178运行场景，lifecycle70、dns32、network-config21、health-recovery31、ddns-recovery24；静态46仅一次。新增14运行和3静态纳入原lifecycle组，20 extended/6 native/27必需检查保持，未改工作流时限。本轮只做本地新增及受影响启动/意图路径，无提前CI。
+
+## r135 主开关私有候选本地增量
+
+CLI注册185运行场景，lifecycle77、dns32、network-config21、health-recovery31、ddns-recovery24；静态51只一次。新增7运行/5静态纳入原lifecycle组，20 extended/6 native/27必需检查及原时限不变。本轮只本地新增与受影响r134路径验证，不提前CI。
+
+## r136 主开关意图准备记录本地增量
+
+CLI注册201运行，lifecycle93、dns32、network-config21、health-recovery31、ddns-recovery24；静态54仅一次。新记录16运行/3静态进入原lifecycle组，20 extended/6 native/27必需检查与原时限保持；本轮只本地新增及受影响21项，不提前CI。

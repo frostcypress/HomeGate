@@ -1,0 +1,4 @@
+#!/bin/sh
+# This package has no init service. Only the observer's enabled query is valid.
+[ "$#" -eq 1 ] && [ "$1" = enabled ] || exit 2
+exit 1

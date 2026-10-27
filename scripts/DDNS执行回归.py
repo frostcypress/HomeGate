@@ -61,6 +61,23 @@ class Static(PlanStatic):
         raw,d=self.receipt()
         for key,value in [('account','other'),('configuration_revision',4),('provider','dnspod'),('affected',2),('result','deleted'),('effect','none'),('extra','SECRET_SENTINEL')]:
             bad=copy.deepcopy(d);bad[key]=value;b=json.dumps(bad,separators=(',',':')).encode()+b'\n';self.assertIsNone(self.sync.result(b,self.table(bad),b'cloudflare',b'dns_a',b'3',b'ddns_a',b'0'))
+    def test_exact_host_delete_is_bound_without_a_network_sample(self):
+        snapshot,intent,_=self.bound()
+        plan=self.planner.build_delete(snapshot,b'ddns_a',self.records,intent)
+        self.assertFalse(plan[b'sampled']);self.assertEqual(plan[b'entries'][1][b'request'][b'operation'],b'delete')
+        self.assertTrue(plan[b'entries'][1][b'request'][b'all'])
+        bind=lambda:self.sync.bind(snapshot,intent,plan,b'ddns_a',self.planner,self.network,self.records,self.codec.json)
+        self.assertIsNotNone(bind())
+        plan[b'entries'][1][b'request'][b'value']=b'2001:db8::2';self.assertIsNone(bind())
+        plan[b'entries'][1][b'request'][b'value']=b'';plan[b'entries'][1][b'request'][b'resource']=b'other';self.assertIsNone(bind())
+    def test_delete_result_is_distinct_from_sync_and_keeps_partial_unknown(self):
+        raw,d=self.receipt(result='deleted',effect='confirmed',affected=2)
+        self.assertIsNone(self.sync.result(raw,self.table(d),b'cloudflare',b'dns_a',b'3',b'ddns_a',b'0'))
+        out,effect=self.sync.result(raw,self.table(d),b'cloudflare',b'dns_a',b'3',b'ddns_a',b'0',b'delete')
+        self.assertEqual((json.loads(out)['phase'],effect),('ddns-delete',b'confirmed'))
+        raw,d=self.receipt(result='failed',effect='unknown',affected=1,kind='temporary')
+        out,effect=self.sync.result(raw,self.table(d),b'cloudflare',b'dns_a',b'3',b'ddns_a',b'1',b'delete')
+        self.assertEqual(effect,b'unknown');self.assertFalse(json.loads(out)['retryable'])
     def test_gates_fixed_modes_and_shell_lua_grammar(self):
         import tree_sitter,tree_sitter_bash
         p=tree_sitter.Parser(tree_sitter.Language(tree_sitter_bash.language()))

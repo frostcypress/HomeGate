@@ -1,0 +1,6 @@
+#!/bin/sh
+# Never starts a session. An event can only wake/stop the current bound lease.
+case "${ACTION:-}" in
+ ifup|ifupdate|ifdown)
+  /usr/bin/homegate-engineering schedule-event "$ACTION" "${INTERFACE:-}" "${DEVICE:-}" >/dev/null 2>&1;;
+esac

@@ -10,7 +10,21 @@ local function record(fd,kind)
     if not digest or #digest~=64 or not policy[kind](d) or codec.json(d)~=body then fail() end;return d
 end
 local mode=arg[1]
-if mode=='lease' then
+if mode=='event' then
+    if arg[5] then fail() end
+    local iface,dev,selection=arg[2],arg[3],arg[4]
+    if type(iface)~='string' or #iface>64 or iface:find('[^a-zA-Z0-9_.:%-]') or type(dev)~='string' or #dev>32 or dev:find('[^a-zA-Z0-9_.:%-]') then fail() end
+    local names=selection=='*' and {} or assert(loadfile(dir..'/ddns-authority.lua'))().selection(selection,assert(loadfile(dir..'/ddns-plan.lua'))().id)
+    local raw=io.stdin:read(262145);local doc=raw and #raw<=262144 and codec.parse(raw)
+    if not names or not doc then fail() end
+    local selected={};for _,n in ipairs(names)do selected[n]=true end
+    for _,s in ipairs(doc)do if s.kind=='ddns_rule' and (selection=='*' or selected[s.name]) then
+        local v=s.values
+        if (v.source=='auto' and (iface=='wan' or iface=='wan6')) or
+           (v.source=='interface' and v.interface~='' and (v.interface==dev or v.interface==iface)) then io.write('true\n');return end
+    end end
+    io.write('false\n');return
+elseif mode=='lease' then
     if arg[11] then fail() end
     local d={schema='HGDDNSSCHEDULE1',identity=arg[2],generation=arg[3],grant=arg[4],revision=tonumber(arg[5]),boot=arg[6],pid=arg[7],birth=arg[8],token=arg[9],started=tonumber(arg[10])};d.deadline=(d.started or -1000)+policy.budget
     if not policy.lease(d) then fail() end;io.write(codec.json(d)..'\n');return

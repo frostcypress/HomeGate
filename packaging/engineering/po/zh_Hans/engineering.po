@@ -1,0 +1,32 @@
+msgid ""
+msgstr "Content-Type: text/plain; charset=UTF-8\nLanguage: zh_CN\n"
+
+msgid "HomeGate Engineering"
+msgstr "HomeGate 工程验证"
+
+msgid "Engineering validation only. Configuration and services remain unchanged."
+msgstr "仅供工程构建验证，配置和服务保持原样。"
+
+msgid "Engineering backend unavailable"
+msgstr "工程验证后端不可用"
+
+msgid "Version"
+msgstr "版本"
+
+msgid "DNS providers"
+msgstr "DNS 服务商"
+
+msgid "Provider"
+msgstr "服务商"
+
+msgid "Identifier"
+msgstr "标识"
+
+msgid "Certificate authorities"
+msgstr "证书机构"
+
+msgid "Configuration and Credentials"
+msgstr "配置与凭据"
+
+msgid "DDNS Authorization"
+msgstr "DDNS 授权"

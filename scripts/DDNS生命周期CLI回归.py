@@ -12,6 +12,11 @@ from 核心健康CLI回归 import suite as health_suite
 from 核心恢复CLI回归 import suite as recovery_suite
 from DDNS恢复生产回归 import suite as ddns_recovery_suite
 from DDNS恢复收尾回归 import suite as ddns_repair_suite
+from 启动配置接合回归 import suite as startup_suite
+from 启动启用意图回归 import suite as startup_intent_suite
+from 启用意图应用核对回归 import suite as intent_application_suite
+from 主开关候选配置回归 import suite as main_switch_candidate_suite
+from 主开关意图记录回归 import suite as main_switch_record_suite
 from DDNS有界调度回归 import CF as CFBase,Ali as AliBase,DNP as DNPBase,HW as HWBase
 from DDNS计划回归 import fixture_uid
 from 生命周期准备回归 import Runtime as PrepareBase
@@ -150,6 +155,11 @@ def build_suite(runtime,partition=None):
         for cls in ([CF,Ali,DNP,HW,Boundaries,Cold,CatalogRuntime] if runtime else [Static,CatalogStatic]):
             members=CLIMixin.__dict__ if cls in [CF,Ali,DNP,HW] else cls.__dict__
             suite.addTests(cls(n) for n,v in members.items() if n.startswith('test_') and callable(v))
+        suite.addTests(startup_suite(runtime))
+        suite.addTests(startup_intent_suite(runtime))
+        suite.addTests(intent_application_suite(runtime))
+        suite.addTests(main_switch_candidate_suite(runtime))
+        suite.addTests(main_switch_record_suite(runtime))
     for name,builders in [
         ('dns',[status_suite,zones_suite]),
         ('network-config',[network_suite,configuration_suite]),

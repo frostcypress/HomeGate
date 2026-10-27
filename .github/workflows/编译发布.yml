@@ -110,6 +110,8 @@ jobs:
         run: |
           build/verify-venv/bin/python scripts/持久旧配置迁移回归.py
           build/verify-venv/bin/python scripts/持久旧配置迁移回归.py --runtime
+      - name: 验证工程DDNS固定部署范围与语法
+        run: build/verify-venv/bin/python scripts/工程DDNS部署回归.py
       - name: 验证生命周期运行锁与持久准备
         run: |
           build/verify-venv/bin/python scripts/生命周期准备回归.py

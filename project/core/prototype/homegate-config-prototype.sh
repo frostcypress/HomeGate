@@ -21,6 +21,7 @@ orphan_recovery_enabled=false
 service_actions_enabled=false
 dns_recovery_read_enabled=false
 lifecycle_migration_enabled=false
+startup_admission_enabled=false
 ddns_plan_enabled=false
 ddns_authority_enabled=false
 persistent_mode=false
@@ -248,6 +249,13 @@ open_store() {
         [ "$persistent_mode" = false ] || fail 'Abandoned persistent transaction requires reconciliation' 7
     done
     head_revision=0
+    # A private main-switch preparation record is never an application permit.
+    # Presence, including malformed/partial data and links, fences operations.
+    if [ "$persistent_mode" = true ] && { [ -e "$store/startup-intent" ] || [ -L "$store/startup-intent" ] ||
+        [ -e "$store/.startup-intent-next" ] || [ -L "$store/.startup-intent-next" ]; }; then
+        case "$command" in status|export|runtime-startup-snapshot-read) ;;
+            *) fail 'Startup intent requires explicit reconciliation' 4;; esac
+    fi
     max_revision=0
     for existing in "$store/gen-"*; do
         [ -e "$existing" ] || [ -L "$existing" ] || continue
@@ -909,6 +917,21 @@ projection_capture() {
     digest_file /etc/config/homegate
     [ "$digest" = "$source_digest" ] || fail 'Source configuration changed during capture' 7
 }
+credential_projection_lineage() {
+    # A secret-only generation keeps public.conf identical. Preserve the
+    # already-published projection lineage only while its fixed source is
+    # still exactly that public configuration, under the retained writer lock.
+    # An edited/legacy source must never acquire projected status by a secret
+    # update. Nonprojected and isolated stores retain their existing behavior.
+    [ "$persistent_mode" = true ] || return
+    [ -e "$store/gen-$head_revision/source.conf" ] || return
+    production_source_lock
+    projection_source_check
+    digest_file "$store/gen-$head_revision/public.conf"; public_source_digest=$digest
+    digest_file /etc/config/homegate
+    [ "$digest" = "$public_source_digest" ] || fail 'Published source changed before credential update' 7
+    cp "$store/gen-$head_revision/source.conf" "$generation_dir/source.conf" || fail 'Unable to retain projection lineage' 7
+}
 projection_need() {
     journal_need
     [ "$journal_format" = HGAPPLICATION3 ] || fail 'No bound source projection' 5
@@ -1077,6 +1100,8 @@ case "$command" in
         [ "$#" -eq 0 ] && [ "$persistent_mode" = true ] && [ "$ddns_authority_enabled" = true ] && [ "$production_writes_enabled" = true ] && [ "$dns_recovery_read_enabled" = true ] || fail 'Runtime recovery source is not ready' 2;;
     runtime-ddns-snapshot-read)
         [ "$#" -eq 0 ] && [ "$persistent_mode" = true ] && [ "$ddns_authority_enabled" = true ] && [ "$production_writes_enabled" = true ] || fail 'Runtime DDNS source is not ready' 2;;
+    runtime-startup-snapshot-read)
+        [ "$#" -eq 0 ] && [ "$persistent_mode" = true ] && [ "$startup_admission_enabled" = true ] || fail 'Startup source is not ready' 2;;
     snapshot-read) [ "$#" -eq 0 ] && [ "$public_mode" = true ] || fail 'Private reader requires full schema' 2;;
     recover-application) [ "$#" -eq 0 ] && [ "$public_mode" = true ] || fail 'Recovery requires full schema' 2;;
     recover-fence)
@@ -1123,7 +1148,7 @@ case "$command" in
 esac
 open_store
 case "$command" in
-    runtime-ddns-snapshot-read|runtime-ddns-recovery-snapshot-read)
+    runtime-ddns-snapshot-read|runtime-ddns-recovery-snapshot-read|runtime-startup-snapshot-read)
         need_initialized
         runtime_generation="$store/gen-$head_revision"
         private_file "$runtime_generation/source.conf" || fail 'Runtime DDNS requires a published ordinary generation' 7
@@ -1371,6 +1396,7 @@ case "$command" in
         begin_generation
         cp "$store/gen-$head_revision/public.conf" "$generation_dir/public.conf" || fail 'Unable to copy public config'
         copy_vault "$head_revision"
+        credential_projection_lineage
         if [ "$command" = credential-put ]; then
             head -c 4097 > "$generation_dir/credentials/$credential_name" || fail 'Unable to receive credentials'
             number "$(stat -c %s "$generation_dir/credentials/$credential_name")" 1 4096 || fail 'Credential size outside limit'

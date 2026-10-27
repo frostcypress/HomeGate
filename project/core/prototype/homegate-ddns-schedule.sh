@@ -4,10 +4,17 @@ set -u
 umask 077
 export LC_ALL=C
 ddns_schedule_enabled=false
+ddns_schedule_events_enabled=false
 fail() { printf '{"api_version":1,"prototype":true,"ok":false,"phase":"ddns-schedule","effect":"none","write_ready":false,"error":"DDNS schedule is unavailable"}\n';exit "${1:-7}"; }
 action=${1:-}
 case "$action" in run) [ "$ddns_schedule_enabled" = true ] && [ "$#" -eq 2 ] && [ "$2" = --confirm ] || fail 2;;
-    status|quiescent) [ "$#" -eq 1 ] || fail 2;; stop|reap) [ "$#" -eq 2 ] && [ "$2" = --confirm ] || fail 2;; *) fail 2;; esac
+    status|quiescent) [ "$#" -eq 1 ] || fail 2;; stop|reap) [ "$#" -eq 2 ] && [ "$2" = --confirm ] || fail 2;;
+    event) [ "$ddns_schedule_events_enabled" = true ] && [ "$#" -eq 4 ] || fail 2
+        event_action=$2;event_interface=$3;event_device=$4
+        case "$event_action" in ifup|ifupdate|ifdown) ;; *) fail 2;; esac
+        case "$event_interface:$event_device" in *[!a-zA-Z0-9_.:-]*) fail 2;; esac
+        [ "${#event_interface}" -le 64 ] && [ "${#event_device}" -le 32 ] || fail 2;;
+    *) fail 2;; esac
 PATH=/usr/sbin:/usr/bin:/sbin:/bin;export PATH
 unset IPKG_INSTROOT INIT_TRACE LUA_INIT LUA_PATH LUA_CPATH
 exec 2>/dev/null
@@ -19,6 +26,8 @@ dir=$(CDPATH= cd "$(dirname "$0")" && pwd) || fail
 exists() { [ -e "$1" ] || [ -L "$1" ]; }
 private_dir() { [ -d "$1" ] && [ ! -L "$1" ] && [ "$(stat -c '%u:%a' "$1")" = "$owner:700" ]; }
 private_file() { [ -f "$1" ] && [ ! -L "$1" ] && [ "$(stat -c '%u:%a:%h' "$1")" = "$owner:600:1" ]; }
+event_reply() { printf '{"api_version":1,"prototype":true,"ok":true,"phase":"ddns-network-event","matched":%s,"active":%s,"effect":"none","write_ready":false}\n' "$1" "$2"; }
+if [ "$action" = event ] && ! exists "$work";then event_reply false false;exit 0;fi
 hash() { sum=$(sha256sum "$1" 2>/dev/null) || return 1;sum=${sum%% *};[ "${#sum}" -eq 64 ]; }
 private_dir "$run" && private_dir "$store" && private_file "$run/frontend.lock" && private_file "$store/.supervisor.lock" || fail
 now() { moment=$(lua "$dir/worker-process.lua" now 2>/dev/null) || return 1; }
@@ -80,7 +89,7 @@ check_members() {
     private_dir "$work" || return 1
     for p in "$work/"* "$work/".[!.]* "$work/"..?*; do
         exists "$p" || continue;private_file "$p" || return 1
-        case "${p##*/}" in lease|lease.next|report|report.next) maximum=4096;; batch) maximum=65536;; stop|stop.next) maximum=33;; *) return 1;; esac
+        case "${p##*/}" in lease|lease.next|report|report.next) maximum=4096;; batch) maximum=65536;; stop|stop.next|wake|wake.next) maximum=33;; *) return 1;; esac
         [ "$(stat -c %s "$p")" -le "$maximum" ] || return 1
     done
 }
@@ -92,13 +101,16 @@ stop_content() {
     done
 }
 stop_read() {
+    control_busy=false
     opened=false
     if [ "$(stat -Lc '%d:%i' /proc/self/fd/4 2>/dev/null)" != "$(stat -c '%d:%i' "$control")" ]; then exec 4>>"$control" || return 1;opened=true;fi
     if ! flock -n 4; then
         # A stop writer owns this lock. Admit nothing while its intent is being
         # published; never mistake its briefly empty stage for durable damage.
         [ "$opened" = false ] || exec 4>&-
-        stopping=true;return 0
+        if [ "$ddns_schedule_events_enabled" = true ];then control_busy=true;stopping=false
+        else stopping=true;fi
+        return 0
     fi
     stop_rc=0;stop_content || stop_rc=$?
     [ "$opened" = false ] || exec 4>&-
@@ -107,6 +119,22 @@ stop_read() {
 public_status() {
     checked "$report" || return 1;exec 3<"$report" || return 1
     lua "$dir/homegate-ddns-schedule.lua" status "$live" "$stopping" 4>&- 5>&- 6>&- 7>&- 8>&- 9>&- 2>/dev/null
+}
+token_file() { private_file "$1" && [ "$(stat -c %s "$1")" -eq 33 ] && [ "$(cat "$1")" = "$token" ]; }
+wake_take() {
+    woke=false
+    if ! exists "$work/wake" && ! exists "$work/wake.next";then return 0;fi
+    if ! open_control;then exec 4>&-;control_busy=true;return 0;fi
+    if exists "$work/wake.next";then token_file "$work/wake.next" || return 1;fi
+    if exists "$work/wake";then token_file "$work/wake" && rm -f "$work/wake" && fsync "$work" || return 1;woke=true;fi
+    exec 4>&-
+}
+token_publish() {
+    target=$1
+    if exists "$target";then token_file "$target" || return 1;return 0;fi
+    if exists "$target.next";then token_file "$target.next" || return 1
+    else (set -C; : > "$target.next") && printf '%s\n' "$token" > "$target.next" || return 1;fi
+    fsync "$target.next" "$work" && mv -f "$target.next" "$target" && fsync "$target" "$work"
 }
 validate_control() {
     check_members || return 1
@@ -117,6 +145,7 @@ validate_control() {
             lease.next) checked "$p" && [ "$(cat "$p")" = "$(cat "$lease")" ] || return 1;;
             report|report.next) checked "$p" || return 1;exec 3<"$p" || return 1;lua "$dir/homegate-ddns-schedule.lua" check-report 4>&- 5>&- 6>&- 7>&- 8>&- 9>&- >/dev/null 2>/dev/null || return 1;;
             stop|stop.next) stop_read || return 1;;
+            wake|wake.next) token_file "$p" || return 1;;
             batch) ;;
             *) return 1;;
         esac
@@ -140,6 +169,30 @@ if [ "$action" = quiescent ]; then
     if exists "$run/ddns-ui-jobs";then ash "$dir/homegate-ddns-job.sh" check-quiescent >/dev/null 2>/dev/null || fail 4;fi
     printf '{"api_version":1,"prototype":true,"ok":true,"phase":"ddns-quiescent","quiescent":true,"point_in_time":true,"effect":"none","write_ready":false,"production_ready":false}\n'
     exit 0
+fi
+if [ "$action" = event ];then
+    private_file "$runlock" && private_file "$control" && open_control || fail 4
+    read_lease && alive && stop_read || fail
+    [ "$live" = true ] && [ "$stopping" = false ] || { event_reply false false;exit 0; }
+    now && [ "$moment" -lt "$deadline" ] || fail 4
+    # Signals cannot authorize work. Inspect the immutable configuration bound
+    # by this lease without contending with an admitted provider's business
+    # locks, so ifdown can request cooperative stop during a running batch.
+    private_file "$store/identity" && private_dir "$store/gen-$lease_revision" && private_file "$store/gen-$lease_revision/manifest" && private_file "$store/gen-$lease_revision/public.conf" || fail
+    hash "$store/identity" && [ "$sum" = "$lease_identity" ] || fail
+    hash "$store/gen-$lease_revision/manifest" && [ "$sum" = "$lease_generation" ] || fail
+    [ "$(stat -c %s "$store/gen-$lease_revision/public.conf")" -le 262144 ] || fail
+    # The immutable manifest SHA is lease-bound and was validated at admission.
+    # Hash the one known public file used by this signal; never interpret paths
+    # supplied by a manifest or require optional BusyBox checksum-check support.
+    IFS= read -r public_binding < "$store/gen-$lease_revision/manifest" || fail
+    public_actual=$(cd "$store/gen-$lease_revision" && sha256sum public.conf) || fail
+    [ "$public_binding" = "$public_actual" ] || fail
+    matched=$(lua "$dir/homegate-ddns-schedule.lua" event "$event_interface" "$event_device" '*' < "$store/gen-$lease_revision/public.conf") || fail
+    [ "$matched" = true ] || { event_reply false true;exit 0; }
+    if [ "$event_action" = ifdown ];then token_publish "$work/stop" || fail
+    else token_publish "$work/wake" || fail;fi
+    event_reply true true;exit 0
 fi
 if [ "$action" = status ] && ! exists "$work"; then
     lua "$dir/homegate-ddns-schedule.lua" report true idle '' 0 none 2>/dev/null || fail;exit 0
@@ -178,7 +231,7 @@ else
     business_lock && ash "$dir/homegate-config-prototype.sh" --persistent writer-check >/dev/null 2>/dev/null || fail 4
     for p in "$run/".dns-check-* "$run/".ddns-plan-*; do ! exists "$p" || fail 4;done
     validate_control || fail
-    for name in lease lease.next report report.next stop stop.next batch; do rm -f "$work/$name" || fail;done
+    for name in lease lease.next report report.next stop stop.next wake wake.next batch; do rm -f "$work/$name" || fail;done
     rmdir "$work" && fsync "$run" 2>/dev/null || fail
     lua "$dir/homegate-ddns-schedule.lua" report true idle '' 0 none 2>/dev/null || fail;exit 0
 fi
@@ -195,6 +248,7 @@ while :; do
     if [ "$stopping" = true ] || [ "$interrupted" = true ]; then finish true stopped 0;fi
     [ "$moment" -lt "$deadline" ] || finish true budget 0
     [ "$ticks" -lt 8 ] || finish true ticks 0
+    if [ "$control_busy" = true ];then sleep 0.05 || finish false failed 7;continue;fi
     business_lock || finish false blocked 4
     binding && [ "$binding_seen" = "$bound" ] || finish false changed 4
     states=
@@ -214,6 +268,10 @@ while :; do
             if [ "$stopping" = true ] || [ "$interrupted" = true ]; then finish true stopped 0;fi
             now && [ "$moment" -ge "$last_now" ] || finish false clock_invalid 7;last_now=$moment
             [ "$moment" -lt "$wake" ] || break
+            if [ "$control_busy" = false ];then
+                wake_take || finish false failed 7
+                [ "$woke" = false ] || break
+            fi
             sleep 1 || { [ "$interrupted" = true ] || finish false failed 7; }
         done
         continue
@@ -224,6 +282,7 @@ while :; do
     [ "$moment" -lt "$deadline" ] || finish true budget 0
     stop_read || finish false failed 7
     if [ "$stopping" = true ] || [ "$interrupted" = true ]; then finish true stopped 0;fi
+    if [ "$control_busy" = true ];then business_unlock;sleep 0.05 || finish false failed 7;continue;fi
     ticks=$((ticks+1));emit true running '' || fail
     ash "$dir/homegate-ddns-batch.sh" sync --confirm 4>&- 9>&- > "$work/batch" 2>/dev/null & child=$!
     child_info=$(lua "$dir/worker-process.lua" info "$child" none 2>/dev/null) || fail

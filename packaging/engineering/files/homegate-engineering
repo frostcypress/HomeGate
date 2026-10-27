@@ -1,0 +1,22 @@
+#!/bin/sh
+# Isolated engineering entry; manual DDNS requires explicit separate authority.
+set -u
+umask 077
+PATH=/usr/sbin:/usr/bin:/sbin:/bin
+export PATH LC_ALL=C
+unset IPKG_INSTROOT INIT_TRACE LUA_INIT LUA_PATH LUA_CPATH HOMEGATE_CONFIG_PROTO_STORE
+exec 3>&- 4>&- 5>&- 6>&- 7>&- 8>&- 9>&-
+fail() { printf '{"api_version":1,"engineering":true,"ok":false,"error":"Engineering request refused","effect":"none","write_ready":false}\n';exit "${1:-2}"; }
+[ "$#" -ge 1 ] || fail
+case "$1" in
+    version|dns-provider-catalog|acme-ca-catalog|check-stdin) [ "$#" -eq 1 ] || fail;;
+    dns-provider-status|dns-zones|prepare|prepare-resume|config-*|import-*|activate-preview|secret-put|grant-*|ddns-*|schedule-*)
+        exec ash /usr/libexec/homegate-engineering/ddns-control.sh "$@";;
+    *) fail;;
+esac
+[ "$(id -u)" = 0 ] || fail 7
+base=/usr/libexec/homegate-engineering
+case "$1" in
+    version|check-stdin) exec lua "$base/engineering.lua" "$1";;
+    *) exec lua "$base/project/core/prototype/homegate-cli-catalog.lua" "$1";;
+esac

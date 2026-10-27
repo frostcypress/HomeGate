@@ -10,7 +10,22 @@ local function read(fd,limit)
     local f=io.open('/proc/self/fd/'..fd,'rb');if not f then os.exit(1) end
     local b=f:read(limit+1) or '';if not f:close() or #b>limit then os.exit(1) end;return b
 end
-if arg[1]=='work-source' or arg[1]=='source' then
+if arg[1]=='operation' then
+    if arg[4] then os.exit(1) end
+    local raw=io.stdin:read(4097) or '';local q=shared.parse(raw)
+    if #raw>4096 or not q or codec.json(q)..'\n'~=raw or q.resource~=rule then os.exit(1) end
+    if q.operation=='delete' and q.kind=='ddns' and q.value=='' and q['all']==true then io.write('delete-result\n')
+    elseif q.operation=='upsert' then io.write('result\n') else os.exit(1) end;return
+elseif arg[1]=='delete-plan' then
+    if arg[4] then os.exit(1) end
+    local snapshot=assert(loadfile(dir..'/private-snapshot.lua'))().read(io.stdin,codec)
+    local intent_raw=read(8,65536);local intent=shared.parse(intent_raw)
+    if not snapshot or snapshot.revision~=tonumber(revision) or not intent or codec.json(intent)..'\n'~=intent_raw then os.exit(1) end
+    local plan=planner.build_delete(snapshot,rule,assert(loadfile(dir..'/cloudflare-record-plan.lua'))(),intent)
+    if not plan then os.exit(1) end
+    local function write(fd,raw)local f=io.open('/proc/self/fd/'..fd,'wb');if not f or not f:write(raw) or not f:close() then os.exit(1) end end
+    write(4,codec.json(plan)..'\n');local public,ok=planner.report(revision,rule,plan.entries);write(3,public);os.exit(ok and 0 or 1)
+elseif arg[1]=='work-source' or arg[1]=='source' then
     if arg[4] or (arg[1]=='source' and arg[3]) then os.exit(1) end
     local snapshot=assert(loadfile(dir..'/private-snapshot.lua'))().read(io.stdin,codec)
     if not snapshot or snapshot.revision~=tonumber(revision) then os.exit(1) end
@@ -42,11 +57,11 @@ elseif arg[1]=='dispatch' or arg[1]=='work-bound' or arg[1]=='work-bound-runtime
     end
     local f=io.open('/proc/self/fd/4','wb');if not f or not f:write(codec.json(entry.request)..'\n') or not f:close() then os.exit(1) end
     io.write(entry.provider..':'..entry.account..'\n')
-elseif arg[1]=='result' then
+elseif arg[1]=='result' or arg[1]=='delete-result' then
     local provider,account,rc=arg[4],arg[5],arg[6]
     if arg[7] or not planner.id(account) or (provider~='cloudflare' and provider~='aliyun' and provider~='dnspod' and provider~='huaweicloud') then os.exit(1) end
     local raw=io.stdin:read(4097) or '';local d=shared.parse(raw)
-    local out,effect=sync.result(raw,d,provider,account,revision,rule,rc)
+    local out,effect=sync.result(raw,d,provider,account,revision,rule,rc,arg[1]=='delete-result' and 'delete' or nil)
     if #raw>4096 or not out then os.exit(1) end
     -- Only a bound original success terminal is acceptable after a mutation.
     if effect=='confirmed' and read(9,4096)~=raw then os.exit(1) end

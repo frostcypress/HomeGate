@@ -44,6 +44,24 @@ function M.build(snapshot,selected,sample,records,intent)
     if selected~='' and #entries==0 then return nil,'not_found' end
     return {schema='HGDDNSPLAN1',revision=snapshot.revision,selected=selected,entries=entries,sampled=sampled}
 end
+-- Explicit deletion uses only the configured exact hostname/type. It must not
+-- depend on a WAN address that may have disappeared during teardown.
+function M.build_delete(snapshot,selected,records,intent)
+    if not id(selected) then return nil,'invalid_configuration' end
+    local plan,err=M.build(snapshot,selected,function()return nil end,records,intent)
+    if not plan then return nil,err end
+    for _,e in ipairs(plan.entries)do
+        if e.status=='network_unavailable' then
+            local account
+            for _,s in ipairs(snapshot.configuration)do if s.kind=='ddns_rule' and s.name==selected then account=s.values.account end end
+            local q={operation='delete',kind='ddns',resource=selected,value='',['all']=true}
+            if records.bind(snapshot,account,tostring(snapshot.revision),q) then
+                e.status='ready';e.account=account;e.request=q
+            else e.status='invalid_rule' end
+        end
+    end
+    plan.sampled=false;plan.operation='delete';return plan
+end
 function M.report(revision,selected,entries,code)
     local rows={};code=code or ''
     for _,v in ipairs(entries or {}) do

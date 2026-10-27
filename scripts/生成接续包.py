@@ -121,7 +121,7 @@ def create(root, output, target, stage, draft, packages_dir=None, fmt=None, arch
         entries[name] = (document_root / name).read_bytes()
     entries['校验.md'] = entries['校验.md'].decode('utf-8').split('\n## 自动快照清单', 1)[0].encode('utf-8')
     if draft:
-        state = '草稿：未附安装包；核心迁移、SDK 编译及实机验收尚未完成。'
+        state = '草稿：未附安装包；完整产品迁移、正式目标三包及实机验收尚未完成。独立工程包状态见接续.md。'
     else:
         if not project.get('core', {}).get('migration_complete'):
             raise ValueError('核心迁移未完成，只允许草稿快照')

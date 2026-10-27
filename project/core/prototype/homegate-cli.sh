@@ -16,7 +16,12 @@ case "$action" in
     dns-provider-status|dns-zones) [ "$#" -eq 2 ] || fail 2
         case "$2" in ''|*[!a-zA-Z0-9_-]*) fail 2;; esac
         [ "${#2}" -le 64 ] || fail 2;;
-    schedule-status|schedule-quiescent|lifecycle-prepare|lifecycle-resume) [ "$#" -eq 1 ] || fail 2;;
+    schedule-status|schedule-quiescent|lifecycle-prepare|lifecycle-resume|lifecycle-startup|lifecycle-source-intent) [ "$#" -eq 1 ] || fail 2;;
+    lifecycle-intent-check) [ "$#" -eq 3 ] && [ "$3" = --confirm ] || fail 2
+        case "$2" in enabled|disabled) ;; *) fail 2;; esac;;
+    lifecycle-intent-record) [ "$#" -eq 4 ] && [ "$4" = --confirm ] || fail 2
+        case "$2" in save|resume|check) ;; *) fail 2;; esac
+        case "$3" in enabled|disabled) ;; *) fail 2;; esac;;
     schedule-run|schedule-stop|schedule-reap) [ "$#" -eq 2 ] && [ "$2" = --confirm ] || fail 2;;
     *) fail 2;;
 esac
@@ -47,6 +52,10 @@ case "$action" in
     schedule-reap) exec ash "$dir/homegate-ddns-schedule.sh" reap --confirm;;
     lifecycle-prepare) exec ash "$dir/homegate-lifecycle-prepare.sh" prepare;;
     lifecycle-resume) exec ash "$dir/homegate-lifecycle-prepare.sh" resume;;
+    lifecycle-startup) exec ash "$dir/homegate-lifecycle-prepare.sh" startup;;
+    lifecycle-source-intent) exec ash "$dir/homegate-lifecycle-prepare.sh" intent;;
+    lifecycle-intent-check) exec ash "$dir/homegate-lifecycle-prepare.sh" intent-check "$2" --confirm;;
+    lifecycle-intent-record) exec ash "$dir/homegate-lifecycle-prepare.sh" "record-$2" "$3" --confirm;;
     ddns-sync)
         if [ -n "$rule" ]; then exec ash "$dir/homegate-ddns-state.sh" sync "$rule" --confirm;fi
         exec ash "$dir/homegate-ddns-batch.sh" sync --confirm;;

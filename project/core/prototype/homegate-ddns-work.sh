@@ -166,7 +166,8 @@ elif exists "$next"; then
 else
     read_record "$work/binding" binding && identity_check && preflight full && source_bound && terminal_check || fail
     # Both the selected request and the original canonical success must match.
-    ready=$(lua "$dir/homegate-ddns-sync.lua" result "$revision" "$rule" "$provider" "$account" 0 < "$work/provider" 9<"$store/dns-operation/terminal" 2>/dev/null) || fail
+    result_mode=$(lua "$dir/homegate-ddns-sync.lua" operation "$revision" "$rule" < "$work/input" 2>/dev/null) || fail
+    ready=$(lua "$dir/homegate-ddns-sync.lua" "$result_mode" "$revision" "$rule" "$provider" "$account" 0 < "$work/provider" 9<"$store/dns-operation/terminal" 2>/dev/null) || fail
     hash "$work/provider" || fail;h_provider=$sum;hash "$work/public" || fail;h_public=$sum
     (set -C; : > "$next") 2>/dev/null || fail
     framed collection_body > "$next" || fail

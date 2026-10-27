@@ -1,0 +1,57 @@
+{
+  "schema": 1,
+  "scope": "isolated-ddns-contract-engineering",
+  "package_slug": "homegate-engineering",
+  "package_format": "ipk",
+  "package_architecture": "all",
+  "native_target_code": false,
+  "sdk": {
+    "target": "qualcommax/ipq807x",
+    "version": "24.10.6",
+    "url": "https://downloads.immortalwrt.org/releases/24.10.6/targets/qualcommax/ipq807x/immortalwrt-sdk-24.10.6-qualcommax-ipq807x_gcc-13.3.0_musl.Linux-x86_64.tar.zst",
+    "sha256": "75344bd56f3b1e1e876c41efdc01281089804b221d04235310bab76a3e966f9b"
+  },
+  "QWRT_runtime_ABI_verified": false,
+  "production_replacement": false,
+  "features": [
+    "version",
+    "dns-provider-catalog",
+    "acme-ca-catalog",
+    "check-stdin",
+    "private isolated configuration import and publication",
+    "explicit single-rule authority",
+    "four-provider manual AAAA sync and read-only reconciliation",
+    "confirmed receipt archive and unknown-write fence",
+    "Lua LuCI read-only engineering page",
+    "native Lua configuration/credential forms",
+    "native Lua explicit DDNS authorization and asynchronous jobs",
+    "explicit finite automatic DDNS session",
+    "cooperative stop, quiescent verification and explicit reap",
+    "network wake/ifdown stop for current authorized lease",
+    "isolated init/hotplug entry with no boot dispatch",
+    "four-provider credentials validation and complete zone discovery",
+    "explicit exact-host all-AAAA delete with no WAN sampling",
+    "native Lua account read and delete confirmation actions"
+  ],
+  "excluded": [
+    "production configuration adoption",
+    "ACME issuance",
+    "proxy",
+    "access control",
+    "firewall",
+    "WOL",
+    "daemon",
+    "unbounded continuous daemon or automatic session renewal"
+  ],
+  "runtime_requirements": [
+    "Lua 5.1",
+    "luci.jsonc",
+    "curl HTTPS + CA bundle",
+    "OpenSSL CLI",
+    "BusyBox ash/sha256sum/fsync/setsid",
+    "flock",
+    "ip",
+    "ubus",
+    "coreutils-stat"
+  ]
+}

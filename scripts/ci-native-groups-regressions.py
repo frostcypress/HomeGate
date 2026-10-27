@@ -13,7 +13,7 @@ from project import ROOT
 
 # Fixed coverage contract: moving a suite must not silently drop or duplicate it.
 GROUPS={
-    'authority':('luci-ddns-authority-regressions.py','rpc-ddns-authority-regressions.py'),
+    'authority':('luci-ddns-authority-regressions.py','rpc-ddns-authority-regressions.py','工程网页回归.py'),
     'tasks':('luci-ddns-jobs-regressions.py','rpc-ddns-jobs-regressions.py',
              'luci-ddns-maintenance-regressions.py','rpc-ddns-maintenance-regressions.py'),
     'receipts-cloudflare':('luci-ddns-provider-jobs-regressions.py','rpc-ddns-provider-jobs-regressions.py','luci-ddns-archive-regressions.py','rpc-ddns-archive-regressions.py'),
@@ -63,7 +63,7 @@ else:
         scripts=[Path(args[0]).name for args in calls if args[0]!='-c']
         return result,calls,scripts
 
-    def test_01_six_groups_partition_all_twenty_two_suites(self):
+    def test_01_six_groups_partition_all_twenty_three_suites(self):
         collected=[]
         for group,names in GROUPS.items():
             with self.subTest(group=group):
@@ -72,7 +72,7 @@ else:
                 self.assertEqual(scripts,list(PREPARE+names))
                 self.assertEqual(len([c for c in calls if c[0]=='-c']),4)
                 collected.extend(scripts[4:])
-        self.assertEqual(collected,list(ALL));self.assertEqual(len(set(collected)),22)
+        self.assertEqual(collected,list(ALL));self.assertEqual(len(set(collected)),23)
 
     def test_02_default_and_explicit_all_preserve_original_order(self):
         for args in [(),('--group','all')]:

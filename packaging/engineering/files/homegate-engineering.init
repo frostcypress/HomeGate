@@ -1,0 +1,11 @@
+#!/bin/sh
+# Explicit finite engineering session. Boot never grants or starts work.
+PATH=/usr/sbin:/usr/bin:/sbin:/bin;export PATH
+case "${1:-}" in
+ start) [ "$#" -eq 2 ] && [ "$2" = --confirm ] || exit 0
+        exec /usr/bin/homegate-engineering schedule-start --confirm;;
+ stop|shutdown) exec /usr/bin/homegate-engineering schedule-stop --confirm;;
+ status) exec /usr/bin/homegate-engineering schedule-status;;
+ boot) exit 0;;
+ *) exit 2;;
+esac

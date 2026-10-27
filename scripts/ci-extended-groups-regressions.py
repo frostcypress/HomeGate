@@ -110,6 +110,6 @@ class Dispatch(unittest.TestCase):
             self.assertEqual(outputs[0][0],discover())
             runtime=[case for i,blocks in enumerate(outputs) for cases in (blocks[1:] if i==0 else blocks) for case in cases]
             self.assertEqual(runtime,discover('--runtime'))
-            self.assertEqual(len(runtime),140);self.assertEqual(len(runtime),len(set(runtime)))
+            self.assertEqual(len(runtime),201);self.assertEqual(len(runtime),len(set(runtime)))
 
 if __name__=='__main__':unittest.main(verbosity=2)

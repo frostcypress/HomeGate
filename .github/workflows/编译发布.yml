@@ -260,8 +260,33 @@ jobs:
         run: sudo apt-get install --no-install-recommends -y cmake pkg-config libcrypt-dev bubblewrap zstd
       - name: 核实宿主私有隔离前置
         run: python3 scripts/prepare-ci-isolation.py
-      - name: 串行验证本组Lua及RPC接合
+      - name: 串行验证其他组Lua及RPC接合
+        if: matrix.group != 'receipts-cloudflare'
         run: sh scripts/check-ddns-authority.sh --group '${{ matrix.group }}'
+      - name: 准备Cloudflare组固定宿主运行时
+        if: matrix.group == 'receipts-cloudflare'
+        timeout-minutes: 10
+        run: |
+          python3 scripts/prepare-ucode.py
+          python3 scripts/prepare-rpcd.py
+          python3 scripts/prepare-uhttpd.py
+          python3 scripts/prepare-luci.py
+      - name: 验证Cloudflare原生任务与回执
+        if: matrix.group == 'receipts-cloudflare'
+        timeout-minutes: 10
+        run: python3 scripts/luci-ddns-provider-jobs-regressions.py
+      - name: 验证Cloudflare RPC任务与批量权限
+        if: matrix.group == 'receipts-cloudflare'
+        timeout-minutes: 10
+        run: python3 scripts/rpc-ddns-provider-jobs-regressions.py
+      - name: 验证Cloudflare原生归档与恢复
+        if: matrix.group == 'receipts-cloudflare'
+        timeout-minutes: 10
+        run: python3 scripts/luci-ddns-archive-regressions.py
+      - name: 验证Cloudflare RPC归档与权限
+        if: matrix.group == 'receipts-cloudflare'
+        timeout-minutes: 10
+        run: python3 scripts/rpc-ddns-archive-regressions.py
   build:
     name: 已核实 SDK 三包构建
     needs: [source, extended, native]

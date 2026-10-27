@@ -19,7 +19,10 @@ class Static(unittest.TestCase):
         LuaRuntime().compile((PROTO/'homegate-ddns-sync.lua').read_bytes());self.assertNotIn('prototype/',(PROTO.parent/'Makefile').read_text())
     def test_recovery_source_is_read_only_and_limited_to_dns_fences(self):
         s=(PROTO/'homegate-config-prototype.sh').read_text();self.assertEqual(s.count('migration-source-recovery-snapshot-read|runtime-ddns-recovery-snapshot-read)'),4)  # Includes the independent batch-results recovery guard.
-        self.assertIn('runtime-ddns-snapshot-read|runtime-ddns-recovery-snapshot-read)',s)
+        required={'runtime-ddns-snapshot-read','runtime-ddns-recovery-snapshot-read'}
+        aliases=[set(p.split('|')) for p in re.findall(r'(?m)^    ([a-z0-9_-]+(?:\|[a-z0-9_-]+)*)\)$',s)]
+        shared=[p for p in aliases if required<=p]
+        self.assertEqual(shared,[required|{'runtime-startup-snapshot-read'}])
         s=(PROTO/'homegate-cloudflare-read.sh').read_text();self.assertIn('[ "$mode" = reconcile ] && [ "$persistent_reconcile" = true ]',s)
         self.assertIn('check-rule "$ddns_rule"',s);self.assertIn('check-runtime',s)
     def test_distinct_origin_and_rebuilt_private_intent(self):

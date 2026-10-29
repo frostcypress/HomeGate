@@ -53,7 +53,14 @@ class Static(PlanStatic):
             b=(PROTO/n).read_bytes();self.assertEqual(b.count(b'ddns_authority_enabled=false'),1);self.assertNotIn(b'\r',b);self.assertFalse(parser.parse(b).root_node.has_error,n)
         for n in ['homegate-ddns-authority.lua','ddns-authority.lua']:self.lua.compile((PROTO/n).read_bytes())
         s=(PROTO/'homegate-ddns-authority.sh').read_text()
-        for forbidden in ['curl','wget','uci set','/etc/init.d','kill ','eval ','source ']:self.assertNotIn(forbidden,s)
+        for forbidden in ['curl','wget','uci set','/etc/init.d','kill ','eval ']:self.assertNotIn(forbidden,s)
+        # Shell command nodes, not prose comments mentioning a configuration source.
+        def check_commands(node):
+            if node.type=='command':
+                name=node.child_by_field_name('name')
+                if name:self.assertNotIn(name.text.strip(),[b'source',b'.'])
+            for child in node.named_children:check_commands(child)
+        check_commands(parser.parse(s.encode()).root_node)
         self.assertNotIn('prototype/',(PROTO.parent/'Makefile').read_text())
 
 class Runtime(ServiceRuntime):

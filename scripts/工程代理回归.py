@@ -221,7 +221,12 @@ os.execv(real,['nginx',*a])
         import ctypes
         lib=ctypes.CDLL(str(FIXTURE/'same-credentials.so'));lib.initgroups.argtypes=[ctypes.c_char_p,ctypes.c_uint];lib.initgroups.restype=ctypes.c_int
         before=(os.getuid(),os.geteuid(),os.getgid(),os.getegid(),os.getgroups())
-        self.assertEqual(lib.initgroups(b'root',0),0);self.assertEqual(lib.initgroups(b'root',1),-1);self.assertEqual(lib.initgroups(b'other',0),-1)
+        self.assertEqual(before[:4],(0,0,0,0))
+        # CI can retain outer supplementary groups mapped to overflow GID.
+        # The adapter must reject that context, not silently clear/add groups.
+        expected=0 if all(g==0 for g in before[4]) else -1
+        self.assertEqual(lib.initgroups(b'root',0),expected)
+        self.assertEqual(lib.initgroups(b'root',1),-1);self.assertEqual(lib.initgroups(b'other',0),-1)
         self.assertEqual((os.getuid(),os.geteuid(),os.getgid(),os.getegid(),os.getgroups()),before)
         caps=dict(line.split(':',1) for line in Path('/proc/self/status').read_text().splitlines() if ':' in line)
         for k in ['CapEff','CapPrm','CapBnd']:self.assertEqual(int(caps[k].strip(),16),0)

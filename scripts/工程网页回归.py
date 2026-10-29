@@ -561,10 +561,23 @@ config wol_host 'host_a'
         while time.monotonic()<deadline and not (STATE/'imported-secret-used').exists():time.sleep(.1)
         self.assertTrue((STATE/'imported-secret-used').exists(),{'schedule':self.cfg('schedule_status',s),'transport_entered':(STATE/'provider-calls').exists()})
         self.cfg('schedule_stop',s,consent='1')
-        deadline=time.monotonic()+15
+        deadline=time.monotonic()+15;finished=False
         while time.monotonic()<deadline:
-            if self.cfg('schedule_status',s)['report']['status']=='finished':break
+            # A read overlapping publication/owner exit may fail closed. Keep
+            # it unknown within the original deadline, never count as finished.
+            code,_,body=self.cgi(BASE+'/configuration_api/schedule_status',cookie=s[0])
+            self.assertNotIn(b'SECRET_SENTINEL',body);self.assertIn(code,[200,503])
+            value=json.loads(body)
+            if code==503:
+                self.assertFalse(value['ok']);self.assertFalse(value['write_ready'])
+                self.assertEqual(value['report']['phase'],'ddns-schedule')
+                self.assertFalse(value['report']['ok'])
+            else:
+                self.assertTrue(value['ok']);report=value['report']
+                if report['status']=='finished':
+                    self.assertFalse(report['running']);finished=True;break
             time.sleep(.1)
+        self.assertTrue(finished,'Schedule did not publish a genuine finished state within 15 seconds')
         self.cfg('schedule_reap',s,consent='1')
         self.assertEqual(lock.read_bytes(),b'');self.verify_unchanged()
     def test_production_copy_sources(self):

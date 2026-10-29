@@ -46,9 +46,9 @@ def setup_state(state):
     for name,flags in GATES.items():
         path=state/'project/core/prototype'/name;body=path.read_bytes()
         for flag in flags:
-            old=(flag+'=false').encode()
-            if body.count(old)!=1:raise ValueError('Expected one original closed provider gate')
-            body=body.replace(old,(flag+'=true').encode())
+            pattern=rb'^'+re.escape(flag.encode())+rb'=false$'
+            body,count=re.subn(pattern,(flag+'=true').encode(),body,flags=re.M)
+            if count!=1:raise ValueError('Expected one exact original closed provider gate: '+name+':'+flag)
         path.write_bytes(body)
     tls=state/'tls';tls.mkdir(mode=0o700)
     trust=state/'etc/ssl/certs';trust.mkdir(parents=True)

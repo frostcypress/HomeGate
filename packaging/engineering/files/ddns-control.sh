@@ -12,11 +12,91 @@ base=/usr/libexec/homegate-engineering
 dir=$base/project/core/prototype
 engine=$dir/homegate-config-prototype.sh
 action=${1:-};shift || fail
+case "$action" in
+ access-update|access-refresh|access-status|access-stop|access-reap|access-quiescent) exec ash "$dir/homegate-access-region.sh" "${action#access-}" "$@";;
+ access-recent) [ "$#" = 0 ] || fail;exec lua "$dir/homegate-access-audit.lua" read;;
+ access-clear|access-clear-denied) [ "$#" = 1 ] && [ "$1" = --confirm ] || fail
+  mode=all;[ "$action" != access-clear-denied ] || mode=denied
+  audit_control=/var/run/homegate-engineering/proxy.control
+  [ -f "$audit_control" ] && [ ! -L "$audit_control" ] && [ "$(stat -c '%u:%a:%h:%s' "$audit_control")" = 0:600:1:0 ] || fail 4
+  exec 5>>"$audit_control"
+  [ "$(stat -Lc '%d:%i:%u:%a:%h' /proc/self/fd/5)" = "$(stat -c '%d:%i:%u:%a:%h' "$audit_control")" ] && flock -n 5 || fail 4
+  exec lua "$dir/homegate-access-audit.lua" clear "$mode";;
+ proxy-start|proxy-stop|proxy-status|proxy-reap|proxy-quiescent) exec ash "$dir/homegate-proxy.sh" "${action#proxy-}" "$@";;
+ web-target-put) [ "$#" -eq 2 ] && [ "$2" = --confirm ] || fail
+  case "$1" in ''|*[!a-zA-Z0-9_-]*) fail;;esac;[ "${#1}" -le 64 ] || fail
+  ash "$dir/homegate-proxy.sh" quiescent >/dev/null || fail 4
+  exec ash "$engine" --persistent credential-put web "$1" target;;
+ acme-schedule-start|acme-schedule-stop|acme-schedule-status|acme-schedule-reap)
+  exec ash "$dir/homegate-acme-schedule.sh" "${action#acme-schedule-}" "$@";;
+ acme-issue|acme-renew|acme-job|acme-stop|acme-cleanup)
+  command=${action#acme-};[ "$command" != job ] || command=status
+  exec ash "$dir/homegate-acme-job.sh" "$command" "$@";;
+ cert-status|cert-import|cert-resume|cert-cancel) exec ash "$dir/homegate-certificate.sh" "${action#cert-}" "$@";;
+esac
 case "$action" in schedule-*) exec ash "$base/schedule-control.sh" "${action#schedule-}" "$@";; esac
+case "$action" in prepare|prepare-resume|config-recover|production-copy-*|import-*|activate-preview|config-preview|config-commit|config-finish|config-cancel|secret-put)
+ if [ -e /var/run/homegate-engineering/proxy ] || [ -L /var/run/homegate-engineering/proxy ];then ash "$dir/homegate-proxy.sh" quiescent >/dev/null || fail 4;fi;;esac
 id_valid() { case "$1" in ''|*[!a-zA-Z0-9_-]*) return 1;; esac;[ "${#1}" -le 64 ]; }
 token_valid() { case "$1" in ''|*[!0-9a-f]*) return 1;; esac;[ "${#1}" -eq 32 ]; }
 job_valid() { case "$1" in ''|0*|*[!0-9]*) return 1;; esac;[ "${#1}" -le 9 ] && [ "$1" -ge 2 ]; }
 case "$action" in
+ prepare|prepare-resume)
+  # Recreate lost volatile locks without changing the bound durable source.
+  # An existing session must still be quiescent before preparation.
+  if [ -e /var/run/homegate-engineering/acme-schedule ] || [ -L /var/run/homegate-engineering/acme-schedule ];then ash "$dir/homegate-acme-schedule.sh" quiescent >/dev/null || fail 4;fi;;
+ config-recover|production-copy-preview|production-copy-commit|ddns-delete|import-preview|import-commit|activate-preview|config-preview|config-commit|config-finish|config-cancel|secret-put)
+  ash "$dir/homegate-acme-schedule.sh" quiescent >/dev/null || fail 4;;
+esac
+case "$action" in
+    config-recover) [ "$#" -eq 1 ] && [ "$1" = --confirm ] || fail
+        if [ -e /var/run/homegate-engineering/ddns-schedule ] || [ -L /var/run/homegate-engineering/ddns-schedule ];then
+            ash "$dir/homegate-ddns-schedule.sh" quiescent >/dev/null || fail 4
+        fi
+        result=$(ash "$engine" --persistent recover-application) || { rc=$?;printf '%s\n' "$result";exit "$rc"; }
+        handle=$(printf '%s\n' "$result" | lua "$base/apply-handle.lua" restore) || fail 7
+        if [ "$handle" = settled ];then printf '%s\n' "$result";exit 0;fi
+        ash "$engine" --persistent projection-publish "$handle" restore >/dev/null || { printf '%s\n' "$result";exit 7; }
+        finished=$(ash "$engine" --persistent restore-finish-projection "$handle") || { printf '%s\n' "$result";exit 7; }
+        printf '%s\n' "$finished";exit 0;;
+    production-copy-preview) [ "$#" -eq 0 ] || fail
+        exec ash "$engine" --persistent production-copy-preview;;
+    production-copy-commit) [ "$#" -eq 1 ] && token_valid "$1" || fail
+        result=$(ash "$engine" --persistent production-copy-commit "$1") || { rc=$?;printf '%s\n' "$result";exit "$rc"; }
+        handle=$(printf '%s\n' "$result" | lua "$base/apply-handle.lua") || fail 7
+        ash "$engine" --persistent projection-publish "$handle" apply >/dev/null || { printf '%s\n' "$result";exit 7; }
+        finished=$(ash "$engine" --persistent apply-finish-projection "$handle") || { printf '%s\n' "$result";exit 7; }
+        printf '%s\n' "$finished";exit 0;;
+    lifecycle-status) [ "$#" -eq 0 ] || fail;exec ash "$dir/homegate-startup-active.sh" status;;
+    lifecycle-record-save|lifecycle-record-resume|lifecycle-record-check|lifecycle-record-apply|lifecycle-record-cancel)
+        [ "$#" -eq 2 ] && [ "$2" = --confirm ] || fail
+        case "$1" in enabled|disabled) ;; *) fail;; esac
+        exec ash "$dir/homegate-lifecycle-prepare.sh" "${action#lifecycle-}" "$1" --confirm;;
+    lifecycle-enable|lifecycle-disable)
+        [ "$#" -eq 1 ] && [ "$1" = --confirm ] || fail
+        desired=enabled;[ "$action" != lifecycle-disable ] || desired=disabled
+        if [ -e /var/run/homegate-engineering/proxy ] || [ -L /var/run/homegate-engineering/proxy ];then
+            [ "$desired" != disabled ] || ash "$dir/homegate-proxy.sh" stop --confirm >/dev/null || fail 4
+            ash "$dir/homegate-proxy.sh" quiescent >/dev/null || fail 4
+            ash "$dir/homegate-proxy.sh" reap --confirm >/dev/null || fail 4
+        fi
+        if [ -e /var/run/homegate-engineering/acme-schedule ] || [ -L /var/run/homegate-engineering/acme-schedule ];then
+            [ "$desired" != disabled ] || ash "$dir/homegate-acme-schedule.sh" stop --confirm >/dev/null || fail 4
+            ash "$dir/homegate-acme-schedule.sh" quiescent >/dev/null || fail 4
+            ash "$dir/homegate-acme-schedule.sh" reap --confirm >/dev/null || fail 4
+        fi
+        if [ -e /var/run/homegate-engineering/ddns-schedule ] || [ -L /var/run/homegate-engineering/ddns-schedule ];then
+            # Disabling explicitly requests a cooperative stop. An admitted
+            # batch/unknown receipt still blocks the switch until reconciled.
+            [ "$desired" != disabled ] || ash "$base/schedule-control.sh" stop --confirm >/dev/null || fail 4
+            ash "$base/schedule-control.sh" quiescent >/dev/null || fail 4
+            ash "$base/schedule-control.sh" reap --confirm >/dev/null || fail 4
+        fi
+        if [ ! -e /etc/homegate-engineering/transactions/startup-intent ] && [ ! -L /etc/homegate-engineering/transactions/startup-intent ] &&
+           [ ! -e /etc/homegate-engineering/transactions/.startup-intent-next ] && [ ! -L /etc/homegate-engineering/transactions/.startup-intent-next ];then
+            ash "$dir/homegate-lifecycle-prepare.sh" record-save "$desired" --confirm >/dev/null || fail 4
+        fi
+        exec ash "$dir/homegate-lifecycle-prepare.sh" record-apply "$desired" --confirm;;
     prepare|prepare-resume|config-status|config-export|import-preview|activate-preview|config-preview|config-cancel|grant-cancel) [ "$#" -eq 0 ] || fail;;
     import-commit|config-commit|config-finish|grant-commit) [ "$#" -eq 1 ] && token_valid "$1" || fail;;
     dns-provider-status|dns-zones|ddns-sync|ddns-status|grant-preview) [ "$#" -eq 1 ] && id_valid "$1" || fail;;

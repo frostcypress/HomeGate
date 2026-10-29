@@ -4,7 +4,7 @@ include $(TOPDIR)/homegate-version.mk
 PKG_NAME:=homegate-engineering
 PKG_VERSION:=$(HOMEGATE_VERSION)
 PKG_RELEASE:=$(HOMEGATE_RELEASE)
-PKG_LICENSE:=MIT
+PKG_LICENSE:=MIT GPL-3.0
 PKGARCH:=all
 PKG_BUILD_DIR:=$(BUILD_DIR)/$(PKG_NAME)-$(PKG_VERSION)
 
@@ -14,7 +14,7 @@ define Package/homegate-engineering-core
   SECTION:=net
   CATEGORY:=Network
   TITLE:=HomeGate isolated manual DDNS engineering core
-  DEPENDS:=+busybox +lua +luci-lib-jsonc +curl +ca-bundle +openssl-util +flock +coreutils-stat +ip-full +ubus
+  DEPENDS:=+busybox +lua +luci-lib-jsonc +luci-lib-nixio +curl +ca-bundle +openssl-util +flock +coreutils-stat +ip-full +ubus +homegate-nginx
   PKGARCH:=all
 endef
 
@@ -32,6 +32,12 @@ store=/etc/homegate-engineering/transactions
 if [ ! -d /var/run/homegate-engineering ];then
   /usr/bin/homegate-engineering prepare >/dev/null 2>&1 || exit 4
 fi
+/usr/bin/homegate-engineering access-stop --confirm >/dev/null 2>&1 || exit 4
+/usr/bin/homegate-engineering access-quiescent >/dev/null 2>&1 || exit 4
+/usr/bin/homegate-engineering proxy-stop --confirm >/dev/null 2>&1 || exit 4
+/usr/bin/homegate-engineering proxy-quiescent >/dev/null 2>&1 || exit 4
+/usr/bin/homegate-engineering acme-schedule-stop --confirm >/dev/null 2>&1 || exit 4
+ash /usr/libexec/homegate-engineering/project/core/prototype/homegate-acme-schedule.sh quiescent >/dev/null 2>&1 || exit 4
 if [ -e /var/run/homegate-engineering/ddns-schedule ] || [ -L /var/run/homegate-engineering/ddns-schedule ];then
   /usr/bin/homegate-engineering schedule-stop --confirm >/dev/null 2>&1 || exit 4
 fi

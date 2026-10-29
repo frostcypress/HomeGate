@@ -4,6 +4,7 @@ set -u
 umask 077
 export LC_ALL=C
 service_actions_enabled=false
+certificate_validation_enabled=false
 ddns_plan_enabled=false
 network_resolve_enabled=false
 health_status_enabled=false
@@ -27,6 +28,13 @@ dns_reconcile_enabled=false
 dns_receipt_enabled=false
 action=observe
 budget=5
+if [ "${1:-}" = --certificate-validate ];then
+    [ "$certificate_validation_enabled" = true ] && [ "$#" -eq 3 ] || exit 2
+    action=certificate-validate;budget=10;certificate_id=$3
+    case "$certificate_id" in ''|*[!a-zA-Z0-9_-]*) exit 2;; esac
+    [ "${#certificate_id}" -le 64 ] || exit 2
+    set -- --action "$2" certificate-validate
+fi
 dns_provider=cloudflare
 if [ "${1:-}" = --cloudflare-check ] || [ "${1:-}" = --aliyun-check ] || [ "${1:-}" = --dnspod-check ] || [ "${1:-}" = --huaweicloud-check ]; then
     if [ "$1" = --aliyun-check ]; then
@@ -98,10 +106,11 @@ if [ "${1:-}" = --action ]; then
     [ "$2" != ddns-plan ] || [ "$action" = ddns-plan ] || exit 2
     [ "$2" != network-resolve ] || [ "$action" = network-resolve ] || exit 2
     [ "$2" != health-status ] || [ "$action" = health-status ] || exit 2
+    [ "$2" != certificate-validate ] || [ "$action" = certificate-validate ] || exit 2
     [ "$2" != recovery-status ] || [ "$action" = recovery-status ] || exit 2
-    [ "$action" = cloudflare-check ] || [ "$action" = ddns-plan ] || [ "$action" = network-resolve ] || [ "$action" = health-status ] || [ "$action" = recovery-status ] || [ "$service_actions_enabled" = true ] || exit 2
+    [ "$action" = cloudflare-check ] || [ "$action" = ddns-plan ] || [ "$action" = network-resolve ] || [ "$action" = health-status ] || [ "$action" = recovery-status ] || [ "$action" = certificate-validate ] || [ "$service_actions_enabled" = true ] || exit 2
     action=$2
-    case "$action" in precheck|start|stop|cloudflare-check|ddns-plan|network-resolve|health-status|recovery-status) ;; *) exit 2;; esac
+    case "$action" in precheck|start|stop|cloudflare-check|ddns-plan|network-resolve|health-status|recovery-status|certificate-validate) ;; *) exit 2;; esac
     set -- "$1"
     PATH=/usr/sbin:/usr/bin:/sbin:/bin; export PATH
     unset IPKG_INSTROOT INIT_TRACE PROCD_DEBUG TRACE_SYSCALLS LUA_INIT LUA_PATH LUA_CPATH
@@ -128,7 +137,7 @@ sleep 0.001 >/dev/null 2>&1 || exit 1
 kill -0 "$$" >/dev/null 2>&1 || exit 1
 # Missing executables/modules are unknown, never "disabled" or "stopped".
 [ "$(id -u)" = 0 ] || exit 1
-if [ "$action" != cloudflare-check ] && [ "$action" != ddns-plan ] && [ "$action" != network-resolve ] && [ "$action" != health-status ] && [ "$action" != recovery-status ]; then
+if [ "$action" != cloudflare-check ] && [ "$action" != ddns-plan ] && [ "$action" != network-resolve ] && [ "$action" != health-status ] && [ "$action" != recovery-status ] && [ "$action" != certificate-validate ]; then
     [ -f /etc/init.d/homegate ] && [ ! -L /etc/init.d/homegate ] && [ -x /etc/init.d/homegate ] &&
         [ -x /etc/rc.common ] && [ -x /sbin/ubus ] || exit 1
 fi
@@ -138,13 +147,14 @@ now=$(lua "$process" now 2>/dev/null) || exit 1
 deadline=$((now + budget))
 stop_family() {
     # Signal only this still-running session leader's own process group.
-    kill -TERM "-$$" 2>/dev/null || :
+    kill -TERM -- "-$$" 2>/dev/null || :
     sleep 1
-    kill -KILL "-$$" 2>/dev/null
+    kill -KILL -- "-$$" 2>/dev/null
     exit 1
 }
 { [ "$action" != cloudflare-check ] && [ "$action" != ddns-plan ] && [ "$action" != network-resolve ] && [ "$action" != health-status ] && [ "$action" != recovery-status ]; } || exec 5<&0
 case "$action" in
+    certificate-validate) ash "$dir/homegate-certificate-worker.sh" "$certificate_id" 6>&- 7>&- 8>&- 9>&- >/dev/null 2>&1 &;;
     observe) lua "$dir/homegate-service-observer.lua" 6>&- 7>&- 8>&- 9>&- >/dev/null 2>&1 &;;
     precheck) /sbin/uci -q show homegate 3>&- 6>&- 7>&- 8>&- 9>&- >/dev/null 2>&1 &;;
     start) /etc/init.d/homegate start 3>&- 6>&- 7>&- 8>&- 9>&- >/dev/null 2>&1 &;;

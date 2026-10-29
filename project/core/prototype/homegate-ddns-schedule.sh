@@ -4,10 +4,14 @@ set -u
 umask 077
 export LC_ALL=C
 ddns_schedule_enabled=false
+ddns_schedule_continuous_enabled=false
 ddns_schedule_events_enabled=false
 fail() { printf '{"api_version":1,"prototype":true,"ok":false,"phase":"ddns-schedule","effect":"none","write_ready":false,"error":"DDNS schedule is unavailable"}\n';exit "${1:-7}"; }
 action=${1:-}
-case "$action" in run) [ "$ddns_schedule_enabled" = true ] && [ "$#" -eq 2 ] && [ "$2" = --confirm ] || fail 2;;
+mode=run
+[ "$action" != serve ] || mode=serve
+case "$action" in serve) [ "$ddns_schedule_enabled" = true ] && [ "$ddns_schedule_continuous_enabled" = true ] && [ "$#" -eq 2 ] && [ "$2" = --confirm ] || fail 2;;
+    run) [ "$ddns_schedule_enabled" = true ] && [ "$#" -eq 2 ] && [ "$2" = --confirm ] || fail 2;;
     status|quiescent) [ "$#" -eq 1 ] || fail 2;; stop|reap) [ "$#" -eq 2 ] && [ "$2" = --confirm ] || fail 2;;
     event) [ "$ddns_schedule_events_enabled" = true ] && [ "$#" -eq 4 ] || fail 2
         event_action=$2;event_interface=$3;event_device=$4
@@ -71,8 +75,8 @@ binding() {
 read_lease() {
     private_dir "$work" && checked "$lease" || return 1
     exec 3<"$lease" || return 1;info=$(lua "$dir/homegate-ddns-schedule.lua" inspect 4>&- 5>&- 6>&- 7>&- 8>&- 9>&- 2>/dev/null) || return 1
-    old_ifs=$IFS;IFS=:;set -- $info;IFS=$old_ifs;[ "$#" -eq 10 ] || return 1
-    pid=$1;birth=$2;lease_boot=$3;token=$4;lease_revision=$5;deadline=$6;lease_identity=$7;lease_generation=$8;lease_grant=$9;shift 9;started=$1
+    old_ifs=$IFS;IFS=:;set -- $info;IFS=$old_ifs;[ "$#" -eq 11 ] || return 1
+    pid=$1;birth=$2;lease_boot=$3;token=$4;lease_revision=$5;deadline=$6;lease_identity=$7;lease_generation=$8;lease_grant=$9;shift 9;started=$1;lease_mode=$2
 }
 alive() {
     live=false
@@ -81,7 +85,7 @@ alive() {
     [ -n "$info" ] || return 0
     old_ifs=$IFS;IFS=:;set -- $info;IFS=$old_ifs;[ "$#" -eq 6 ] || return 1
     [ "$5" = "$birth" ] || return 0;case "$1" in Z|X) return 0;; esac
-    lua "$dir/homegate-ddns-schedule.lua" owner "$pid" 3>&- 4>&- 5>&- 6>&- 7>&- 8>&- 9>&- >/dev/null 2>/dev/null || return 1
+    lua "$dir/homegate-ddns-schedule.lua" owner "$pid" "$lease_mode" 3>&- 4>&- 5>&- 6>&- 7>&- 8>&- 9>&- >/dev/null 2>/dev/null || return 1
     [ "$(stat -Lc '%d:%i:%u:%a:%h' /proc/$pid/fd/9 2>/dev/null)" = "$(stat -c '%d:%i:%u:%a:%h' "$runlock")" ] || return 1
     live=true
 }
@@ -174,7 +178,7 @@ if [ "$action" = event ];then
     private_file "$runlock" && private_file "$control" && open_control || fail 4
     read_lease && alive && stop_read || fail
     [ "$live" = true ] && [ "$stopping" = false ] || { event_reply false false;exit 0; }
-    now && [ "$moment" -lt "$deadline" ] || fail 4
+    now && { [ "$lease_mode" = serve ] || [ "$moment" -lt "$deadline" ]; } || fail 4
     # Signals cannot authorize work. Inspect the immutable configuration bound
     # by this lease without contending with an admitted provider's business
     # locks, so ifdown can request cooperative stop during a running batch.
@@ -197,17 +201,20 @@ fi
 if [ "$action" = status ] && ! exists "$work"; then
     lua "$dir/homegate-ddns-schedule.lua" report true idle '' 0 none 2>/dev/null || fail;exit 0
 fi
-if [ "$action" = run ]; then
+if [ "$action" = run ] || [ "$action" = serve ]; then
+    if exists "$run/acme-schedule";then ash "$dir/homegate-acme-schedule.sh" quiescent >/dev/null 2>/dev/null || fail 4;fi
     locks || fail;exec 9>>"$runlock" || fail;flock -n 9 && bound_lock 9 "$runlock" || fail 4;open_control || fail 4
     ! exists "$work" || fail 4
-    business_lock && binding && now || fail 4
+    business_lock || fail 4
+    if exists "$run/acme-schedule";then ash "$dir/homegate-acme-schedule.sh" quiescent >/dev/null 2>/dev/null || fail 4;fi
+    binding && now || fail 4
     bound=$binding_seen;started=$moment;deadline=$((moment+900));ticks=0;last_effect=none;interrupted=false
     trap 'interrupted=true' TERM INT
     info=$(lua "$dir/worker-process.lua" info "$$" none 2>/dev/null) || fail
     old_ifs=$IFS;IFS=:;set -- $info;IFS=$old_ifs;[ "$#" -eq 6 ] || fail;birth=$5
     token=$(lua "$dir/cloudflare-codec.lua" nonce < /proc/sys/kernel/random/uuid 2>/dev/null) || fail
     mkdir "$work" && fsync "$run" 2>/dev/null || fail
-    payload=$(lua "$dir/homegate-ddns-schedule.lua" lease "$identity" "$generation" "$grant" "$revision" "$boot" "$$" "$birth" "$token" "$started" 2>/dev/null) || fail
+    payload=$(lua "$dir/homegate-ddns-schedule.lua" lease "$identity" "$generation" "$grant" "$revision" "$boot" "$$" "$birth" "$token" "$started" "$mode" 2>/dev/null) || fail
     destination=$lease;publish || fail
     (set -C; : > "$work/batch") 2>/dev/null && private_file "$work/batch" || fail
     exec 4>&-;business_unlock
@@ -236,7 +243,7 @@ else
     lua "$dir/homegate-ddns-schedule.lua" report true idle '' 0 none 2>/dev/null || fail;exit 0
 fi
 emit() {
-    payload=$(lua "$dir/homegate-ddns-schedule.lua" report "$1" "$2" "$3" "$ticks" "$last_effect" 2>/dev/null) || return 1
+    payload=$(lua "$dir/homegate-ddns-schedule.lua" report "$1" "$2" "$3" "$ticks" "$last_effect" "$mode" 2>/dev/null) || return 1
     destination=$report;publish
 }
 finish() { business_unlock;emit "$1" finished "$2" || fail;printf '%s\n' "$payload";exit "$3"; }
@@ -246,8 +253,9 @@ while :; do
     now && [ "$moment" -ge "$last_now" ] || finish false clock_invalid 7;last_now=$moment
     stop_read || finish false failed 7
     if [ "$stopping" = true ] || [ "$interrupted" = true ]; then finish true stopped 0;fi
-    [ "$moment" -lt "$deadline" ] || finish true budget 0
-    [ "$ticks" -lt 8 ] || finish true ticks 0
+    [ "$mode" = serve ] || [ "$moment" -lt "$deadline" ] || finish true budget 0
+    if [ "$mode" = serve ];then [ "$ticks" -lt 2147483647 ] || finish true ticks 0
+    else [ "$ticks" -lt 8 ] || finish true ticks 0;fi
     if [ "$control_busy" = true ];then sleep 0.05 || finish false failed 7;continue;fi
     business_lock || finish false blocked 4
     binding && [ "$binding_seen" = "$bound" ] || finish false changed 4
@@ -262,7 +270,7 @@ while :; do
     case "$decision" in ready|wait) ;; idle) finish true idle 0;; blocked) finish false blocked 4;; *) finish false failed 7;; esac
     if [ "$decision" = wait ]; then
         emit true waiting '' || fail;business_unlock
-        now || finish false clock_invalid 7;wake=$((moment+wait_for));[ "$wake" -le "$deadline" ] || wake=$deadline
+        now || finish false clock_invalid 7;[ "$mode" != serve ] || [ "$wait_for" -le 60 ] || wait_for=60;wake=$((moment+wait_for));[ "$mode" = serve ] || [ "$wake" -le "$deadline" ] || wake=$deadline
         while :; do
             stop_read || finish false failed 7
             if [ "$stopping" = true ] || [ "$interrupted" = true ]; then finish true stopped 0;fi
@@ -279,7 +287,7 @@ while :; do
     # Stop is cooperative. Once admitted, retain both locks until the existing
     # bounded batch and its supervised provider family have finished.
     now && [ "$moment" -ge "$last_now" ] || finish false clock_invalid 7;last_now=$moment
-    [ "$moment" -lt "$deadline" ] || finish true budget 0
+    [ "$mode" = serve ] || [ "$moment" -lt "$deadline" ] || finish true budget 0
     stop_read || finish false failed 7
     if [ "$stopping" = true ] || [ "$interrupted" = true ]; then finish true stopped 0;fi
     if [ "$control_busy" = true ];then business_unlock;sleep 0.05 || finish false failed 7;continue;fi

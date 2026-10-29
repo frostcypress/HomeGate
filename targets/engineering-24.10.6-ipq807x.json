@@ -31,17 +31,18 @@
     "isolated init/hotplug entry with no boot dispatch",
     "four-provider credentials validation and complete zone discovery",
     "explicit exact-host all-AAAA delete with no WAN sampling",
-    "native Lua account read and delete confirmation actions"
+    "native Lua account read and delete confirmation actions",
+    "explicit continuous DDNS session and lifecycle enable/disable intent",
+    "confirmed production configuration and private credential copy without production takeover",
+    "local/ACME certificate publication and explicit renewal session",
+    "explicit isolated TLS proxy, fixed CN snapshot and bounded recent access observations"
   ],
   "excluded": [
-    "production configuration adoption",
-    "ACME issuance",
-    "proxy",
-    "access control",
+    "full production core takeover and automatic boot dispatch",
     "firewall",
     "WOL",
-    "daemon",
-    "unbounded continuous daemon or automatic session renewal"
+    "public CA/DNS propagation acceptance",
+    "target worker ABI and resource acceptance"
   ],
   "runtime_requirements": [
     "Lua 5.1",
@@ -52,6 +53,20 @@
     "flock",
     "ip",
     "ubus",
-    "coreutils-stat"
-  ]
+    "coreutils-stat",
+    "luci-lib-nixio local UNIX datagram API",
+    "homegate-nginx 1.30.6 private native component"
+  ],
+  "runtime_components": {
+    "homegate-nginx": {
+      "recipe": "packaging/components/homegate-nginx",
+      "private_binary": "/usr/libexec/homegate-nginx/nginx",
+      "full_target_build_verified": false,
+      "target_execution_verified": false
+    },
+    "luci-lib-nixio": {
+      "recipe_reference": "packaging/components/homegate-nginx/sources.json",
+      "target_execution_verified": false
+    }
+  }
 }

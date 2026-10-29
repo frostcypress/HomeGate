@@ -9,8 +9,14 @@ import re
 SCOPE = 'isolated-ddns-contract-engineering'
 PROTO = 'project/core/prototype/'
 GATES = {
+ 'homegate-access-region.sh': ['access_region_enabled'],
+ 'homegate-proxy.sh': ['proxy_runtime_enabled'],
+ 'homegate-acme-schedule.sh': ['acme_schedule_enabled'],
+ 'homegate-acme-job.sh': ['acme_jobs_enabled'],
+ 'homegate-acme-dns.sh': ['acme_dns_hook_enabled'],
+ 'homegate-certificate.sh': ['certificate_material_enabled'],
  'homegate-dns-status.sh': ['dns_status_cli_enabled'],
- 'homegate-ddns-schedule.sh': ['ddns_schedule_enabled','ddns_schedule_events_enabled'],
+ 'homegate-ddns-schedule.sh': ['ddns_schedule_enabled','ddns_schedule_events_enabled','ddns_schedule_continuous_enabled'],
  'homegate-ddns-batch.sh': ['ddns_batch_enabled'],
  'homegate-cli.sh': ['native_cli_enabled'],
  'homegate-ddns-ui.sh': ['ddns_ui_enabled'],
@@ -20,21 +26,22 @@ GATES = {
  'homegate-dnspod-worker.sh': ['dnspod_read_enabled','dnspod_records_enabled','dnspod_reconcile_enabled','dnspod_receipt_enabled'],
  'homegate-huaweicloud-worker.sh': ['huaweicloud_read_enabled','huaweicloud_records_enabled','huaweicloud_reconcile_enabled','huaweicloud_receipt_enabled'],
  'homegate-store-bootstrap-prototype.sh': ['bootstrap_enabled'],
- 'homegate-lifecycle-prepare.sh': ['runtime_prepare_enabled'],
+ 'homegate-lifecycle-prepare.sh': ['runtime_prepare_enabled','lifecycle_startup_enabled','lifecycle_intent_check_enabled','lifecycle_intent_record_enabled'],
+ 'homegate-startup-active.sh': ['startup_active_enabled'],
  'homegate-config-prototype.sh': ['production_writes_enabled','persistent_namespace_enabled',
-  'orphan_recovery_enabled','dns_recovery_read_enabled','lifecycle_migration_enabled',
+  'orphan_recovery_enabled','dns_recovery_read_enabled','lifecycle_migration_enabled','startup_admission_enabled','production_copy_enabled',
   'ddns_plan_enabled','ddns_authority_enabled'],
  'homegate-ddns-authority.sh': ['ddns_authority_enabled','ddns_multi_authority_enabled'],
  'homegate-ddns-read.sh': ['ddns_plan_enabled','ddns_sync_enabled','ddns_work_enabled','ddns_runtime_enabled','ddns_batch_enabled','ddns_delete_enabled'],
  'homegate-ddns-plan-worker.sh': ['ddns_plan_enabled'],
  'homegate-ddns-work.sh': ['ddns_work_enabled','ddns_runtime_enabled'],
  'homegate-ddns-state.sh': ['ddns_state_enabled','ddns_batch_enabled'],
- 'homegate-service-observer-watchdog.sh': ['ddns_plan_enabled','dns_read_enabled',
+ 'homegate-service-observer-watchdog.sh': ['certificate_validation_enabled','ddns_plan_enabled','dns_read_enabled',
   'aliyun_read_enabled','dnspod_read_enabled','huaweicloud_read_enabled','dns_records_enabled',
   'dns_reconcile_enabled','dns_receipt_enabled','aliyun_records_enabled','aliyun_reconcile_enabled',
   'aliyun_receipt_enabled','dnspod_records_enabled','dnspod_reconcile_enabled','dnspod_receipt_enabled',
   'huaweicloud_records_enabled','huaweicloud_reconcile_enabled','huaweicloud_receipt_enabled'],
- 'homegate-cloudflare-read.sh': ['dns_read_enabled','dns_status_read_enabled','ddns_sync_enabled',
+ 'homegate-cloudflare-read.sh': ['acme_dns_records_enabled','dns_read_enabled','dns_status_read_enabled','ddns_sync_enabled',
   'ddns_work_enabled','ddns_runtime_enabled','ddns_closeout_enabled','dns_migrated_read_enabled','dns_records_enabled',
   'dns_reconcile_enabled','dns_receipt_enabled','aliyun_read_enabled','aliyun_records_enabled',
   'aliyun_reconcile_enabled','aliyun_receipt_enabled','dnspod_read_enabled','dnspod_records_enabled',
@@ -76,6 +83,12 @@ def render(name, raw):
         text = text.replace('doc.homegate','doc.homegate_engineering')
         text = text.replace("name~='homegate'", "name~='homegate_engineering'")
         text = text.replace('"homegate"','"homegate_engineering"')
+    if Path(name).name == 'homegate-config-prototype.sh':
+        # Only this explicit read-only adoption entry reaches the legacy source.
+        text=text.replace('production_copy_source=/etc/config/homegate_engineering',
+                          'production_copy_source=/etc/config/homegate')
+        text=text.replace('production_copy_runtime=/var/run/homegate-engineering',
+                          'production_copy_runtime=/var/run/homegate')
     # The original single-provider experiments intentionally exclude the CF
     # receipt profile when using another provider. Select that same profile
     # internally, after parsing the fixed provider, for one multi-provider IPK.
@@ -95,6 +108,9 @@ def payload(root):
     for file in sorted((root/PROTO).iterdir()):
         if file.suffix in ('.sh','.lua'):
             files[PROTO+file.name]=render(file.name,file.read_bytes())
+    for name in ['acme.sh','LICENSE.md','PROVENANCE.json']:
+        files['acme/'+name]=(root/'third_party/acme.sh-3.1.6'/name).read_bytes()
+    files['acme/dnsapi/dns_homegate.sh']=render('dns_homegate.sh',(root/'packaging/engineering/files/dns_homegate.sh').read_bytes())
     for name in ['project/luci/lua/luasrc/model/homegate/backup.lua','VERSION','RELEASE']:
         files[name]=(root/name).read_bytes()
     return files

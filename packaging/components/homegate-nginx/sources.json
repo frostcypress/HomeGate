@@ -1,0 +1,32 @@
+{
+  "schema": 1,
+  "component": "homegate-nginx",
+  "version": "1.30.6",
+  "source_url": "https://nginx.org/download/nginx-1.30.6.tar.gz",
+  "source_sha256": "3cf46f5ed7504d460125866b7bea99fb357f31d887e2e63b35503310e9b8b6c8",
+  "patch_source_repository": "https://github.com/immortalwrt/packages",
+  "patch_source_commit": "fce1553dac2d00c0b0f66647d8a9bd102b73e49c",
+  "patch_source_directory": "net/nginx/patches/nginx",
+  "patch_sha256": {
+    "101-feature_test_fix.patch": "f4deb31c7c2205ae215eb25b03aadd3e461a4dba3cf5fc9bec792d5c8a9ea61a",
+    "102-sizeof_test_fix.patch": "2c017bda751451d737b5e13dfe8eb2184fb7d888c63a5b50de2e74f24bce26c9",
+    "103-sys_nerr.patch": "883cf86689509eefbdea65ef79d5e538f08d7aa8879dc6677f0f7ffba4548c2c",
+    "104-endianness_fix.patch": "005c06e79f37609780d6cdf8c7272df126524bf47466e69a87e85e3de95afd98"
+  },
+  "binary": "/usr/libexec/homegate-nginx/nginx",
+  "default_service_installed": false,
+  "target_build_verified": false,
+  "target_worker_ABI_resources_verified": false,
+  "required_target_dependencies": [
+    "libopenssl",
+    "libpcre2",
+    "libpthread"
+  ],
+  "nixio_recipe_reference": {
+    "repository": "https://github.com/immortalwrt/luci",
+    "commit": "a08c4a33eefb2844b0c6b32daf599900d4781c45",
+    "path": "libs/luci-lib-nixio",
+    "target_package": "luci-lib-nixio",
+    "target_runtime_verified": false
+  }
+}

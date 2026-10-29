@@ -73,9 +73,9 @@ class Dispatch(unittest.TestCase):
         matrix=re.search(r'group: \[([^\]]+)\]',extended).group(1).split(', ')
         self.assertEqual(matrix,list(dispatch.GROUPS));self.assertEqual(len(matrix),20)
         self.assertEqual(len(matrix),len(set(matrix)))
-        native=body.split('  native:\n',1)[1].split('  build:\n',1)[0]
+        native=body.split('  native:\n',1)[1].split('  engineering:\n',1)[0]
         self.assertEqual(len(re.search(r'group: \[([^\]]+)\]',native).group(1).split(', ')),6)
-        self.assertIn('needs: [source, extended, native]',body)
+        self.assertIn('needs: [source, extended, native, engineering]',body)
         self.assertIn('build/verify-venv/bin/python scripts/ci-extended-groups-regressions.py',body)
     def test_06_other_groups_keep_original_commands_and_order(self):
         for group,names in ORIGINAL_GROUPS.items():

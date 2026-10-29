@@ -13,9 +13,10 @@ case "$1" in
  status|quiescent) [ "$#" -eq 1 ] || fail 2;exec ash "$base/homegate-ddns-schedule.sh" "$1";;
  stop|reap) [ "$#" -eq 2 ] && [ "$2" = --confirm ] || fail 2;exec ash "$base/homegate-ddns-schedule.sh" "$@";;
  event) [ "$#" -eq 4 ] || fail 2;exec ash "$base/homegate-ddns-schedule.sh" "$@";;
- start) [ "$#" -eq 2 ] && [ "$2" = --confirm ] || fail 2;;
+ start|serve) [ "$#" -eq 2 ] && [ "$2" = --confirm ] || fail 2;;
  *) fail 2;;
 esac
+mode=run;[ "$1" != serve ] || mode=serve
 run=/var/run/homegate-engineering
 [ -d "$run" ] && [ ! -L "$run" ] && [ "$(stat -c '%u:%a' "$run")" = 0:700 ] || fail
 lock=$run/ddns-launch.lock
@@ -27,7 +28,7 @@ flock -n 5 && [ "$(stat -Lc '%d:%i' /proc/self/fd/5)" = "$(stat -c '%d:%i' "$loc
 ash "$base/homegate-ddns-schedule.sh" quiescent >/dev/null || fail 4
 # Child performs the original authorization/generation/lock binding and owns
 # the retained lease. Its stdout is disconnected from HTTP before admission.
-setsid ash "$base/homegate-ddns-schedule.sh" run --confirm 5>&- </dev/null >/dev/null 2>&1 &
+setsid ash "$base/homegate-ddns-schedule.sh" "$mode" --confirm 5>&- </dev/null >/dev/null 2>&1 &
 attempt=0
 while [ "$attempt" -lt 70 ];do
     if [ -f "$run/ddns-schedule/report" ];then

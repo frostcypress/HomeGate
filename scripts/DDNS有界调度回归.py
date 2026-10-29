@@ -66,6 +66,14 @@ class Static(BaseStatic):
         for name in ['ddns-schedule.lua','homegate-ddns-schedule.lua']:self.lua.compile((PROTO/name).read_bytes())
         self.assertNotIn('prototype/',(PROTO.parent/'Makefile').read_text())
 
+    def test_continuous_records_cannot_weaken_finite_records(self):
+        d={**self.specimen(),'continuous':True,'deadline':0};self.assertTrue(self.policy.lease(self.table(d)))
+        for change in [{'continuous':False},{'continuous':'true'},{'deadline':1900},{'extra':'unexpected'}]:
+            self.assertFalse(self.policy.lease(self.table({**d,**change})))
+        report={'api_version':1,'prototype':True,'ok':True,'phase':'ddns-schedule','running':True,'status':'waiting','reason':'','ticks':9,'last_effect':'none','effect':'none','write_ready':False,'admission_limit':0,'continuous':True}
+        self.assertTrue(self.policy.report(self.table(report)))
+        for change in [{'continuous':False},{'ticks':2147483648},{'admission_limit':8}]:self.assertFalse(self.policy.report(self.table({**report,**change})))
+
 class ScheduleMixin:
     def setUp(self):
         super().setUp();self.schedule=self.engine.parent/'homegate-ddns-schedule.sh';self.schedule_dir=self.native.lockdir/'ddns-schedule';self.releases=[];self.jobs=[]
@@ -257,14 +265,62 @@ class MixedBoundaries(MixedCF):
         before=self.files(self.journal);calls=len(self.calls);sample=self.netlog.read_bytes();self.control_call('reap',4);self.control_call('run',4)
         self.assertEqual(self.files(self.journal),before);self.assertEqual(len(self.calls),calls);self.assertEqual(self.netlog.read_bytes(),sample);self.assertEqual(len(self.mutations()),1);self.assertFalse(self.archive.exists())
 
+class Continuous(CF):
+    def setUp(self):
+        super().setUp()
+        self.schedule.write_text(self.schedule.read_text().replace('ddns_schedule_continuous_enabled=false','ddns_schedule_continuous_enabled=true'))
+    def start(self):
+        p=subprocess.Popen([self.busybox,'ash',str(self.schedule),'serve','--confirm'],env=self.env,stdout=subprocess.PIPE,stderr=subprocess.PIPE);self.jobs.append(p);return p
+    def test_continuous_exceeds_finite_budget_and_eight_batches(self):
+        # Hold time steady while each batch completes. Auto-advancing every
+        # sleep makes waiting reports transient and cannot prove an exact tick.
+        current=self.cli('status')['revision']
+        body=(self.store/f'gen-{current}/public.conf').read_bytes()
+        preview=self.cli('preview',payload=body);tx=self.cli('commit-apply-projection',preview['confirmation'])
+        self.cli('projection-publish',tx['apply_handle'],'apply');self.cli('apply-finish-projection',tx['apply_handle'])
+        preview=self.auth('preview','ddns_a');self.auth('commit',preview['confirmation']);self.baseline_config=self.config_bytes()
+        self.seed();MixedScheduleMixin.track_wait_boundary(self);p=self.start()
+        for tick in range(1,10):
+            deadline=time.monotonic()+55
+            while time.monotonic()<deadline:
+                if p.poll() is not None:self.fail(self.finish(p,p.returncode))
+                if (self.schedule_dir/'report').exists():
+                    try:
+                        d=self.record('report')
+                        if d['ticks']==tick and d['status']=='waiting' and MixedScheduleMixin.wait_boundary_reached(self,tick):break
+                    except (OSError,ValueError):pass
+                time.sleep(.05)
+            else:self.fail('Continuous scheduler did not settle tick '+str(tick))
+            if tick<9:self.clock.write_text(str(1000+tick*300)+'\n')
+        self.assertTrue(d['continuous']);self.assertEqual(d['admission_limit'],0)
+        self.assertGreater(int(self.clock.read_text()),1900);self.assertEqual(self.record()['deadline'],0)
+        self.control_call('stop');out=self.finish(p);self.assertEqual((out['reason'],out['ticks']),('stopped',9))
+        self.assertEqual(self.netlog.read_text().splitlines(),['addresses','routes']*9)
+        self.assertEqual(self.mutations(),[]);self.control_call('reap')
+    def test_continuous_revoke_is_observed_during_long_throttle(self):
+        self.seed();p=self.start();self.wait_for(p);before=self.files(self.state_dir);calls=len(self.calls)
+        self.revoke_fixture();self.clock.write_text('1060\n');out=self.finish(p,4)
+        self.assertEqual(out['reason'],'changed');self.assertEqual(out['ticks'],1)
+        self.assertEqual(self.files(self.state_dir),before);self.assertEqual(len(self.calls),calls);self.control_call('reap')
+    def test_continuous_exact_owner_mode_and_gate(self):
+        body=self.schedule.read_text();self.schedule.write_text(body.replace('ddns_schedule_continuous_enabled=true','ddns_schedule_continuous_enabled=false'))
+        self.control_call('serve',2);self.schedule.write_text(body);self.seed();p=self.start();self.wait_for(p)
+        self.control_call('serve',4);self.control_call('run',4);saved=(self.schedule_dir/'lease').read_bytes()
+        self.rewrite_lease(lambda d:(d.pop('continuous'),d.update(deadline=d['started']+900)))
+        self.control_call('status',7);(self.schedule_dir/'lease').write_bytes(saved)
+        self.assertTrue(self.control_call('status')['continuous']);self.control_call('stop');self.finish(p);self.control_call('reap')
+    test_continuous_unknown_keeps_original_receipt=ScheduleMixin.test_unknown_mutation_preserves_original_fences_and_never_restarts
+    test_continuous_confirmed_write_stops_for_receipt=ScheduleMixin.test_confirmed_mutation_stops_before_next_rule_without_closeout
+    test_continuous_cooperative_stop_waits_for_admitted_batch=Boundaries.test_stop_during_provider_read_waits_for_admitted_batch
+
 if __name__=='__main__':
     p=argparse.ArgumentParser();p.add_argument('--runtime',action='store_true')
     mode=p.add_mutually_exclusive_group();mode.add_argument('--mixed-only',action='store_true');mode.add_argument('--auto-only',action='store_true')
     p.add_argument('--list-tests',action='store_true');p.add_argument('--case');a=p.parse_args();suite=unittest.TestSuite()
     if (a.mixed_only or a.auto_only) and not a.runtime:p.error('Source selection requires --runtime')
     mixed=[MixedCF,MixedAli,MixedDNP,MixedHW,MixedBoundaries]
-    for cls in ((mixed if a.mixed_only else [CF,Ali,DNP,HW,Boundaries] if a.auto_only else [CF,Ali,DNP,HW,Boundaries]+mixed) if a.runtime else [Static]):
-        methods=MixedBoundaries.__dict__ if cls is MixedBoundaries else MixedScheduleMixin.__dict__ if cls in mixed else Boundaries.__dict__ if cls is Boundaries else ScheduleMixin.__dict__ if a.runtime else Static.__dict__
+    for cls in ((mixed if a.mixed_only else [CF,Ali,DNP,HW,Boundaries,Continuous] if a.auto_only else [CF,Ali,DNP,HW,Boundaries,Continuous]+mixed) if a.runtime else [Static]):
+        methods=Continuous.__dict__ if cls is Continuous else MixedBoundaries.__dict__ if cls is MixedBoundaries else MixedScheduleMixin.__dict__ if cls in mixed else Boundaries.__dict__ if cls is Boundaries else ScheduleMixin.__dict__ if a.runtime else Static.__dict__
         suite.addTests(cls(n) for n,v in methods.items() if n.startswith('test_') and callable(v) and (not a.case or a.case==n))
     if not suite.countTestCases():p.error('No cases')
     if a.list_tests:

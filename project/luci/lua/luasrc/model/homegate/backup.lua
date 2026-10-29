@@ -124,7 +124,7 @@ local function scalar(kind, key, v)
         return (#v<=32 and (v=="" or v:match("^[a-zA-Z0-9_%.:%-]+$"))) and v or nil
     end
     if key=="zone" then return domain(v,false,kind=="certificate") end
-    if key=="domain" then return domain(v,false,false) end
+    if key=="domain" then return domain(v,kind=="web_rule",false) end
     if key=="host" then return v=="@" and "@" or domain(v,false,false) end
     if key=="mac" then
         local hex=v:gsub(":",""):gsub("%-",""):upper()

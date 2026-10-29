@@ -4,6 +4,7 @@ set -u
 umask 077
 export LC_ALL=C
 dns_read_enabled=false
+acme_dns_records_enabled=false
 dns_status_read_enabled=false
 ddns_sync_enabled=false
 ddns_work_enabled=false
@@ -64,6 +65,12 @@ fail() {
 [ "$dns_read_enabled" = true ] || fail 2
 provider=cloudflare
 runtime_check=false
+acme_dispatch=false
+if [ "${1:-}" = --acme-records-internal ];then
+    [ "$acme_dns_records_enabled" = true ] && [ "$#" -eq 4 ] && [ "$4" = --confirm ] || fail 2
+    acme_dispatch=true
+    case "$2" in cloudflare) set -- "$3" --records;; aliyun|dnspod|huaweicloud) set -- --"$2"-internal "$3" --records;; *) fail 2;;esac
+fi
 ddns_dispatch=false;runtime_dispatch=false;runtime_recovery=false;runtime_closeout=false
 case "${1:-}" in
     --runtime-collect-orphan-internal|--runtime-collect-receipt-internal|--runtime-retire-archive-internal)
@@ -243,6 +250,7 @@ if [ "$runtime_check" = true ]; then snapshot_command=runtime-ddns-snapshot-read
 if { [ "$mode" = reconcile ] || [ "$mode" = collect ] || [ "$mode" = retire ] || [ "$mode" = repair ] || [ "$mode" = checkpoint ] || [ "$mode" = orphan ]; } && [ "$dns_receipt_enabled" = true ]; then check_command=dns-recovery-check;snapshot_command=dns-recovery-snapshot-read; fi
 if { [ "$provider" = aliyun ] || [ "$provider" = dnspod ] || [ "$provider" = huaweicloud ]; } && { [ "$mode" = reconcile ] || [ "$mode" = collect ] || [ "$mode" = retire ] || [ "$mode" = repair ] || [ "$mode" = orphan ] || [ "$mode" = checkpoint ]; }; then check_command=dns-recovery-check;snapshot_command=migration-source-recovery-snapshot-read;migrated_read=false;fi
 if [ "$runtime_dispatch" = true ]; then migrated_read=false;snapshot_command=runtime-ddns-snapshot-read;fi
+if [ "$acme_dispatch" = true ];then migrated_read=false;snapshot_command=runtime-ddns-snapshot-read;fi
 if [ "$runtime_recovery" = true ]; then
     [ "$mode" = reconcile ] && [ "$persistent_reconcile" = true ] || fail 2
     check_command=dns-recovery-check;snapshot_command=runtime-ddns-recovery-snapshot-read;migrated_read=false

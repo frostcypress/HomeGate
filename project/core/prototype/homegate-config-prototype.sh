@@ -13,6 +13,11 @@ application_transaction=false
 service_intent_transaction=false
 projection_transaction=false
 source_migration_transaction=false
+production_copy_mode=false
+production_copy_enabled=false
+# Engineering profile keeps these two fixed read-only source paths unrelocated.
+production_copy_source=/etc/config/homegate
+production_copy_runtime=/var/run/homegate
 # Native Lua writers, the persistent namespace and lifecycle still need migration.
 # No CLI argument or environment variable can enable production publication.
 production_writes_enabled=false
@@ -252,9 +257,16 @@ open_store() {
     # A private main-switch preparation record is never an application permit.
     # Presence, including malformed/partial data and links, fences operations.
     if [ "$persistent_mode" = true ] && { [ -e "$store/startup-intent" ] || [ -L "$store/startup-intent" ] ||
-        [ -e "$store/.startup-intent-next" ] || [ -L "$store/.startup-intent-next" ]; }; then
+        [ -e "$store/.startup-intent-next" ] || [ -L "$store/.startup-intent-next" ] ||
+        [ -e "$store/.startup-active-next" ] || [ -L "$store/.startup-active-next" ]; }; then
         case "$command" in status|export|runtime-startup-snapshot-read) ;;
             *) fail 'Startup intent requires explicit reconciliation' 4;; esac
+    fi
+    # Fence source/vault mutation under the same business locks used by proxy
+    # admission. Read-only certificate renewal remains available.
+    if [ "$persistent_mode" = true ] && { [ -e /var/run/homegate/proxy ] || [ -L /var/run/homegate/proxy ]; };then
+        case "$command" in init|preview|cancel|credential-put|credential-delete|migration-source-commit|commit*|projection-publish|apply-finish*|restore-finish*|recover-application|recover-fence|rollback-preview)
+            ash "$(dirname "$0")/homegate-proxy.sh" quiescent >/dev/null 2>/dev/null || fail 'Proxy must be quiescent before configuration changes' 4;;esac
     fi
     max_revision=0
     for existing in "$store/gen-"*; do
@@ -771,7 +783,7 @@ full_plan_write() {
     diff=$(lua "$codec" diff "$store/gen-$head_revision/public.conf" "$scratch" 2>/dev/null) || fail 'Unable to compute public diff'
     drop_scratch
     credential_policy=retain-matching-resource
-    if [ "$plan_kind" = migration ] || [ "$plan_kind" = migration-source ]; then
+    if [ "$plan_kind" = migration ] || [ "$plan_kind" = migration-source ] || [ "$plan_kind" = production-copy ]; then
         digest_file "$store/gen-$plan_source/manifest"; plan_digest=$digest
         credential_policy=migrate-legacy-private-fields
     fi
@@ -780,7 +792,7 @@ full_plan_write() {
     printf '%s\n' "$head_revision" "$token" "$plan_kind" "$plan_source" "$created" "$deadline" "$plan_boot" "$plan_baseline" "$plan_digest" "$plan_public" > "$scratch" || fail 'Unable to write public UCI plan'
     mv -f "$scratch" "$store/pending" || fail 'Unable to publish preview'
     scratch=
-    if [ "$plan_kind" = migration-source ]; then
+    if [ "$plan_kind" = migration-source ] || [ "$plan_kind" = production-copy ]; then
         fsync "$store/pending" "$store" 2>/dev/null || fail 'Unable to synchronize migration preview' 7
     fi
     printf '{"api_version":1,"prototype":true,"ok":true,"confirmation":"%s","base_revision":%s,"operation":"%s","expires_in":300,"can_commit":true,"service_enabled":false,"credentials_omitted":true,"credential_policy":"%s","scope":"public-uci-v1","changes":%s}\n' "$token" "$head_revision" "$plan_kind" "$credential_policy" "$diff"
@@ -837,6 +849,9 @@ plan_read() {
             migration-source)
                 [ "$persistent_mode" = true ] && [ "$lifecycle_migration_enabled" = true ] && [ "$head_revision" = 1 ] &&
                     number "$plan_source" 2 32 && [ "$plan_source" = "$value" ] || fail 'Invalid lifecycle migration preview' 7;;
+            production-copy)
+                [ "$persistent_mode:$production_copy_mode:$production_copy_enabled" = true:true:true ] && [ "$head_revision" = 1 ] &&
+                    number "$plan_source" 2 32 && [ "$plan_source" = "$value" ] || fail 'Invalid production copy preview' 7;;
             *) fail 'Invalid preview operation';; esac
         if [ "$public_mode" = true ]; then
             IFS= read -r created && IFS= read -r deadline && IFS= read -r plan_boot && IFS= read -r plan_baseline && IFS= read -r plan_digest || fail 'Incomplete public UCI plan'
@@ -854,7 +869,7 @@ plan_read() {
         allocate_scratch
         printf '%s\n' "$plan_public" > "$scratch" || fail 'Unable to inspect preview candidate'
         digest_file "$scratch"; drop_scratch
-        if [ "$plan_kind" = migration ] || [ "$plan_kind" = migration-source ]; then
+        if [ "$plan_kind" = migration ] || [ "$plan_kind" = migration-source ] || [ "$plan_kind" = production-copy ]; then
             validate_generation "$plan_source"
             [ "$validated_parent" = "$head_revision" ] && [ -e "$store/gen-$plan_source/legacy.conf" ] || fail 'Invalid migration candidate'
             [ "$(cat "$store/gen-$plan_source/public.conf")" = "$plan_public" ] || fail 'Migration public candidate changed' 5
@@ -893,7 +908,33 @@ projection_source_check() {
     private_file /etc/config/homegate || fail 'Source configuration must be private' 7
     number "$(stat -c %s /etc/config/homegate)" 1 "$public_limit" || fail 'Source configuration exceeds limit' 7
 }
+production_copy_check() {
+    [ -d /etc/config ] && [ ! -L /etc/config ] || fail 'Unsafe production source parent' 7
+    case "$(stat -c '%u:%a' /etc/config)" in "$owner:700"|"$owner:755") ;; *) fail 'Unsafe production source parent' 7;; esac
+    private_file "$production_copy_source" && number "$(stat -c %s "$production_copy_source")" 1 "$public_limit" || fail 'Production source must be private and bounded' 7
+    private_dir "$production_copy_runtime" && private_file "$production_copy_runtime/frontend.lock" &&
+        [ "$(stat -c %s "$production_copy_runtime/frontend.lock")" -eq 0 ] || fail 'Production source writer lock unavailable' 7
+    [ "$(stat -Lc '%d:%i:%u:%a:%h' /proc/self/fd/5)" = "$(stat -c '%d:%i:%u:%a:%h' "$production_copy_runtime/frontend.lock")" ] || fail 'Production source lock changed' 7
+}
+production_copy_lock() {
+    # Open an existing legacy lock read-only. Never initialize legacy state.
+    private_dir "$production_copy_runtime" && private_file "$production_copy_runtime/frontend.lock" || fail 'Production source writer lock unavailable' 7
+    exec 5<"$production_copy_runtime/frontend.lock" || fail 'Production source lock unavailable' 7
+    flock -n 5 || fail 'Production configuration writer is busy' 4
+    production_copy_check
+}
+production_copy_matches() {
+    production_copy_check
+    migration_identity=$(stat -c '%d:%i:%u:%a:%h:%s' "$production_copy_source") || fail 'Production source identity unavailable' 7
+    private_file "$1" || fail 'Unsafe production source backup' 7
+    digest_file "$1";migration_digest=$digest
+    digest_file "$production_copy_source"
+    [ "$digest" = "$migration_digest" ] || fail 'Production source changed; preview again' 5
+    production_copy_check
+    [ "$migration_identity" = "$(stat -c '%d:%i:%u:%a:%h:%s' "$production_copy_source")" ] || fail 'Production source identity changed' 5
+}
 migration_source_matches() {
+    if [ "$production_copy_mode" = true ];then production_copy_matches "$1";return;fi
     # Source bytes, never caller stdin/paths, are the confirmation authority.
     # Do not chmod, rewrite, remove legacy fields or signal the old daemon.
     projection_source_check
@@ -1059,6 +1100,9 @@ service_transition() {
 [ "$#" -ge 1 ] || fail 'Missing prototype command' 2
 command=$1
 shift
+case "$command" in production-copy-preview|production-copy-commit)
+    [ "$persistent_mode:$production_copy_enabled" = true:true ] || fail 'Production copy is not ready' 2
+    production_copy_mode=true;command=migration-source-${command#production-copy-};; esac
 if [ "$command" = version ]; then
     [ "$#" -eq 0 ] || fail 'Unexpected arguments' 2
     source_root=$(CDPATH= cd "$(dirname "$0")/../../.." && pwd) || fail 'Unable to locate source'
@@ -1095,7 +1139,8 @@ case "$command" in
         [ "$persistent_mode" = true ] && [ "$lifecycle_migration_enabled" = true ] || fail 'Lifecycle migration is not ready' 2
         [ "$#" -eq 1 ] && [ "${#1}" -eq 32 ] || fail 'Expected confirmation handle' 2
         case "$1" in *[!0-9a-f]*) fail 'Invalid confirmation handle' 2;; esac
-        confirmation=$1; source_migration_transaction=true;;
+        confirmation=$1; source_migration_transaction=true
+        if [ "$production_copy_mode" = true ];then application_transaction=true;service_intent_transaction=true;projection_transaction=true;fi;;
     runtime-ddns-recovery-snapshot-read)
         [ "$#" -eq 0 ] && [ "$persistent_mode" = true ] && [ "$ddns_authority_enabled" = true ] && [ "$production_writes_enabled" = true ] && [ "$dns_recovery_read_enabled" = true ] || fail 'Runtime recovery source is not ready' 2;;
     runtime-ddns-snapshot-read)
@@ -1147,6 +1192,7 @@ case "$command" in
     *) fail 'Unsupported prototype command' 2;;
 esac
 open_store
+[ "$production_copy_mode" = false ] || production_copy_lock
 case "$command" in
     runtime-ddns-snapshot-read|runtime-ddns-recovery-snapshot-read|runtime-startup-snapshot-read)
         need_initialized
@@ -1318,11 +1364,16 @@ case "$command" in
         done
         defaults=$(printf '%s\n' '# homegate-backup-format: 2' '# plugin: homegate' '# schema: public-uci-v1' '# secrets: omitted' "config homegate 'main'" | public_parse) || fail 'Unable to check migration baseline'
         [ "$(cat "$store/gen-1/public.conf")" = "$defaults" ] || fail 'Migration baseline is not default configuration' 4
-        if [ "$command" = migration-source-preview ]; then projection_source_check; fi
+        if [ "$command" = migration-source-preview ] && [ "$production_copy_mode" = false ]; then projection_source_check; fi
         begin_generation
         if [ "$command" = migration-source-preview ]; then
+            if [ "$production_copy_mode" = true ];then
+                migration_source_identity=$(stat -c '%d:%i:%u:%a:%h:%s' "$production_copy_source") || fail 'Production source identity unavailable' 7
+                head -c "$((public_limit + 1))" "$production_copy_source" > "$generation_dir/legacy.conf" || fail 'Unable to copy production source' 7
+            else
             migration_source_identity=$(stat -c '%d:%i:%u:%a:%h:%s' /etc/config/homegate) || fail 'Unable to identify migration source' 7
             head -c "$((public_limit + 1))" /etc/config/homegate > "$generation_dir/legacy.conf" || fail 'Unable to capture legacy configuration' 7
+            fi
             migration_source_matches "$generation_dir/legacy.conf"
             [ "$migration_source_identity" = "$migration_identity" ] || fail 'Migration source changed during capture' 5
         else
@@ -1335,6 +1386,7 @@ case "$command" in
         plan_kind=migration; plan_source=$new_revision
         if [ "$command" = migration-source-preview ]; then
             plan_kind=migration-source
+            [ "$production_copy_mode" = false ] || plan_kind=production-copy
             synchronize_generation
             fsync "$store" 2>/dev/null || fail 'Unable to synchronize migration candidate' 7
             migration_source_matches "$generation_dir/legacy.conf"
@@ -1356,12 +1408,14 @@ case "$command" in
         need_initialized
         plan_read
         if [ "$command" = migration-source-commit ]; then
-            [ "$plan_kind" = migration-source ] || fail 'Confirmation is not a lifecycle migration' 5
+            expected_kind=migration-source;[ "$production_copy_mode" = false ] || expected_kind=production-copy
+            [ "$plan_kind" = "$expected_kind" ] || fail 'Confirmation is not a lifecycle migration' 5
             migration_source_matches "$store/gen-$plan_source/legacy.conf"
         else
             [ "$plan_kind" != migration-source ] || fail 'Lifecycle migration requires its fixed confirmation entry' 5
             [ "$persistent_mode:$plan_kind" != true:migration ] || fail 'Unbound persistent migration refused' 5
         fi
+        if [ "$production_copy_mode" = true ];then production_source_lock;sample_service;plan_read;fi
         case "$command" in
             commit-apply-projection) production_source_lock; sample_service; plan_read; projection_transaction=true;;
             commit-apply-observed) sample_service; plan_read;; esac
@@ -1370,13 +1424,13 @@ case "$command" in
             validate_generation "$plan_source"
             [ "$(cat "$store/gen-$plan_source/public.conf")" = "$plan_public" ] || fail 'Rollback config changed'
             copy_source=$plan_source
-        elif [ "$plan_kind" = migration ] || [ "$plan_kind" = migration-source ]; then copy_source=$plan_source
+        elif [ "$plan_kind" = migration ] || [ "$plan_kind" = migration-source ] || [ "$plan_kind" = production-copy ]; then copy_source=$plan_source
         else copy_source=$head_revision; fi
         begin_generation
         printf '%s\n' "$plan_public" > "$generation_dir/public.conf" || fail 'Unable to write candidate config'
         copy_vault "$copy_source"
         [ "$projection_transaction" = false ] || projection_capture
-        if [ "$plan_kind" = migration ] || [ "$plan_kind" = migration-source ]; then
+        if [ "$plan_kind" = migration ] || [ "$plan_kind" = migration-source ] || [ "$plan_kind" = production-copy ]; then
             cp "$store/gen-$plan_source/legacy.conf" "$generation_dir/legacy.conf" || fail 'Unable to retain private migration backup'
         fi
         publish_generation

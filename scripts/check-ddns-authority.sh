@@ -27,8 +27,6 @@ case "$GROUP" in
     echo 'Pinned Lua LuCI to real Shell DDNS authority: 8 private preview/commit/revoke checks passed; no DNS action or production installation'
     python3 "$ROOT/scripts/rpc-ddns-authority-regressions.py" --runtime-dir "$RPC" --http-runtime-dir "$HTTP" --luci-runtime-dir "$LUA"
     echo 'Pinned HTTP/rpcd to real Shell DDNS authority: 11 private scope/ACL/write checks passed; no DNS action or production installation'
-    python3 "$ROOT/scripts/工程网页回归.py" --runtime-dir "$RPC" --http-runtime-dir "$HTTP" --luci-runtime-dir "$LUA"
-    echo 'Engineering native LuCI configuration, private credentials, explicit authority, asynchronous DDNS and finite scheduling: 4 private HTTP end-to-end groups passed'
     ;;
 esac
 case "$GROUP" in

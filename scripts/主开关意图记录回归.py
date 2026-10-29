@@ -23,14 +23,17 @@ class Static(unittest.TestCase):
         self.assertEqual((PROTO/'homegate-lifecycle-prepare.sh').read_text().count('lifecycle_intent_record_enabled=false'),1)
         self.assertNotIn('prototype/',(PROTO.parent/'Makefile').read_text())
     def test_candidate_private_pipe_requires_producer_success_and_record_has_no_raw_candidate(self):
-        body=(PROTO/'homegate-lifecycle-prepare.sh').read_text()
-        self.assertIn('HGSTARTUPCANDIDATESTATUS:%s',body)
-        self.assertIn('candidate_status=$?',body);self.assertIn('HGSTARTUPCANDIDATESTATUS:0',body)
-        payload=body.split('record_payload=$(',1)[1].split('\n',1)[0]
+        body=(PROTO/'homegate-lifecycle-prepare.sh').read_text();binding=(PROTO/'startup-record.sh').read_text()
+        self.assertIn('HGSTARTUPCANDIDATESTATUS:%s',binding)
+        self.assertIn('candidate_status=$?',binding);self.assertIn('HGSTARTUPCANDIDATESTATUS:0',binding)
+        payload=binding.split('record_payload=$(',1)[1].split('\n',1)[0]
         self.assertIn('"$candidate_sum"',payload)
         for forbidden in ['credentials','active_configuration','legacy.conf']:self.assertNotIn(forbidden,payload)
         self.assertIn('(set -C; printf',body);self.assertIn('mv "$record_stage" "$record"',body)
-        self.assertNotRegex(body,r'(?m)^\s*(?:rm|rmdir|chmod|chown|kill|curl|uci|service)\b')
+        self.assertIn('rm -f "$record_path/context"',body);self.assertIn('rmdir "$record_path"',body)
+        old_paths=body.replace('rm -f "$record_path/context"','').replace('rmdir "$record_path"','')
+        self.assertNotRegex(old_paths,r'(?m)^\s*(?:rm|rmdir|chmod|chown|kill|curl|uci|service)\b')
+        self.assertNotIn('rm -r',body)
     def test_persistent_presence_fence_has_no_feature_gate_exception(self):
         body=(PROTO/'homegate-config-prototype.sh').read_text()
         barrier=body.split('# A private main-switch preparation record',1)[1].split('max_revision=0',1)[0]

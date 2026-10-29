@@ -5,6 +5,11 @@
   <p><a class="cbi-button" href="<%=url('admin/services/homegate_engineering/settings/ddns')%>">DDNS 授权与任务</a>
   <button class="cbi-button" id="hg-config-refresh" type="button">刷新</button>
   <button class="cbi-button" id="hg-config-prepare" type="button">初始化独立配置</button></p>
+  <div class="cbi-section"><h3>复制现有 HomeGate 配置</h3>
+    <p>先初始化独立配置，再预览复制现有 HomeGate 配置与秘密；仅可导入空的工程配置库。核对差异后点击“确认复制生产配置”。完整私有备份和原启用意图会保留，工程配置默认关闭；后续明确应用启用意图、授权规则，再启动调度。</p>
+    <p>复制不改变原 HomeGate 配置、服务或开机设置。需要原服务已建立的安全配置写锁；来源变化须重新预览。中断时按已返回的应用句柄续完，避免重复复制。</p>
+    <button class="cbi-button" id="hg-production-copy-preview" type="button">预览现有 HomeGate 配置</button>
+  </div>
   <div class="cbi-section"><h3>DNS 账户</h3><div id="hg-config-accounts"></div>
     <form id="hg-config-account"><div class="cbi-value"><label class="cbi-value-title">账户标识</label><div class="cbi-value-field"><input class="cbi-input-text" name="id" required maxlength="64" pattern="[a-zA-Z0-9_-]+" /></div></div>
     <div class="cbi-value"><label class="cbi-value-title">名称</label><div class="cbi-value-field"><input class="cbi-input-text" name="name" maxlength="128" /></div></div>
@@ -42,8 +47,51 @@
     <button class="cbi-button" id="hg-config-finish" type="button" disabled>继续完成已确认变更</button>
     <button class="cbi-button cbi-button-reset" id="hg-config-cancel" type="button">取消待确认变更</button>
   </div>
-  <div class="cbi-section"><h3>有界自动 DDNS</h3>
-    <p>先在 DDNS 页面明确授权规则，再启动一次调度，最多 15 分钟、8 个批次。网络事件只唤醒当前会话；接口断开请求停止。不会开机自动启动、自动延长或自动清除未知结果。</p>
+  <p><button class="cbi-button cbi-button-reset" id="hg-config-recover" type="button">恢复应用前配置</button> 应用中断且没有取得句柄时，明确恢复到应用前的工程配置；若有未决 DNS 操作，先按原维护流程处理。</p>
+  <div class="cbi-section"><h3>ACME DNS-01 证书</h3>
+    <p>先保存 DNS 账户和私有凭据，再预览并确认 ACME 证书配置。默认使用 Let’s Encrypt 测试环境；正式环境须在配置中明确选择。应用启用意图后手动签发，不要求 DDNS 规则写权。先停止 DDNS 调度；任务期间配置和凭据写入互斥。</p>
+    <form id="hg-acme-certificate"><input class="cbi-input-text" name="id" required maxlength="64" placeholder="证书标识" /><input class="cbi-input-text" name="name" maxlength="128" placeholder="名称" /><input class="cbi-input-text" name="account" required maxlength="64" placeholder="DNS 账户标识" /><input class="cbi-input-text" name="zone" required maxlength="253" placeholder="根域名" /><input class="cbi-input-text" name="domains" required maxlength="8192" placeholder="example.com,*.example.com" /><input class="cbi-input-text" name="email" maxlength="512" placeholder="CA 账户邮箱（可选）" /><select class="cbi-input-select" name="environment"><option value="staging">测试</option><option value="production">正式</option></select><button class="cbi-button" type="submit">预览 ACME 配置</button></form>
+    <form id="hg-acme-task" onsubmit="return false"><input class="cbi-input-text" name="id" maxlength="64" placeholder="证书标识" /><input class="cbi-input-text" name="job" maxlength="32" placeholder="任务标识，刷新页面后可粘贴查询" /></form>
+    <button class="cbi-button cbi-button-apply" id="hg-acme-issue" type="button">签发证书</button><button class="cbi-button" id="hg-acme-renew" type="button">检查并续签</button><button class="cbi-button" id="hg-acme-status" type="button">查看签发任务</button><button class="cbi-button" id="hg-acme-stop" type="button">停止任务</button><button class="cbi-button" id="hg-acme-cleanup" type="button">清理已确认挑战</button>
+    <p><button class="cbi-button cbi-button-apply" id="hg-acme-schedule-start" type="button">启动定时续签</button><button class="cbi-button" id="hg-acme-schedule-status" type="button">查看续签会话</button><button class="cbi-button" id="hg-acme-schedule-stop" type="button">停止续签会话</button><button class="cbi-button" id="hg-acme-schedule-reap" type="button">收起已结束会话</button></p>
+    <p>明确启动后，每小时检查上方证书标识；未到期不下单、不新增任务。会话与手动签发及 DDNS 调度互斥，主开关禁用先停止会话。失败或未知结果停止本会话，重启后不自动重下订单；已知挑战可明确清理，未知写入按原恢复流程核对。收起会话不删除证书、账户、任务或回执。</p>
+    <p>任务最长15分钟；成功完成 TXT 清理并校验证书后才成对发布。预先存在的相同 TXT 不删除，其他 TXT 保持；未知写入保留原恢复屏障，不能重复下单或猜测清理。失败和中断不替换原证书。无开机、cron 或组件自动升级，不自动重载服务。</p>
+  </div>
+  <div class="cbi-section"><h3>本地证书</h3>
+    <p>先预览并确认本地证书配置。导入须证书未过期、已生效、私钥匹配，DNS SAN 与配置域名集合完全一致；域名之间用英文逗号分隔，通配符作为独立身份核对。此处保存材料，不自动重载服务；不检查公共 CA 信任链。</p>
+    <form id="hg-local-certificate"><input class="cbi-input-text" name="id" required maxlength="64" placeholder="证书标识" /><input class="cbi-input-text" name="name" maxlength="128" placeholder="名称" /><input class="cbi-input-text" name="domains" required maxlength="8192" placeholder="example.com,*.example.com" /><button class="cbi-button" type="submit">预览本地证书配置</button></form>
+    <form id="hg-certificate-import" autocomplete="off"><input class="cbi-input-text" name="id" required maxlength="64" placeholder="证书标识" />
+    <div class="cbi-value"><label class="cbi-value-title">完整证书链 PEM</label><div class="cbi-value-field"><textarea class="cbi-input-textarea" name="certificate_pem" required maxlength="65536" rows="4"></textarea></div></div>
+    <div class="cbi-value"><label class="cbi-value-title">未加密私钥 PEM</label><div class="cbi-value-field"><textarea class="cbi-input-textarea" name="private_key_pem" required maxlength="16384" rows="4" autocomplete="off"></textarea></div></div>
+    <button class="cbi-button cbi-button-save" type="submit">校验并导入证书对</button></form>
+    <button class="cbi-button" id="hg-certificate-status" type="button">查看证书状态</button><button class="cbi-button" id="hg-certificate-resume" type="button">续完候选导入</button><button class="cbi-button" id="hg-certificate-cancel" type="button">取消保留候选</button>
+    <p>校验失败保留原证书对。修正材料前可明确取消候选；中断后续完会重新核对来源与材料。最多保留 16 个工程证书对历史，不替代生产证书目录。DNS-01 签发和定时续签见上方证书入口。</p>
+  </div>
+  <div class="cbi-section"><h3>网站代理</h3>
+    <p>先预览并确认规则，再保存私有上游地址并发布当前配置。应用启用意图后，明确选择规则启动；默认工程 HTTP / HTTPS 端口为 10080 / 10443。变更配置前先停止并收起会话。</p>
+    <form id="hg-web-rule"><input class="cbi-input-text" name="id" required maxlength="64" placeholder="规则标识" /><input class="cbi-input-text" name="domain" required maxlength="253" placeholder="网站域名，支持 *.example.com" /><select class="cbi-input-select" name="https"><option value="1">HTTPS</option><option value="0">HTTP</option></select><input class="cbi-input-text" name="certificate" maxlength="64" placeholder="证书标识，留空自动选择" /><button class="cbi-button" type="submit">预览代理规则</button></form>
+    <form id="hg-web-target" autocomplete="off"><input class="cbi-input-text" name="id" required maxlength="64" placeholder="规则标识" /><input class="cbi-input-text" name="value" required maxlength="4096" autocomplete="off" placeholder="私有上游 URL" /><button class="cbi-button" type="submit">保存私有上游</button></form>
+    <form id="hg-proxy-run" onsubmit="return false"><input class="cbi-input-text" name="selection" maxlength="512" placeholder="规则标识，英文逗号分隔，最多16条" /><select class="cbi-input-select" name="policy"><option value="open">允许访问（仍执行黑名单）</option><option value="allow">仅手动白名单</option></select></form>
+    <button class="cbi-button cbi-button-apply" id="hg-proxy-start" type="button">启动代理</button><button class="cbi-button" id="hg-proxy-status" type="button">查看状态</button><button class="cbi-button" id="hg-proxy-stop" type="button">停止代理</button><button class="cbi-button" id="hg-proxy-reap" type="button">收起会话</button>
+    <p>证书发布后自动平滑重载，新连接核对通过后使用新证书，已有连接继续；候选失败保留旧证书并退避重试，旧证书失效时停止。当前支持 HTTP / HTTPS 上游和 WebSocket；HTTPS 上游须为证书可验证的域名。CN 放行需先取得有效双栈地址库；启动时冻结库快照，更新后重启会话采用新库。黑名单优先，手动白名单与 CN 可并用；防火墙自动配置尚未接通。状态不代表端到端健康检查。</p>
+  </div>
+  <div class="cbi-section"><h3>访问管理</h3>
+    <form id="hg-access-policy"><div class="cbi-value"><label class="cbi-value-title">手动白名单</label><div class="cbi-value-field"><textarea class="cbi-input-textarea" name="allow" maxlength="4096" rows="2" placeholder="IP 或 CIDR，用空格分隔"></textarea></div></div><div class="cbi-value"><label class="cbi-value-title">手动黑名单</label><div class="cbi-value-field"><textarea class="cbi-input-textarea" name="deny" maxlength="4096" rows="2"></textarea></div></div><select class="cbi-input-select" name="region"><option value="">仅手动白名单</option><option value="CN">CN 登记分配网段</option></select><button class="cbi-button" type="submit">预览访问规则</button></form>
+    <p>确认规则后，在网站代理中选择“仅手动白名单”启用限制；CN 与手动白名单命中任一即可放行，黑名单始终优先。“允许访问”仍执行黑名单。CN 表示 APNIC 登记分配网段，不是终端实时位置。</p>
+    <button class="cbi-button" id="hg-access-update" type="button">检查更新</button><button class="cbi-button" id="hg-access-refresh" type="button">强制更新</button><button class="cbi-button" id="hg-access-status" type="button">查看库状态</button><button class="cbi-button" id="hg-access-stop" type="button">停止下载</button><button class="cbi-button" id="hg-access-reap" type="button">收起任务</button>
+    <p>有效库7天内直接复用；下载在后台进行，主源失败尝试镜像。全文件记录总数、分类汇总和双栈网段验证通过后才发布；失败保留原库，无有效库时 CN 限制拒绝启动。代理运行中更新不改变当前快照，重启会话后生效。</p>
+    <button class="cbi-button" id="hg-access-recent" type="button">最近访问</button><button class="cbi-button" id="hg-access-clear_denied" type="button">清理拒绝</button><button class="cbi-button" id="hg-access-clear" type="button">清理全部</button><div id="hg-access-recent"></div>
+    <p>最近64个来源与域名组合，重复访问合并计数；记录实际访问时的判断，不代表当前策略重评。仅在内存运行态保存，不记录请求路径、查询串、Token 或上游地址。观察采用尽力传递，过载可能丢失；清理不改变规则。未完成的长连接在结束时才产生记录。</p>
+  </div>
+  <div class="cbi-section"><h3>主开关意图</h3>
+    <p>应用启用意图不会代替规则授权，也不会自动启动。切换意图会撤销旧授权，启用后须重新明确授权规则。禁用会先请求合作停止；执行或恢复未完成时，待处理完毕后重试。</p>
+    <button class="cbi-button cbi-button-apply" id="hg-lifecycle-enable" type="button">应用启用意图</button>
+    <button class="cbi-button" id="hg-lifecycle-disable" type="button">禁用并撤权</button>
+    <button class="cbi-button" id="hg-lifecycle-status" type="button">查看主开关意图</button>
+  </div>
+  <div class="cbi-section"><h3>自动 DDNS 调度</h3>
+    <p>先在 DDNS 页面明确授权规则，再选择持续运行或一次有界调度（最多15分钟、8批次）。持续运行按原节流执行；网络事件只唤醒当前会话，接口断开请求停止。不会开机自动启动、自动重开或自动清除未决写入。</p>
+    <button class="cbi-button cbi-button-apply" id="hg-schedule-serve" type="button">启动持续运行</button>
     <button class="cbi-button cbi-button-apply" id="hg-schedule-start" type="button">启动一次有界调度</button>
     <button class="cbi-button" id="hg-schedule-status" type="button">查看调度状态</button>
     <button class="cbi-button" id="hg-schedule-stop" type="button">请求停止</button>

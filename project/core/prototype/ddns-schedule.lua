@@ -12,17 +12,21 @@ local function keys(d,n,allowed)
     local count=0;for k in pairs(d) do if not allowed[k] then return false end;count=count+1 end;return count==n
 end
 function M.lease(d)
-    return keys(d,11,{schema=true,identity=true,generation=true,grant=true,revision=true,boot=true,pid=true,birth=true,token=true,started=true,deadline=true}) and
+    local continuous=type(d)=='table' and d.continuous==true
+    if type(d)=='table' and d.continuous~=nil and not continuous then return false end
+    return keys(d,continuous and 12 or 11,{continuous=true,schema=true,identity=true,generation=true,grant=true,revision=true,boot=true,pid=true,birth=true,token=true,started=true,deadline=true}) and
         d.schema=='HGDDNSSCHEDULE1' and hex(d.identity,64) and hex(d.generation,64) and hex(d.grant,64) and integer(d.revision,1,32) and
         type(d.boot)=='string' and #d.boot==36 and d.boot:match('^[0-9a-f-]+$') and digits(d.pid,9) and tonumber(d.pid)>=2 and digits(d.birth,20) and hex(d.token,32) and
-        integer(d.started,0,999999099) and d.deadline==d.started+M.budget
+        integer(d.started,0,999999099) and d.deadline==(continuous and 0 or d.started+M.budget)
 end
 function M.report(d)
-    return keys(d,12,{api_version=true,prototype=true,ok=true,phase=true,running=true,status=true,reason=true,ticks=true,last_effect=true,effect=true,write_ready=true,admission_limit=true}) and
+    local continuous=type(d)=='table' and d.continuous==true
+    if type(d)=='table' and d.continuous~=nil and not continuous then return false end
+    return keys(d,continuous and 13 or 12,{continuous=true,api_version=true,prototype=true,ok=true,phase=true,running=true,status=true,reason=true,ticks=true,last_effect=true,effect=true,write_ready=true,admission_limit=true}) and
         d.api_version==1 and d.prototype==true and type(d.ok)=='boolean' and d.phase=='ddns-schedule' and type(d.running)=='boolean' and
         (d.status=='idle' or d.status=='running' or d.status=='waiting' or d.status=='stopping' or d.status=='finished' or d.status=='interrupted') and
-        reasons[d.reason] and integer(d.ticks,0,M.limit) and (d.last_effect=='none' or d.last_effect=='confirmed' or d.last_effect=='unknown') and
-        d.effect=='none' and d.write_ready==false and d.admission_limit==M.limit
+        reasons[d.reason] and integer(d.ticks,0,continuous and 2147483647 or M.limit) and (d.last_effect=='none' or d.last_effect=='confirmed' or d.last_effect=='unknown') and
+        d.effect=='none' and d.write_ready==false and d.admission_limit==(continuous and 0 or M.limit)
 end
 function M.decision(rows)
     if type(rows)~='table' or #rows<1 or #rows>32 then return nil end

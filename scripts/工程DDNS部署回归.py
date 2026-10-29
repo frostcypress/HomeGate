@@ -11,10 +11,12 @@ class Deployment(unittest.TestCase):
         for name in ['homegate-config-prototype.sh','homegate-service-observer-watchdog.sh']:
             self.assertIn(b'service_actions_enabled=false',generated['project/core/prototype/'+name])
         self.assertIn(b'ddns_schedule_enabled=true',generated['project/core/prototype/homegate-ddns-schedule.sh'])
+        self.assertIn(b'ddns_schedule_continuous_enabled=true',generated['project/core/prototype/homegate-ddns-schedule.sh'])
+        self.assertIn(b'ddns_schedule_continuous_enabled=false',(ROOT/'project/core/prototype/homegate-ddns-schedule.sh').read_bytes())
         self.assertNotIn(b'sha256sum -c',generated['project/core/prototype/homegate-ddns-schedule.sh'])
         self.assertIn(b'[ "$public_binding" = "$public_actual" ]',generated['project/core/prototype/homegate-ddns-schedule.sh'])
         self.assertIn(b'ddns_schedule_events_enabled=false',(ROOT/'project/core/prototype/homegate-ddns-schedule.sh').read_bytes())
-        self.assertIn(b'lifecycle_intent_record_enabled=false',generated['project/core/prototype/homegate-lifecycle-prepare.sh'])
+        self.assertIn(b'lifecycle_intent_record_enabled=true',generated['project/core/prototype/homegate-lifecycle-prepare.sh'])
     def test_deployed_shell_lua_grammar_and_fixed_namespace(self):
         from lupa.lua51 import LuaRuntime
         lua=LuaRuntime()
@@ -25,6 +27,10 @@ class Deployment(unittest.TestCase):
                 self.assertEqual(proc.returncode,0,(name,proc.stderr))
             elif name.endswith('.lua'):lua.compile(raw)
             if name.startswith('project/core/prototype/'):
+                if name.endswith('/homegate-config-prototype.sh'):
+                    self.assertIn(b'production_copy_source=/etc/config/homegate\n',raw)
+                    self.assertIn(b'production_copy_runtime=/var/run/homegate\n',raw)
+                    raw=raw.replace(b'production_copy_source=/etc/config/homegate\n',b'').replace(b'production_copy_runtime=/var/run/homegate\n',b'')
                 self.assertNotRegex(raw,rb'/etc/(?:config/homegate|homegate)(?:[\s/\'";]|$)',name)
                 self.assertNotRegex(raw,rb'/var/run/homegate(?:[\s/\'";]|$)',name)
     def test_target_and_dependencies_match_manual_business_scope(self):
@@ -62,6 +68,6 @@ class Deployment(unittest.TestCase):
         self.assertIn(b'/homegate-engineering/ddns-ui.js',view)
         controller=(ROOT/'packaging/engineering/files/controller.lua').read_text()
         self.assertIn("post('config_'..action)",controller)
-        self.assertIn("length>32768",controller)
+        self.assertIn("action=='cert_import' and 262144 or 32768",controller)
 
 if __name__=='__main__':unittest.main(verbosity=2)

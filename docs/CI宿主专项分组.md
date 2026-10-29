@@ -96,3 +96,11 @@ CLI注册185运行场景，lifecycle77、dns32、network-config21、health-recov
 ## r136 主开关意图准备记录本地增量
 
 CLI注册201运行，lifecycle93、dns32、network-config21、health-recovery31、ddns-recovery24；静态54仅一次。新记录16运行/3静态进入原lifecycle组，20 extended/6 native/27必需检查与原时限保持；本轮只本地新增及受影响21项，不提前CI。
+
+## r151 工程完整接合独立分组（2026-10-29，当前配置）
+
+新增 engineering 作业9组：核心/配置/意图10、生产复制4、证书4、ACME提供商5、ACME失败4、定时续期8、代理6、重载4、访问4，共工程网页35和代理14场景。`engineering-ci.py` 逐场景调用原测试，保留原90秒私有隔离上限及单UID/cap-drop ALL；每组仍25分钟，失败即停本组、其他组继续出证据。仅代理相关3组准备固定nginx及测试专用同凭据适配库；该库不入IPK、不增加身份/能力。
+
+原 authority 组不再调用未分组的整个工程网页脚本，避免重复执行和随场景增加而超时；原提供商22脚本仍保持相对顺序及原分组。新分组覆盖合同对照实际两个测试入口的全部 choices 检查互斥完备，并逐命令注入失败确认停止、核对准备顺序、非法组拒绝和构建依赖。源码作业另执行地址库纯模型回归。
+
+工作流必需源码检查预期36项：source1 + extended20 + native6 + engineering9。build须依赖全部四类成功；SDK/发布仍仅明确 workflow_dispatch 模式触发。第10步只完成本地收尾并标CI到期，不固定构建三包。新增入口本地核对不代表远端已通过；本轮没有CI投递/查询。目标TLS组件、QWRT ABI/worker/资源及公网边界仍待验。

@@ -12,7 +12,7 @@ import zipfile
 from project import ROOT, identity, verify_generated
 
 DOCS = ('接续.md', '校验.md', '核实查漏修复.md')
-SOURCE_DIRS = ('.github', 'project', 'scripts', 'packaging', 'legal', 'targets', 'docs')
+SOURCE_DIRS = ('.github', 'project', 'scripts', 'packaging', 'legal', 'targets', 'docs', 'third_party')
 SOURCE_FILES = ('PROJECT_ID', 'VERSION', 'RELEASE', 'project.json', 'homegate-version.mk',
                 'Makefile', 'README.md', 'LICENSE', 'THIRD_PARTY_NOTICES', '.gitattributes', '.gitignore',
                 '公开文件清单.json')

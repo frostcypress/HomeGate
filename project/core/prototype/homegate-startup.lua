@@ -63,13 +63,20 @@ if mode=='request-report' or mode=='candidate-body' then
 end
 if mode=='record-report' then
     if (arg[3]~='enabled' and arg[3]~='disabled') or (arg[4]~='staged' and arg[4]~='prepared') or
-       (arg[5]~='save' and arg[5]~='resume' and arg[5]~='check') or arg[6] then os.exit(7) end
-    io.write(codec.json({api_version=1,prototype=true,ok=true,version=version(),phase='lifecycle-intent-record',
+       (arg[5]~='save' and arg[5]~='resume' and arg[5]~='check' and arg[5]~='apply' and arg[5]~='cancel') or arg[6] then os.exit(7) end
+    local report={api_version=1,prototype=true,ok=true,version=version(),phase='lifecycle-intent-record',
         scope='private-main-switch-preparation-record',configuration_revision=tonumber(revision),requested_state=arg[3],
         record_state=arg[4],durability_reconfirmed=arg[5]~='check',intent_persisted=true,candidate_persisted=false,
         source_bound=true,point_in_time=true,requires_apply_revalidation=true,apply_authorized=false,start_authorized=false,
         configuration_changed=false,daemon_started=false,readers_switched=false,production_ready=false,write_ready=false,
-        effect=arg[5]=='check' and 'runtime-metadata-preparation' or 'private-intent-record'})..'\n');return
+        effect=arg[5]=='check' and 'runtime-metadata-preparation' or 'private-intent-record'}
+    if arg[5]=='apply' or arg[5]=='cancel' then
+        report.intent_applied=arg[5]=='apply';report.record_cancelled=arg[5]=='cancel'
+        if arg[5]=='apply' then report.active_overlay=true;report.main_enabled=arg[3]=='enabled' end
+        report.intent_persisted=arg[5]=='apply';report.record_state=arg[5]=='apply' and 'active' or 'absent'
+        report.scope='private-main-switch-overlay';report.effect=arg[5]=='apply' and 'private-main-switch-overlay' or 'private-intent-cancel'
+    end
+    io.write(codec.json(report)..'\n');return
 end
 if mode~='report' or not d or arg[4] then os.exit(7) end
 io.write(codec.json({api_version=1,prototype=true,ok=true,version=version(),

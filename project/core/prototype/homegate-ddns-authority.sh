@@ -31,7 +31,21 @@ for fd in 6 7; do
     fi
     flock -n "$fd" || fail 4
 done
-ash "$dir/homegate-config-prototype.sh" --persistent writer-check >/dev/null 2>/dev/null || fail 4
+# Explicit revocation/cancellation remain possible behind a main-switch
+# preparation fence. The same source and all DNS/application fences hold.
+validation=writer-check
+case "$action" in revoke|cancel)
+ if exists "$store/startup-intent" || exists "$store/.startup-intent-next" || exists "$store/.startup-active-next";then validation=runtime-startup-snapshot-read;fi;; esac
+if [ "$validation" = runtime-startup-snapshot-read ];then
+ validated=$(
+  exec 5>&1
+  { ash "$dir/homegate-config-prototype.sh" --persistent "$validation" 3>&1 >/dev/null 2>/dev/null;printf '%s\n' "$?" >&5; } | cat >/dev/null
+ )
+ [ "$validated" = 0 ] || fail 4
+else ash "$dir/homegate-config-prototype.sh" --persistent writer-check 3>/dev/null >/dev/null 2>/dev/null || fail 4;fi
+if [ -e "$store/startup-active" ] || [ -L "$store/startup-active" ];then
+ case "$action" in revoke|cancel) ;; *) ash "$dir/homegate-startup-active.sh" check >/dev/null 2>/dev/null || fail 4;; esac
+fi
 body() { printf '%s\n' "$format" "$state" "$identity" "$revision" "$generation" "$source_hash" "$rule" "$nonce" "$boot" "$created" "$previous"; }
 framed() { frame=$(body) || return 1;digest=$(printf '%s\n' "$frame" | sha256sum) || return 1;printf '%s\n' "$frame" "${digest%% *}"; }
 read_record() {

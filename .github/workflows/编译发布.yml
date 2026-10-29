@@ -43,7 +43,9 @@ jobs:
           python3 scripts/重构回归.py
           python3 scripts/CI依赖归档回归.py
       - name: 验证宿主专项分组与失败阻断
-        run: python3 scripts/ci-native-groups-regressions.py
+        run: |
+          python3 scripts/ci-native-groups-regressions.py
+          python3 scripts/engineering-ci-regressions.py
       - name: 检查 Shell 语法
         run: |
           find scripts project/core/files project/core/prototype -type f -name '*.sh' -print0 | xargs -0 -r -n1 sh -n
@@ -111,7 +113,9 @@ jobs:
           build/verify-venv/bin/python scripts/持久旧配置迁移回归.py
           build/verify-venv/bin/python scripts/持久旧配置迁移回归.py --runtime
       - name: 验证工程DDNS固定部署范围与语法
-        run: build/verify-venv/bin/python scripts/工程DDNS部署回归.py
+        run: |
+          build/verify-venv/bin/python scripts/工程DDNS部署回归.py
+          build/verify-venv/bin/python scripts/访问地址库回归.py
       - name: 验证生命周期运行锁与持久准备
         run: |
           build/verify-venv/bin/python scripts/生命周期准备回归.py
@@ -287,9 +291,32 @@ jobs:
         if: matrix.group == 'receipts-cloudflare'
         timeout-minutes: 10
         run: python3 scripts/rpc-ddns-archive-regressions.py
+  engineering:
+    name: 工程完整接合回归 · ${{ matrix.group }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        group: [engineering-core, engineering-copy, engineering-certificate, engineering-acme-providers, engineering-acme-failure, engineering-acme-schedule, engineering-proxy, engineering-proxy-reload, engineering-access]
+    steps:
+      - name: 检出相同源码
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: 准备固定隔离测试依赖
+        run: sh scripts/准备扩展CI环境.sh
+      - name: 准备原生组件构建依赖
+        run: sudo apt-get install --no-install-recommends -y cmake pkg-config libcrypt-dev bubblewrap zstd
+      - name: 核实私有隔离前置
+        run: python3 scripts/prepare-ci-isolation.py
+      - name: 准备固定宿主运行时
+        run: build/verify-venv/bin/python scripts/engineering-ci.py '${{ matrix.group }}' --prepare
+      - name: 验证本组真实接合与失败路径
+        run: build/verify-venv/bin/python scripts/engineering-ci.py '${{ matrix.group }}'
   build:
     name: 已核实 SDK 三包构建
-    needs: [source, extended, native]
+    needs: [source, extended, native, engineering]
     if: github.event_name == 'workflow_dispatch' && inputs.mode != '仅检查源码'
     runs-on: ubuntu-24.04
     timeout-minutes: 60

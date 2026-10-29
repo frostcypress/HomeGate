@@ -1,0 +1,20 @@
+{
+  "name": "acme.sh",
+  "version": "3.1.6",
+  "repository": "https://github.com/acmesh-official/acme.sh",
+  "release": "https://github.com/acmesh-official/acme.sh/releases/tag/3.1.6",
+  "commit": "807da6498377ee5e0cf43a78091f46f12dc59a89",
+  "tag": "3.1.6",
+  "upstream_tag_SSH_signature_verified": true,
+  "signer": "github@neilpang.com",
+  "fingerprint": "SHA256:M60qVafm/NUywQHXAkoQcj2v6KgkfrdSXv6mPejUUeE",
+  "trust_anchor": "allowed_signers fetched from same official HTTPS repository; not an independent identity audit",
+  "license": "GPL-3.0",
+  "files_sha256": {
+    "acme.sh": "c7d68b021cfd6380ea83a82962abde5b484779fee0b97d38681dfa1396bbc8d7",
+    "LICENSE.md": "3972dc9744f6499f0f9b2dbf76696f2ae7ad8af9b23dde66d6af86c9dfb36986",
+    "allowed_signers": "8522e614de31e4e36d1c11e45d90721013b37f91bc3d9aa437fe1844d83400fa"
+  },
+  "upstream_script_modified": false,
+  "installer_or_cron_executed": false
+}

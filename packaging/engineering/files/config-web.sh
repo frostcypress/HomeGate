@@ -21,21 +21,47 @@ action=${parsed%%:*};payload=${parsed#*:};rc=0
 cleanup() { [ ! -f "$work/current" ] || rm -f "$work/current"; }
 trap cleanup EXIT
 case "$action" in
+ access_status|access_recent) raw=$(ash "$entry" "access-${action#access_}") || rc=$?;;
+ access_update|access_refresh|access_clear|access_clear_denied|access_stop|access_reap)
+  command="access-${action#access_}";[ "$action" != access_clear_denied ] || command=access-clear-denied
+  raw=$(ash "$entry" "$command" --confirm) || rc=$?;;
+ proxy_start) selection=${payload%%:*};policy=${payload#*:};raw=$(ash "$entry" proxy-start "$selection" "$policy" --confirm) || rc=$?;;
+ proxy_status) raw=$(ash "$entry" proxy-status) || rc=$?;;
+ proxy_stop|proxy_reap) raw=$(ash "$entry" "proxy-${action#proxy_}" --confirm) || rc=$?;;
+ web_target_put) raw=$(lua "$base/config-web.lua" payload | ash "$entry" web-target-put "$payload" --confirm) || rc=$?;;
  read)
   raw=$(ash "$entry" config-export) || fail
   printf '%s\n' "$raw" | lua "$base/config-web.lua" read || fail;exit $?;;
+ acme_schedule_start) raw=$(ash "$entry" acme-schedule-start "$payload" --confirm) || rc=$?;;
+ acme_schedule_status) raw=$(ash "$entry" acme-schedule-status) || rc=$?;;
+ acme_schedule_stop|acme_schedule_reap) raw=$(ash "$entry" "acme-schedule-${action#acme_schedule_}" --confirm) || rc=$?;;
+ acme_issue|acme_renew)
+  id=${payload%%:*};job=${payload#*:}
+  raw=$(ash "$entry" "acme-${action#acme_}" "$id" "$job" --confirm) || rc=$?;;
+ acme_status) raw=$(ash "$entry" acme-job "$payload") || rc=$?;;
+ acme_stop|acme_cleanup) raw=$(ash "$entry" "acme-${action#acme_}" "$payload" --confirm) || rc=$?;;
+ cert_status) raw=$(ash "$entry" cert-status "$payload") || rc=$?;;
+ cert_resume|cert_cancel) raw=$(ash "$entry" "cert-${action#cert_}" "$payload" --confirm) || rc=$?;;
+ cert_import)
+  candidate=$(lua "$base/config-web.lua" payload) || fail 2
+  raw=$(printf '%s' "$candidate" | ash "$entry" cert-import "$payload" --confirm) || rc=$?;;
  provider_status) raw=$(ash "$entry" dns-provider-status "$payload") || rc=$?;;
  zones) raw=$(ash "$entry" dns-zones "$payload") || rc=$?;;
  delete_rule) raw=$(ash "$entry" ddns-delete "$payload" --confirm) || rc=$?;;
+ recover) raw=$(ash "$entry" config-recover --confirm) || rc=$?;;
+ production_copy_preview) raw=$(ash "$entry" production-copy-preview) || rc=$?;;
+ production_copy_commit) raw=$(ash "$entry" production-copy-commit "$payload") || rc=$?;;
  prepare) raw=$(ash "$entry" prepare) || rc=$?;;
+ lifecycle_status) raw=$(ash "$entry" lifecycle-status) || rc=$?;;
+ lifecycle_enable|lifecycle_disable) raw=$(ash "$entry" "lifecycle-${action#lifecycle_}" --confirm) || rc=$?;;
  schedule_status) raw=$(ash "$entry" schedule-status) || rc=$?;;
- schedule_start|schedule_stop|schedule_reap) raw=$(ash "$entry" "schedule-${action#schedule_}" --confirm) || rc=$?;;
+ schedule_serve|schedule_start|schedule_stop|schedule_reap) raw=$(ash "$entry" "schedule-${action#schedule_}" --confirm) || rc=$?;;
  cancel) raw=$(ash "$entry" config-cancel) || rc=$?;;
  activate_preview) raw=$(ash "$entry" activate-preview) || rc=$?;;
  apply|finish)
   command=config-commit;[ "$action" != finish ] || command=config-finish
   raw=$(ash "$entry" "$command" "$payload") || rc=$?;;
- preview_account|preview_rule)
+ preview_access|preview_web_rule|preview_account|preview_rule|preview_local_certificate|preview_acme_certificate)
   (set -C; : > "$work/current") || fail
   ash "$entry" config-export > "$work/current" || fail
   private_file "$work/current" && [ "$(stat -c %s "$work/current")" -le 262144 ] || fail

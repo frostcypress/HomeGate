@@ -77,7 +77,7 @@ startup_store_stamp() {
 }
 [ "$#" -ge 1 ] || fail 'Expected a lifecycle preparation command' 2
 case "$1" in
-    intent-check|record-save|record-resume|record-check) [ "$#" -eq 3 ] && [ "$3" = --confirm ] || fail 'Explicit intent confirmation required' 2
+    intent-check|record-save|record-resume|record-check|record-apply|record-cancel) [ "$#" -eq 3 ] && [ "$3" = --confirm ] || fail 'Explicit intent confirmation required' 2
         case "$2" in enabled|disabled) desired=$2;; *) fail 'Invalid requested state' 2;; esac;;
     *) [ "$#" -eq 1 ] || fail 'Expected one lifecycle preparation command' 2;;
 esac
@@ -85,7 +85,7 @@ case "$1" in prepare) bootstrap_action=bootstrap;; resume) bootstrap_action=resu
     startup) bootstrap_action=bootstrap;startup=true;phase=lifecycle-startup;;
     intent) startup=true;source_only=true;phase=lifecycle-source-intent;;
     intent-check) bootstrap_action=bootstrap;startup=true;intent_check=true;phase=lifecycle-intent-check;;
-    record-save|record-resume|record-check) startup=true;intent_check=true;record_action=${1#record-};phase=lifecycle-intent-record;;
+    record-save|record-resume|record-check|record-apply|record-cancel) startup=true;intent_check=true;record_action=${1#record-};phase=lifecycle-intent-record;;
     *) fail 'Unsupported lifecycle preparation command' 2;; esac
 [ "$runtime_prepare_enabled" = true ] || fail 'Lifecycle preparation is not ready' 2
 [ "$startup" = false ] || [ "$lifecycle_startup_enabled" = true ] || fail 'Startup preparation is not ready' 2
@@ -158,6 +158,7 @@ exec 9>>"$schedule_lock" || fail 'Unable to open schedule lock'
 schedule_binding || fail 'Unsafe schedule lock'
 flock -n 9 || fail 'Schedule admission is active' 4
 schedule_binding || fail 'Schedule lock identity changed'
+! present "$runtime/proxy" || fail 'Proxy control requires explicit stop and reap' 4
 ! present "$runtime/ddns-schedule" || fail 'Schedule control requires explicit stop and reap' 4
 for pending in "$runtime/".dns-check-* "$runtime/".ddns-plan-*; do
     ! present "$pending" || fail 'DDNS work requires explicit recovery' 4
@@ -233,29 +234,8 @@ if [ "$startup" = true ]; then
         record="$store/startup-intent";record_stage="$store/.startup-intent-next"
         # Candidate bytes enter only the hash pipe. A separate FD carries the
         # producer result: portable ash must not accept the hash of a failure.
-        candidate_result=$(
-            exec 3>&1
-            {
-                snapshot | lua "$dir/homegate-startup.lua" candidate-body "$revision" "$configuration" "$desired" 3>&- 4>&- 5>&- 6>&- 7>&- 8>&- 9>&-
-                candidate_status=$?
-                printf 'HGSTARTUPCANDIDATESTATUS:%s\n' "$candidate_status" >&3
-            } | sha256sum
-        ) || fail 'Intent candidate digest unavailable'
-        candidate_status=HGSTARTUPCANDIDATESTATUS:0
-        newline='
-'
-        case "$candidate_result" in
-            "$candidate_status$newline"*) candidate_sum=${candidate_result#"$candidate_status$newline"};;
-            *"$newline$candidate_status") candidate_sum=${candidate_result%"$newline$candidate_status"};;
-            *) fail 'Intent candidate producer failed';;
-        esac
-        case "$candidate_sum" in *'  -') candidate_sum=${candidate_sum%'  -'};; *) fail 'Invalid candidate digest';; esac
-        case "$candidate_sum" in ''|*[!0-9a-f]*) fail 'Invalid candidate digest';; esac
-        [ "${#candidate_sum}" -eq 64 ] || fail 'Invalid candidate digest'
-        record_payload=$(printf '%s\n' HGSTARTUPINTENT1 homegate "$revision" "$desired" "$configuration" "$source_stamp" "$store_stamp" "$candidate_sum")
-        record_sum=$(printf '%s\n' "$record_payload" | sha256sum) || fail 'Intent record checksum unavailable';record_sum=${record_sum%% *}
-        record_body=$(printf '%s\n' "$record_payload" "$record_sum")
-        expected_sum=$(printf '%s\n' "$record_body" | sha256sum) || fail 'Intent record checksum unavailable';expected_sum=${expected_sum%% *}
+        . "$dir/startup-record.sh"
+        startup_record_expected
         record_validate() {
             private_dir "$record_path" || return 1
             for entry in "$record_path/"* "$record_path/".[!.]* "$record_path/"..?*; do
@@ -280,9 +260,53 @@ if [ "$startup" = true ]; then
                 ! present "$record_stage" || fail 'Conflicting intent records'
                 record_path=$record
             else
+                if ! present "$record_stage" && [ "$record_action" = apply ];then
+                    ! present "$store/.startup-active-next" || fail 'Active intent stage requires attention' 6
+                    startup_record_file "$store/startup-active" && startup_recheck || fail 'No matching applied intent'
+                    fsync "$store/startup-active" "$store" 2>/dev/null || fail 'Active intent durability uncertain' 6
+                    lua "$dir/homegate-startup.lua" record-report "$revision" "$desired" prepared apply || fail 'Intent result unavailable'
+                    exit 0
+                fi
                 present "$record_stage" || fail 'No retained intent record'
                 record_path=$record_stage
             fi
+        fi
+        active_record="$store/startup-active";active_stage="$store/.startup-active-next"
+        if [ "$record_action" = apply ] || [ "$record_action" = cancel ];then
+            for existing_active in "$active_record" "$active_stage";do
+                ! present "$existing_active" || startup_record_framed "$existing_active" || fail 'Unsafe active intent'
+            done
+            if ! record_validate;then
+                private_dir "$record_path" && [ -z "$(ls -A "$record_path")" ] || fail 'Retained intent record does not match current candidate'
+                # An empty checked directory carries no candidate or DNS data.
+                # Cancel may finish only this cleanup; apply needs exact active bytes.
+                if [ "$record_action" = apply ];then startup_record_file "$active_record" || fail 'Incomplete intent cleanup requires attention';fi
+            fi
+            startup_recheck
+            if [ "$record_action" = cancel ];then
+                ! present "$active_stage" || fail 'Active intent stage requires apply resume' 6
+                if startup_record_file "$active_record";then fail 'Intent already applied; resume apply' 6;fi
+            else
+                # Revoke before publishing either switch state. The preparation
+                # fence stays until both revocation and active durability hold.
+                ash "$dir/homegate-ddns-authority.sh" cancel --confirm >/dev/null 2>/dev/null || fail 'Unable to cancel old grant confirmation' 4
+                if present "$store/ddns-authority";then
+                    ash "$dir/homegate-ddns-authority.sh" revoke --confirm >/dev/null 2>/dev/null || fail 'Unable to revoke previous DDNS authority' 4
+                fi
+                startup_recheck
+                if present "$active_stage";then startup_record_file "$active_stage" || fail 'Conflicting active intent stage'
+                else (set -C; printf '%s\n' "$record_body" > "$active_stage") || fail 'Unable to stage active intent';fi
+                fsync "$active_stage" "$store" 2>/dev/null || fail 'Active intent durability uncertain' 6
+                mv -f "$active_stage" "$active_record" || fail 'Unable to publish active intent'
+                fsync "$active_record" "$store" 2>/dev/null || fail 'Active intent durability uncertain' 6
+                startup_record_file "$active_record" || fail 'Active intent changed'
+            fi
+            # All entries were checked by record_validate (or its exact empty
+            # cleanup case). Never remove DNS/application recovery evidence.
+            if present "$record_path/context";then rm -f "$record_path/context" || fail 'Unable to finish intent cleanup' 6;fi
+            rmdir "$record_path" && fsync "$store" 2>/dev/null || fail 'Intent cleanup durability uncertain' 6
+            lua "$dir/homegate-startup.lua" record-report "$revision" "$desired" prepared "$record_action" || fail 'Intent result unavailable'
+            exit 0
         fi
         record_validate || fail 'Retained intent record does not match current candidate'
         retained_stamp=$(record_stamp) || fail 'Intent record identity unavailable'

@@ -1,10 +1,13 @@
 #!/bin/sh
-# Explicit finite engineering session. Boot never grants or starts work.
+# Explicit continuous engineering service. Boot never grants or starts work.
 PATH=/usr/sbin:/usr/bin:/sbin:/bin;export PATH
 case "${1:-}" in
  start) [ "$#" -eq 2 ] && [ "$2" = --confirm ] || exit 0
-        exec /usr/bin/homegate-engineering schedule-start --confirm;;
- stop|shutdown) exec /usr/bin/homegate-engineering schedule-stop --confirm;;
+        exec /usr/bin/homegate-engineering schedule-serve --confirm;;
+ stop|shutdown) /usr/bin/homegate-engineering access-stop --confirm >/dev/null || exit 4
+                /usr/bin/homegate-engineering proxy-stop --confirm >/dev/null || exit 4
+                /usr/bin/homegate-engineering acme-schedule-stop --confirm >/dev/null || exit 4
+                exec /usr/bin/homegate-engineering schedule-stop --confirm;;
  status) exec /usr/bin/homegate-engineering schedule-status;;
  boot) exit 0;;
  *) exit 2;;

@@ -37,6 +37,10 @@ def build(target_file,archive,work,output):
     sdk=roots[0].parent
     recipe=sdk/'package/homegate-engineering'
     shutil.copytree(ROOT/'packaging/engineering',recipe)
+    # Native proxy is a separate, private-path dependency, never a renamed host
+    # fixture or part of the architecture=all core payload.
+    component=sdk/'package/homegate-nginx'
+    shutil.copytree(ROOT/'packaging/components/homegate-nginx',component)
     payload=recipe/'payload';runtime=payload/'runtime';runtime.mkdir(parents=True)
     stage_runtime(ROOT,runtime)
     for name in ['engineering.lua','ddns-control.sh','apply-handle.lua','service-disabled','config-web.lua','config-web.sh','schedule-control.sh']:
@@ -48,11 +52,17 @@ def build(target_file,archive,work,output):
     (recipe/'tools').mkdir();shutil.copyfile(ROOT/'project/luci/common/tools/po2lmo.py',recipe/'tools/po2lmo.py')
     shutil.copyfile(ROOT/'homegate-version.mk',sdk/'homegate-version.mk')
     with (sdk/'.config').open('a') as config:
-        config.write('\nCONFIG_PACKAGE_homegate-engineering-core=m\nCONFIG_PACKAGE_luci-app-homegate-engineering=m\nCONFIG_PACKAGE_luci-i18n-homegate-engineering-zh-cn=m\n')
+        config.write('\nCONFIG_PACKAGE_homegate-nginx=m\nCONFIG_PACKAGE_homegate-engineering-core=m\nCONFIG_PACKAGE_luci-app-homegate-engineering=m\nCONFIG_PACKAGE_luci-i18n-homegate-engineering-zh-cn=m\n')
     logs=work/'logs';logs.mkdir()
     environment=dict(os.environ,LC_ALL='C.UTF-8',PYTHONDONTWRITEBYTECODE='1')
     steps=[]
-    for label,command in [('defconfig',['make','defconfig']),('compile',['make','package/homegate-engineering/compile','V=s','-j2'])]:
+    for label,command in [('defconfig',['make','defconfig']),('proxy-component',['make','package/homegate-nginx/compile','V=s','-j2']),('compile',['make','package/homegate-engineering/compile','V=s','-j2'])]:
+        if label=='proxy-component':
+            import re
+            metadata=(sdk/'tmp/.packageinfo').read_text()
+            missing=[name for name in ['homegate-nginx','libopenssl','libpcre2','libpthread','luci-lib-nixio']
+                     if not re.search(r'^Package: '+re.escape(name)+r'$',metadata,re.M)]
+            if missing:raise ValueError('Target runtime dependency recipes missing: '+', '.join(missing)+'; retain SDK/logs and provide matching pinned feeds before build')
         start=time.monotonic();log=logs/(label+'.log');print('SDK_step',label,flush=True)
         with log.open('xb') as out:
             process=subprocess.run(command,cwd=sdk,env=environment,stdout=out,stderr=subprocess.STDOUT,timeout=1200)
@@ -63,6 +73,8 @@ def build(target_file,archive,work,output):
     names={'homegate-engineering-core','luci-app-homegate-engineering','luci-i18n-homegate-engineering-zh-cn'}
     packages=[p for p in (sdk/'bin').rglob('*.ipk') if any(p.name.startswith(name+'_') for name in names)]
     if len(packages)!=3:raise ValueError('SDK did not produce exactly three engineering IPKs')
+    components=list((sdk/'bin').rglob('homegate-nginx_*.ipk'))
+    if len(components)!=1:raise ValueError('Require one actual native proxy dependency package')
     stage=work/'verified-packages';stage.mkdir()
     for p in packages:shutil.copyfile(p,stage/p.name)
     spec=importlib.util.spec_from_file_location('three_packages',ROOT/'scripts/检查三包.py')
@@ -71,12 +83,15 @@ def build(target_file,archive,work,output):
     if any(sha(ROOT/name)!=digest for name,digest in frozen.items()):raise ValueError('Public source changed during build')
     output.mkdir(parents=True)
     for p in stage.iterdir():shutil.copyfile(p,output/p.name)
+    dependency_output=output/'runtime-dependencies';dependency_output.mkdir()
+    shutil.copyfile(components[0],dependency_output/components[0].name)
     evidence={'date':'2026-10-27','version':item['normalized'],'native_package_version':item['normalized'],
         'scope':target['scope'],'SDK':target['sdk'],'SDK_archive_SHA_verified':True,'sdk_root':str(sdk),
         'package_architecture':'all','native_target_code':False,'QWRT_runtime_ABI_verified':False,
         'production_target_manifest_modified':False,'production_core_replaced':False,'router_installation_performed':False,
         'source_sha256':frozen,'packages':reports,'steps':steps,'status':'SDK-built-metadata-verified-payload-tests-pending',
-        'CI_triggered':False,'source_commit':os.environ.get('GITHUB_SHA')}
+        'CI_triggered':False,'source_commit':os.environ.get('GITHUB_SHA'),
+        'native_runtime_component':{'package':components[0].name,'sha256':sha(components[0]),'directory':'runtime-dependencies','target_execution_verified':False}}
     (output/'build-evidence.json').write_text(json.dumps(evidence,ensure_ascii=False,indent=2)+'\n')
     print(json.dumps({'packages':reports,'output':str(output),'sdk_root':str(sdk)},ensure_ascii=False),flush=True)
 

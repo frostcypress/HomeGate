@@ -29,3 +29,16 @@ of use. APNIC disclaims responsibility for loss/damage and does not guarantee
 accuracy. Registration economy does not establish current physical location.
 The raw download includes APNIC's conditions; no statistics are bundled in the
 installed packages. Parsed CN prefixes are stored in the private runtime cache.
+
+acme.sh 3.1.6 (commit 807da6498377ee5e0cf43a78091f46f12dc59a89)
+Copyright: acme.sh contributors; GPL version 3.
+Official source: https://github.com/acmesh-official/acme.sh
+Unmodified executable source and complete license: third_party/acme.sh-3.1.6/.
+HomeGate supplies its own fixed DNS/HTTP adapters and does not run the installer, cron, or automatic upgrade.
+
+HomeGate private nginx component recipe (r151)
+Upstream nginx 1.30.6: https://nginx.org/ (BSD-2-Clause; LICENSE retained in the component package).
+Cross-compile patches: ImmortalWrt packages commit fce1553dac2d00c0b0f66647d8a9bd102b73e49c, net/nginx/patches/nginx.
+Feed packaging is GPL-2.0; corresponding repository COPYING is preserved under legal/.
+Only cross-compile feature/size/error-range/endianness patches are used. No optional modules or system service/config are installed by this recipe.
+Source/patch digests and target verification boundaries: packaging/components/homegate-nginx/sources.json.

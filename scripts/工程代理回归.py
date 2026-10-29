@@ -52,8 +52,15 @@ class Proxy(web.Web):
     def verify_unchanged(self):
         super().verify_unchanged()
         self.assertFalse((STATE/'system-nginx-called').exists(), 'System nginx must never be invoked')
-    def cli(self,*args,raw=None,ok=True):
+    def cli(self,*args,raw=None,ok=True,stopping=False):
         r=subprocess.run(['/usr/bin/homegate-engineering',*args],input=raw,capture_output=True,timeout=20)
+        # The owner can exit between the lock and process-identity reads.
+        # Its exact fail-closed response is not a stopped result. Observe again
+        # only after an accepted stop, within ready()'s original deadline.
+        unavailable=b'{"api_version":1,"engineering":true,"ok":false,"phase":"proxy","effect":"none","write_ready":false,"error":"Proxy unavailable; inspect retained session"}\n'
+        if stopping and args==('proxy-status',) and raw is None and ok and r.returncode==7 and r.stdout==unavailable and not r.stderr:
+            print('Stop observation unavailable; terminal state still required',flush=True)
+            return None
         if ok:self.assertEqual(r.returncode,0,(args,r.stdout[:400],r.stderr[:100]))
         else:self.assertNotEqual(r.returncode,0,(args,r.stdout[:400]))
         if raw and b'SECRET_SENTINEL' in raw:self.assertNotIn(b'SECRET_SENTINEL',r.stdout+r.stderr)
@@ -64,7 +71,9 @@ class Proxy(web.Web):
     def ready(self,state='running',seconds=8):
         deadline=time.monotonic()+seconds
         while time.monotonic()<deadline:
-            d=self.cli('proxy-status')
+            d=self.cli('proxy-status',stopping=state=='stopped')
+            if d is None:
+                time.sleep(.1);continue
             if d['state']==state and (state=='running' or not d['running']):return d
             time.sleep(.1)
         conf=Path('/var/run/homegate-engineering/proxy/active.conf')

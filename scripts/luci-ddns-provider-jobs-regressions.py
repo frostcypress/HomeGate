@@ -235,7 +235,11 @@ class ProviderJobs(jobs.Jobs):
                 'run_entries':sorted(p.name for p in RUN.iterdir()),
                 'store_entries':sorted(p.name for p in STORE.iterdir()),'work':work,
                 'journal_members':sorted(p.relative_to(journal).as_posix() for p in journal.rglob('*')) if journal.exists() else [],
-                'terminal':public_fields(journal/'terminal')}),flush=True)
+                'terminal':public_fields(journal/'terminal'),
+                'state_cache':{p.name:{'size':p.stat().st_size,'mode':p.stat().st_mode&0o777,
+                    'uid':p.stat().st_uid,'nlink':p.stat().st_nlink,'public':public_fields(p)}
+                    for p in (RUN/'ddns-state').iterdir() if p.is_file()} if (RUN/'ddns-state').is_dir() else {},
+                'outer_raw':public_fields(raw)}),flush=True)
         return row
 
     def assert_origin(self,row,status):

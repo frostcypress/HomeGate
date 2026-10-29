@@ -24,7 +24,28 @@ class Static(unittest.TestCase):
         self.assertIn('(set -C; : > "$lock")',body)
         self.assertIn('check_binding\nflock -n 6',body)
         self.assertIn('exec 6>&- 7>&- 8>&- 9>&-',body)
-        self.assertNotRegex(body,r'(?m)^\s*(?:rm|rmdir|chmod|chown|kill|curl|wget|uci|service|reboot|eval|source)\b')
+        self.assertNotRegex(body,r'(?m)^\s*(?:chmod|chown|kill|curl|wget|uci|service|reboot|eval|source)\b')
+        # Cold prepare cannot delete. Explicit record apply/cancel may remove
+        # only its checked context and then its empty private intent directory.
+        import tree_sitter,tree_sitter_bash
+        root=tree_sitter.Parser(tree_sitter.Language(tree_sitter_bash.language())).parse(body.encode()).root_node
+        cleanup=body.index('if [ "$record_action" = apply ] || [ "$record_action" = cancel ];then')
+        end=body.index('\n        record_validate || fail',cleanup)
+        removals=[]
+        def inspect(node):
+            if node.type=='command':
+                name=node.child_by_field_name('name')
+                if name and name.text in [b'rm',b'rmdir']:
+                    removals.append(node.text.decode())
+                    self.assertGreaterEqual(node.start_byte,len(body[:cleanup].encode()))
+                    self.assertLess(node.end_byte,len(body[:end].encode()))
+            for child in node.named_children:inspect(child)
+        inspect(root)
+        self.assertEqual(removals,['rm -f "$record_path/context"','rmdir "$record_path"'])
+        self.assertIn('record="$store/startup-intent";record_stage="$store/.startup-intent-next"',body)
+        self.assertIn('if ! record_validate;then',body[cleanup:end])
+        self.assertIn('private_dir "$record_path" && [ -z "$(ls -A "$record_path")" ]',body[cleanup:end])
+        self.assertIn('startup_recheck',body[cleanup:end])
         self.assertIn('readers_switched":false',body)
         self.assertIn('production_ready":false',body)
 

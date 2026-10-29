@@ -25,7 +25,8 @@ class Static(PrivateCodec):
         parser=tree_sitter.Parser(tree_sitter.Language(tree_sitter_bash.language()))
         for n in ['homegate-cloudflare-read.sh','homegate-cloudflare-worker.sh','homegate-service-observer-watchdog.sh']:
             b=(PROTO/n).read_bytes();self.assertNotIn(b'\r',b);self.assertFalse(parser.parse(b).root_node.has_error,n)
-            self.assertEqual(b.count(b'dns_records_enabled=false'),1);self.assertNotIn(b'dns_records_enabled=true',b)
+            self.assertEqual(len(re.findall(rb'^dns_records_enabled=false$',b,re.M)),1)
+            self.assertNotRegex(b,rb'(?m)^dns_records_enabled=true$')
         self.assertNotIn('prototype/',(ROOT/'project/core/Makefile').read_text())
     def test_real_generation_resource_and_domain_binding(self):
         c=self.bind(self.ddns());self.assertEqual((c[b'type'],c[b'fqdn'],c[b'ttl']),(b'AAAA',b'www.example.test',600))

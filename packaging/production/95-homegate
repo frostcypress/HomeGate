@@ -1,0 +1,5 @@
+#!/bin/sh
+# A network event can only affect the existing bound DDNS lease.
+case "${ACTION:-}" in ifup|ifupdate|ifdown) ;;*) exit 0;;esac
+case "${INTERFACE:-}:${DEVICE:-}" in *[!a-zA-Z0-9_.:-]*) exit 2;;esac
+/usr/bin/homegate schedule-event "$ACTION" "${INTERFACE:-}" "${DEVICE:-}" >/dev/null 2>&1

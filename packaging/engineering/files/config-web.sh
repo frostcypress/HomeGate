@@ -11,7 +11,7 @@ request=$1;work=${request%/request};nonce=${work#/tmp/homegate-engineering-web-}
 [ "${#nonce}" -eq 32 ] || fail 2;case "$nonce" in *[!0-9a-f]*) fail 2;; esac
 private_dir() { [ -d "$1" ] && [ ! -L "$1" ] && [ "$(stat -c '%u:%a' "$1")" = 0:700 ]; }
 private_file() { [ -f "$1" ] && [ ! -L "$1" ] && [ "$(stat -c '%u:%a:%h' "$1")" = 0:600:1 ]; }
-[ -d /tmp ] && [ ! -L /tmp ] && private_dir "$work" && private_file "$request" && [ "$(stat -c %s "$request")" -le 32768 ] || fail
+[ -d /tmp ] && [ ! -L /tmp ] && private_dir "$work" && private_file "$request" && [ "$(stat -c %s "$request")" -le 1572864 ] || fail
 exec 3>&- 4>&- 5>&- 6>&- 7>&- 8>&- 9>&-
 exec 3<"$request" || fail
 [ "$(stat -Lc '%d:%i:%u:%a:%h' /proc/self/fd/3)" = "$(stat -c '%d:%i:%u:%a:%h' "$request")" ] || fail
@@ -21,11 +21,19 @@ action=${parsed%%:*};payload=${parsed#*:};rc=0
 cleanup() { [ ! -f "$work/current" ] || rm -f "$work/current"; }
 trap cleanup EXIT
 case "$action" in
+ backup_export) raw=$(ash "$entry" config-export) || fail;printf '%s\n' "$raw" | lua "$base/config-web.lua" backup-export || fail;exit 0;;
+ backup_preview) candidate=$(lua "$base/config-web.lua" payload) || fail 2;raw=$(printf '%s\n' "$candidate" | ash "$entry" config-preview) || rc=$?;;
+ rollback_preview) raw=$(ash "$entry" config-rollback-preview "$payload") || rc=$?;;
+ wol_status) raw=$(ash "$entry" wol-status) || rc=$?;;
+ wol_send) raw=$(ash "$entry" wol "$payload" --confirm) || rc=$?;;
+ wol_direct) iface=${payload%%,*};mac=${payload#*,};raw=$(ash "$entry" wol "$iface" "$mac" --confirm) || rc=$?;;
  access_status|access_recent) raw=$(ash "$entry" "access-${action#access_}") || rc=$?;;
  access_update|access_refresh|access_clear|access_clear_denied|access_stop|access_reap)
   command="access-${action#access_}";[ "$action" != access_clear_denied ] || command=access-clear-denied
   raw=$(ash "$entry" "$command" --confirm) || rc=$?;;
  proxy_start) selection=${payload%%:*};policy=${payload#*:};raw=$(ash "$entry" proxy-start "$selection" "$policy" --confirm) || rc=$?;;
+ firewall_status) raw=$(ash "$entry" firewall-status) || rc=$?;;
+ firewall_apply|firewall_cleanup) raw=$(ash "$entry" "firewall-${action#firewall_}" --confirm) || rc=$?;;
  proxy_status) raw=$(ash "$entry" proxy-status) || rc=$?;;
  proxy_stop|proxy_reap) raw=$(ash "$entry" "proxy-${action#proxy_}" --confirm) || rc=$?;;
  web_target_put) raw=$(lua "$base/config-web.lua" payload | ash "$entry" web-target-put "$payload" --confirm) || rc=$?;;
@@ -61,7 +69,7 @@ case "$action" in
  apply|finish)
   command=config-commit;[ "$action" != finish ] || command=config-finish
   raw=$(ash "$entry" "$command" "$payload") || rc=$?;;
- preview_access|preview_web_rule|preview_account|preview_rule|preview_local_certificate|preview_acme_certificate)
+ preview_wol_host|preview_wol_settings|preview_access|preview_web_rule|preview_account|preview_rule|preview_local_certificate|preview_acme_certificate)
   (set -C; : > "$work/current") || fail
   ash "$entry" config-export > "$work/current" || fail
   private_file "$work/current" && [ "$(stat -c %s "$work/current")" -le 262144 ] || fail

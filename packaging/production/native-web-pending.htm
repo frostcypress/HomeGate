@@ -1,0 +1,23 @@
+<%+header%>
+<h2>任务状态</h2><p id="hg-job-message" role="status" aria-live="polite">请求已受理，正在等待执行结果。</p>
+<p><a href="<%=url('admin/services/homegate/configuration')%>">查看配置与恢复操作</a></p>
+<script type="text/javascript">
+(function(){
+ 'use strict';
+ var id='<%=job%>',token='<%=token%>',base='<%=url("admin/services/homegate")%>',node=document.getElementById('hg-job-message'),attempt=0;
+ function ack(){return fetch(base+'/compat_ack/'+id,{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:'token='+encodeURIComponent(token)}).then(function(r){if(!r.ok)throw new Error('回执保留，稍后可重查任务。');return r.json();});}
+ function poll(){
+  fetch(base+'/compat_job/'+id,{credentials:'same-origin',cache:'no-store'}).then(function(r){if(!r.ok)throw new Error('任务查询失败，请稍后重查。');return r.json();}).then(function(d){
+   if(!d.ok)throw new Error(d.error||'任务查询失败。');
+   if(d.pending){node.textContent=d.recovery_required?'任务状态尚未确认，保留任务并继续查询。':'任务执行中，请稍候。';if(++attempt<190)setTimeout(poll,1000);else node.textContent='任务状态尚未确认，请保留此页并检查恢复操作。任务号：'+id;return;}
+   var result=d.result;if(!result||typeof result.ok!=='boolean')throw new Error('任务回执无效。');
+   if(result.uncertain){node.textContent='结果尚未确认，任务已保留。请检查恢复操作。任务号：'+id;return;}
+   if(!result.ok){node.textContent=result.error||'操作未完成。';if(result.redirect&&/^\/cgi-bin\/luci\/admin\/services\/homegate\/[a-zA-Z0-9_/]+(?:\?|$)/.test(result.redirect)){var a=document.createElement('a');a.href=result.redirect;a.textContent='返回并查看原因';node.appendChild(document.createTextNode(' '));node.appendChild(a);}ack().catch(function(e){node.appendChild(document.createTextNode(' '+e.message));});return;}
+   if(result.body!==undefined){var disposition=(result.headers||{})['Content-Disposition']||'',match=disposition.match(/filename="([a-zA-Z0-9_.-]+)"/);if(match){var blob=new Blob([result.body],{type:(result.headers||{})['Content-Type']||'text/plain'}),u=URL.createObjectURL(blob),link=document.createElement('a');link.href=u;link.download=match[1];link.textContent='下载结果';node.textContent='任务完成。';node.appendChild(link);link.click();setTimeout(function(){URL.revokeObjectURL(u);},60000);}else{node.textContent=result.body;}ack().catch(function(e){node.appendChild(document.createTextNode(' '+e.message));});return;}
+   ack().then(function(){if(result.redirect&&/^\/cgi-bin\/luci\/admin\/services\/homegate\/[a-zA-Z0-9_/]+(?:\?|$)/.test(result.redirect))window.location.assign(result.redirect);else node.textContent='任务完成。';}).catch(function(e){node.textContent=e.message;});
+  }).catch(function(e){node.textContent=e.message+' 任务号：'+id;});
+ }
+ poll();
+}());
+</script>
+<%+footer%>

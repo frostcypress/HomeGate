@@ -20,6 +20,14 @@ local function address(v)
  if a then for _,x in ipairs({a,b,c,d})do if #x>3 or tonumber(x)>255 or (#x>1 and x:sub(1,1)=='0')then return nil end end;return v end
  return ip.ipv6(v) and v:lower() or nil
 end
+local function address_key(v)
+ local expanded=ip.ipv6(v);if not expanded then return v end
+ if expanded:sub(1,30)=='0000:0000:0000:0000:0000:ffff:'then
+  local a,b=tonumber(expanded:sub(31,34),16),tonumber(expanded:sub(36,39),16)
+  return string.format('%d.%d.%d.%d',math.floor(a/256),a%256,math.floor(b/256),b%256)
+ end
+ return expanded
+end
 local reasons={['manual-deny']=false,denied=false,disabled=true,ip=true,region=true}
 local function event(d)
  if type(d)~='table' or not address(d.ip) or type(d.host)~='string' or #d.host>253 or #d.host<1 or d.host:find('[^a-zA-Z0-9.*-]') or type(d.allowed)~='boolean' or reasons[d.reason]==nil or d.allowed~=reasons[d.reason]then return nil end
@@ -37,10 +45,33 @@ or a lossless/security journal. ]=]
 if nx.getuid()~=0 or not property(run,'dir',700)then fail()end
 local mode=arg[1]
 if mode=='read'then io.write(codec.json({api_version=1,engineering=true,ok=true,phase='access-recent',entries=entries(),best_effort=true,observations_only=true,effect='none',write_ready=false})..'\n');return end
-if mode=='clear'then
- if arg[2]~='all' and arg[2]~='denied'then fail()end
+if mode=='clear' or mode=='clear-idle'then
+ local request=arg[2]
+ if request=='entry'then
+  local ip=address(arg[3]);local host=arg[4]
+  if not ip or type(host)~='string' or #host<1 or #host>253 or host:find('[^a-zA-Z0-9.*-]') or arg[5]then fail()end
+  request='entry\t'..ip..'\t'..host:lower():gsub('%.$','')
+ elseif request~='all' and request~='denied' or arg[3]then fail()end
+ if mode=='clear-idle'then
+  local lock=fs.lstat(run..'/proxy.lock');local held=fs.stat('/proc/self/fd/9')
+  if not property(run..'/proxy.lock','reg',600,0) or not held or held.dev~=lock.dev or held.ino~=lock.ino or fs.lstat(sockpath)then fail()end
+  if fs.lstat(root)then
+   if not property(root,'dir',700) or fs.lstat(root..'/audit-clear') or fs.lstat(root..'/audit-clear.next')then fail()end
+   if fs.lstat(root..'/audit-health') and read(root..'/audit-health',6)~='false\n' then fail()end
+  end
+  local kept={};local selected,host=request:match('^entry\t([^\t]+)\t([^\t]+)$')
+  for _,e in ipairs(entries())do if request=='denied' and e.allowed or selected and (address_key(e.ip)~=address_key(selected) or e.host~=host)then kept[#kept+1]=e end end
+  local body=codec.json({entries=kept})..'\n';if #body>65536 then fail()end
+  local nextpath=path..'.next';local fd=nx.open(nextpath,nx.open_flags('wronly','creat','excl'),'600');if not fd then fail()end
+  local written=fd:write(body);assert(fd:close());if written~=#body then fail()end
+  assert(os.rename(nextpath,path));return
+ end
  if not property(root,'dir',700) or read(root..'/audit-health',6)~='true\n' or fs.lstat(root..'/audit-clear')then fail()end
- write(root..'/audit-clear.next',arg[2]..'\n');assert(os.rename(root..'/audit-clear.next',root..'/audit-clear'));io.write(codec.json({api_version=1,engineering=true,ok=true,phase='access-recent',clear_pending=true,effect='none',write_ready=false})..'\n');return
+ local nextpath=root..'/audit-clear.next'
+ local fd=nx.open(nextpath,nx.open_flags('wronly','creat','excl'),'600');if not fd then fail()end
+ if fs.lstat(root..'/audit-clear')then fd:close();assert(fs.unlink(nextpath));fail()end
+ local body=request..'\n';local written=fd:write(body);assert(fd:close());if written~=#body then fail()end
+ assert(os.rename(nextpath,root..'/audit-clear'));io.write(codec.json({api_version=1,engineering=true,ok=true,phase='access-recent',clear_pending=true,effect='none',write_ready=false})..'\n');return
 end
 if mode~='serve' or not property(root,'dir',700) or read(root..'/token',33)~=arg[2]..'\n' or fs.lstat(sockpath)then fail()end
 local secret=read(root..'/audit-token',33):match('^([0-9a-f]+)\n$');if not secret or #secret~=32 then fail()end
@@ -60,8 +91,10 @@ write(root..'/audit-health','true\n')
 while true do
  if fs.lstat(root..'/stop')then flush();write(root..'/audit-health','false\n');socket:close();return end
  if fs.lstat(root..'/audit-clear')then
-  local clear=read(root..'/audit-clear',8);if clear~='all\n' and clear~='denied\n' then fail()end
-  local kept={};if clear=='denied\n' then for _,e in ipairs(rows)do if e.allowed then kept[#kept+1]=e end end end;rows=kept;dirty=true;flush();assert(fs.unlink(root..'/audit-clear'))
+  local clear=read(root..'/audit-clear',384);local ip,host=clear:match('^entry\t([^\t]+)\t([^\t\n]+)\n$')
+  if clear~='all\n' and clear~='denied\n' and not(ip and address(ip)==ip and #host<=253 and not host:find('[^a-zA-Z0-9.*-]'))then fail()end
+  local kept={};for _,e in ipairs(rows)do if clear=='denied\n' and e.allowed or ip and (address_key(e.ip)~=address_key(ip) or e.host~=host)then kept[#kept+1]=e end end
+  rows=kept;dirty=true;flush();assert(fs.unlink(root..'/audit-clear'))
  end
  for i=1,128 do
   local raw=socket:recv(4096);if not raw then break end

@@ -1,0 +1,83 @@
+#!/bin/sh /etc/rc.common
+PATH=/usr/sbin:/usr/bin:/sbin:/bin;export PATH LC_ALL=C
+START=95
+STOP=10
+USE_PROCD=1
+EXTRA_COMMANDS="network_changed"
+package_state() {
+ pkg_present=false;pkg_boot=0;pkg_running=0;record=/etc/homegate/package-state
+ [ -e "$record" ] || [ -L "$record" ] || return 0
+ [ -f "$record" ] && [ ! -L "$record" ] && [ "$(stat -c '%u:%a:%h' "$record")" = 0:600:1 ] && [ "$(stat -c %s "$record")" -le 64 ] || return 7
+ { IFS= read -r magic && IFS= read -r mode && IFS= read -r pkg_boot && IFS= read -r pkg_running && ! IFS= read -r extra; } < "$record" || return 7
+ case "$magic:$mode:$pkg_boot:$pkg_running" in HGPKG1:ready:[01]:[01]|HGPKG1:upgrade:[01]:[01]|HGPKG1:reinstall:[01]:[01]|HGPKG1:remove:[01]:[01]|HGPKG1:stopping:[01]:[01]) ;;*) return 7;;esac
+ expected=$(printf '%s\n' "$magic" "$mode" "$pkg_boot" "$pkg_running")
+ [ "$(cat "$record")" = "$expected" ] && [ "$(stat -c %s "$record")" = "$((${#expected}+1))" ] || return 7
+ case "${1:-ready}:$mode" in
+  ready:ready|disable:ready|disable:upgrade|disable:reinstall|disable:remove|stop:ready|stop:upgrade|stop:reinstall|stop:remove) ;;
+  disable:stopping)
+   # Only native-package's checked removal preparation owns this exact lease.
+   # SDK default_prerm has no such FD after a failed custom callback.
+   [ "$(stat -Lc '%d:%i:%u:%a:%h' /proc/self/fd/9 2>/dev/null)" = "$(stat -c '%d:%i:%u:%a:%h' "$record")" ] && flock -n 9 || return 7;;
+  *) return 7;;
+ esac
+ pkg_present=true
+}
+enable() {
+ if [ -z "${IPKG_INSTROOT:-}" ];then
+  package_state || return 7
+  if [ "$pkg_present:$pkg_boot" = true:0 ];then disable;return $?;fi
+ fi
+ rcdir=${IPKG_INSTROOT:-}/etc/rc.d
+ [ -d "$rcdir" ] && [ ! -L "$rcdir" ] || return 7
+ for link in "$rcdir/S95homegate" "$rcdir/K10homegate";do
+  if [ -e "$link" ] || [ -L "$link" ];then [ -L "$link" ] && [ "$(readlink "$link")" = ../init.d/homegate ] || return 7
+  else ln -s ../init.d/homegate "$link" || return 7;fi
+ done
+}
+disable() {
+ [ -n "${IPKG_INSTROOT:-}" ] || package_state disable || return 7
+ rcdir=${IPKG_INSTROOT:-}/etc/rc.d
+ [ -d "$rcdir" ] && [ ! -L "$rcdir" ] || return 7
+ for link in "$rcdir/S95homegate" "$rcdir/K10homegate";do
+  [ ! -e "$link" ] && [ ! -L "$link" ] || { [ -L "$link" ] && [ "$(readlink "$link")" = ../init.d/homegate ] && rm "$link"; } || return 7
+ done
+}
+enabled() {
+ rcdir=${IPKG_INSTROOT:-}/etc/rc.d
+ [ -d "$rcdir" ] && [ ! -L "$rcdir" ] && [ -L "$rcdir/S95homegate" ] && [ "$(readlink "$rcdir/S95homegate")" = ../init.d/homegate ]
+}
+start_service() {
+ [ -z "${IPKG_INSTROOT:-}" ] || return 0
+ package_state || return 7
+ if [ "$pkg_present:$pkg_running" = true:0 ];then rm /etc/homegate/package-state && fsync /etc/homegate;return $?;fi
+ /usr/bin/homegate service-admission >/dev/null 2>&1 || return 0
+ procd_open_instance
+ procd_set_param command /usr/bin/homegate daemon
+ # Retained/unknown operations require recovery, not automatic respawn/replay.
+ procd_set_param term_timeout 30
+ procd_set_param stdout 1
+ procd_set_param stderr 1
+ procd_close_instance
+ if [ "$pkg_present" = true ];then rm /etc/homegate/package-state && fsync /etc/homegate || return 7;fi
+}
+stop_service() {
+ [ -z "${IPKG_INSTROOT:-}" ] || return 0
+ package_state stop || return 4
+ /usr/bin/homegate service-stop --confirm >/dev/null 2>&1 || return 4
+ n=0
+ while [ "$n" -lt 20 ];do
+  /usr/bin/homegate service-quiescent >/dev/null 2>&1 && return 0
+  n=$((n+1));sleep 1 || return 4
+ done
+ return 4
+}
+reload_service() {
+ # Source replacement requires stopped children, revalidated intent and a fresh
+ # admission. Never signal a PID stored in a file or silently grant a new scope.
+ stop_service || return 4
+ start
+}
+network_changed() {
+ /usr/bin/homegate schedule-event ifupdate wan6 '' >/dev/null 2>&1
+}
+service_triggers() { procd_add_reload_trigger homegate; }

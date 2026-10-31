@@ -5,6 +5,13 @@
   <p><a class="cbi-button" href="<%=url('admin/services/homegate_engineering/settings/ddns')%>">DDNS 授权与任务</a>
   <button class="cbi-button" id="hg-config-refresh" type="button">刷新</button>
   <button class="cbi-button" id="hg-config-prepare" type="button">初始化独立配置</button></p>
+  <div class="cbi-section"><h3>配置备份与恢复</h3>
+    <p>导出的配置不包含秘密、证书私钥或运行授权。导入先预览差异，再使用下方确认应用；已有同标识秘密保留，缺少秘密的账户不能执行任务。回滚只可选择本配置库已提交的祖先代际，恢复对应的私有凭据，仍需预览确认。</p>
+    <textarea id="hg-backup-text" rows="6" class="cbi-input-textarea" aria-label="HomeGate 配置备份"></textarea>
+    <p><button type="button" id="hg-backup-export" class="cbi-button">导出不含秘密的配置</button>
+    <button type="button" id="hg-backup-preview" class="cbi-button">预览导入</button></p>
+    <form id="hg-backup-rollback"><label>祖先代际 <input name="generation" type="number" min="1" max="32" required="required" /></label><button class="cbi-button" type="submit">预览回滚</button></form>
+  </div>
   <div class="cbi-section"><h3>复制现有 HomeGate 配置</h3>
     <p>先初始化独立配置，再预览复制现有 HomeGate 配置与秘密；仅可导入空的工程配置库。核对差异后点击“确认复制生产配置”。完整私有备份和原启用意图会保留，工程配置默认关闭；后续明确应用启用意图、授权规则，再启动调度。</p>
     <p>复制不改变原 HomeGate 配置、服务或开机设置。需要原服务已建立的安全配置写锁；来源变化须重新预览。中断时按已返回的应用句柄续完，避免重复复制。</p>
@@ -73,8 +80,16 @@
     <form id="hg-web-target" autocomplete="off"><input class="cbi-input-text" name="id" required maxlength="64" placeholder="规则标识" /><input class="cbi-input-text" name="value" required maxlength="4096" autocomplete="off" placeholder="私有上游 URL" /><button class="cbi-button" type="submit">保存私有上游</button></form>
     <form id="hg-proxy-run" onsubmit="return false"><input class="cbi-input-text" name="selection" maxlength="512" placeholder="规则标识，英文逗号分隔，最多16条" /><select class="cbi-input-select" name="policy"><option value="open">允许访问（仍执行黑名单）</option><option value="allow">仅手动白名单</option></select></form>
     <button class="cbi-button cbi-button-apply" id="hg-proxy-start" type="button">启动代理</button><button class="cbi-button" id="hg-proxy-status" type="button">查看状态</button><button class="cbi-button" id="hg-proxy-stop" type="button">停止代理</button><button class="cbi-button" id="hg-proxy-reap" type="button">收起会话</button>
-    <p>证书发布后自动平滑重载，新连接核对通过后使用新证书，已有连接继续；候选失败保留旧证书并退避重试，旧证书失效时停止。当前支持 HTTP / HTTPS 上游和 WebSocket；HTTPS 上游须为证书可验证的域名。CN 放行需先取得有效双栈地址库；启动时冻结库快照，更新后重启会话采用新库。黑名单优先，手动白名单与 CN 可并用；防火墙自动配置尚未接通。状态不代表端到端健康检查。</p>
+    <p>证书发布后自动平滑重载，新连接核对通过后使用新证书，已有连接继续；候选失败保留旧证书并退避重试，旧证书失效时停止。当前支持 HTTP / HTTPS 上游和 WebSocket；HTTPS 上游须通过域名或 IP SAN、证书链及有效期校验。CN 放行需先取得有效双栈地址库；启动时冻结库快照，更新后重启会话采用新库。黑名单优先，手动白名单与 CN 可并用；IPv6 公网入口须另行明确应用防火墙；随后只恢复本次代理会话丢失的专属规则，停止时清理。状态不代表端到端健康检查。</p>
   </div>
+  <div class="cbi-section"><h3>网络唤醒</h3><p>raw Ethernet 发到所选接口与桥成员，UDP 广播发到所选接口。计数只表示报文已提交发送，不代表设备已启动；部分路径失败会显示警告。直接发送可在其他配置不可用时独立执行。</p>
+    <form id="hg-wol-host"><input class="cbi-input-text" name="id" required maxlength="64" placeholder="主机标识" /><input class="cbi-input-text" name="name" maxlength="128" placeholder="主机名称" /><input class="cbi-input-text" name="mac" required maxlength="32" placeholder="MAC 地址" /><button class="cbi-button" type="submit">预览主机</button></form>
+    <form id="hg-wol-settings"><input class="cbi-input-text" name="interface" maxlength="32" placeholder="接口，留空为 br-lan" /><input class="cbi-input-text" name="selected_host" maxlength="64" placeholder="默认主机标识，可留空" /><button class="cbi-button" type="submit">预览唤醒设置</button></form>
+    <button class="cbi-button" id="hg-wol-status" type="button">查看设置和主机</button><div id="hg-wol-hosts"></div>
+    <form id="hg-wol-send"><input class="cbi-input-text" name="id" required maxlength="64" placeholder="已保存的主机标识" /><button class="cbi-button cbi-button-apply" type="submit">发送到已保存主机</button></form>
+    <form id="hg-wol-direct"><input class="cbi-input-text" name="interface" maxlength="32" placeholder="直接指定接口" /><input class="cbi-input-text" name="mac" required maxlength="32" placeholder="MAC 地址" /><button class="cbi-button cbi-button-apply" type="submit">直接发送</button></form>
+  </div>
+  <div class="cbi-section"><h3>工程 IPv6 公网入口</h3><p>先启动工程代理，再明确应用入口。仅处理工程专属链，不修改生产 HomeGate 规则。内核规则状态须单独查看；清理失败会保留会话并阻止回收，处理后再重试。</p><button class="cbi-button cbi-button-apply" id="hg-firewall-apply" type="button">应用当前入口</button><button class="cbi-button" id="hg-firewall-status" type="button">查看规则状态</button><button class="cbi-button" id="hg-firewall-cleanup" type="button">清理工程规则</button></div>
   <div class="cbi-section"><h3>访问管理</h3>
     <form id="hg-access-policy"><div class="cbi-value"><label class="cbi-value-title">手动白名单</label><div class="cbi-value-field"><textarea class="cbi-input-textarea" name="allow" maxlength="4096" rows="2" placeholder="IP 或 CIDR，用空格分隔"></textarea></div></div><div class="cbi-value"><label class="cbi-value-title">手动黑名单</label><div class="cbi-value-field"><textarea class="cbi-input-textarea" name="deny" maxlength="4096" rows="2"></textarea></div></div><select class="cbi-input-select" name="region"><option value="">仅手动白名单</option><option value="CN">CN 登记分配网段</option></select><button class="cbi-button" type="submit">预览访问规则</button></form>
     <p>确认规则后，在网站代理中选择“仅手动白名单”启用限制；CN 与手动白名单命中任一即可放行，黑名单始终优先。“允许访问”仍执行黑名单。CN 表示 APNIC 登记分配网段，不是终端实时位置。</p>

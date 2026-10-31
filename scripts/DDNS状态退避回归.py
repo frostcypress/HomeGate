@@ -14,6 +14,14 @@ class Static(PlanStatic):
     def test_success_resets_failure_and_uses_interval(self):
         for result,effect in [('created','confirmed'),('updated','confirmed'),('unchanged','none')]:
             d=self.begin();d[b'failures']=8;s=self.state.finish(d,1001,result.encode(),b'',effect.encode(),False);self.assertTrue(self.state.valid(s));self.assertEqual((s[b'failures'],s[b'delay']),(0,60));self.assertEqual(self.state.decision(s,self.context(),1020,False,True,False),(b'waiting',41));self.assertEqual(self.state.decision(s,self.context(),1061,False,True,False),(b'ready',0))
+    def test_optional_event_time_preserves_old_cache_and_generation_boundary(self):
+        d=self.begin();self.assertTrue(self.state.valid(d));self.assertNotIn('event_epoch',json.loads(self.state.report(d,self.context(),1000,False,True,False)))
+        d[b'event_epoch']=1793340000;s=self.state.finish(d,1001,b'unchanged',b'',b'none',False)
+        self.assertEqual(s[b'event_epoch'],1793340000)
+        self.assertEqual(json.loads(self.state.report(s,self.context(),1020,False,True,False))['event_epoch'],1793340000)
+        c=self.context();c[b'generation']=b'c'*64;self.assertNotIn('event_epoch',json.loads(self.state.report(s,c,1020,False,True,False)))
+        for invalid in [0,-1,1.5,253402300800,b'1793340000']:
+            d[b'event_epoch']=invalid;self.assertFalse(self.state.valid(d))
     def test_exponential_backoff_is_capped_and_respects_long_interval(self):
         c=self.context();old=None;delays=[]
         for _ in range(12):

@@ -49,10 +49,10 @@ if arg[1]=='names' then
     local joined=table.concat(names,',');local checked=authority.selection(joined,planner.id)
     if not checked or backup.json(checked)~=backup.json(names) then fail() end
     io.write(table.concat(names,'\n')..'\n');return
-elseif arg[1]=='row' or arg[1]=='row-closed' then
+elseif arg[1]=='row' or arg[1]=='row-closed' or arg[1]=='row-observed' then
     if arg[5] then fail() end
     local raw=io.stdin:read(65537) or '';if #raw>65536 then fail() end
-    local row=batch.row(raw,shared.parse(raw),revision,arg[3],arg[4],planner,assert(loadfile(dir..'/ddns-sync.lua'))(),shared.parse)
+    local row=batch.row(raw,shared.parse(raw),revision,arg[3],arg[4],planner,assert(loadfile(dir..'/ddns-sync.lua'))(),shared.parse,arg[1]=='row-observed')
     if not row then fail() end
     if arg[1]=='row-closed' then local d=shared.parse(raw);if d.effect~='confirmed' then fail() end;row=row:sub(1,-2)..',"closeout":"retired"}' end
     io.write(row..'\n');return

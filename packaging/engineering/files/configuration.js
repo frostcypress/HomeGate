@@ -7,13 +7,13 @@ function show(value){el('hg-config-result').textContent=JSON.stringify(value,nul
 function buttons(){el('hg-config-apply').textContent=pendingAction==='production_copy_commit'?'确认复制生产配置':'确认应用配置';el('hg-config-apply').disabled=busy||!pending;el('hg-config-finish').disabled=busy||!finish;}
 function request(action,form,done){
  if(busy)return;busy=true;buttons();
- var xhr=new XMLHttpRequest(),write=action!=='read'&&action!=='schedule_status'&&action!=='lifecycle_status'&&action!=='cert_status'&&action!=='acme_status'&&action!=='acme_schedule_status'&&action!=='proxy_status'&&action!=='access_status'&&action!=='access_recent',body=[],fields=form||{};
+ var xhr=new XMLHttpRequest(),write=action!=='backup_export'&&action!=='wol_status'&&action!=='firewall_status'&&action!=='read'&&action!=='schedule_status'&&action!=='lifecycle_status'&&action!=='cert_status'&&action!=='acme_status'&&action!=='acme_schedule_status'&&action!=='proxy_status'&&action!=='access_status'&&action!=='access_recent',body=[],fields=form||{};
  var url=root.getAttribute('data-endpoint')+'/'+action;if(!write){var query=[];Object.keys(fields).forEach(function(k){query.push(encodeURIComponent(k)+'='+encodeURIComponent(fields[k]));});if(query.length)url+='?'+query.join('&');}
  xhr.open(write?'POST':'GET',url,true);xhr.timeout=30000;
  if(write){body.push('token='+encodeURIComponent(root.getAttribute('data-token')));Object.keys(fields).forEach(function(k){body.push(encodeURIComponent(k)+'='+encodeURIComponent(fields[k]));});xhr.setRequestHeader('Content-Type','application/x-www-form-urlencoded');}
  function end(){busy=false;buttons();}
  xhr.onload=function(){end();try{
-  if(xhr.responseText.length>524288)throw new Error();var d=JSON.parse(xhr.responseText);show(d);
+  if(xhr.responseText.length>(action==='backup_export'?2097152:524288))throw new Error();var d=JSON.parse(xhr.responseText);show(d);
   if(d.report&&d.report.confirmation&&d.ok){pending=d.report.confirmation;pendingAction=d.report.operation==='production-copy'?'production_copy_commit':'apply';}
   if(d.report&&d.report.application_pending&&d.report.apply_handle)finish=d.report.apply_handle;
   if(d.ok&&(action==='apply'||action==='production_copy_commit')){pending='';finish='';}
@@ -42,7 +42,7 @@ bind('hg-access-policy','preview_access',['allow','deny','region']);
 ['update','refresh','status','recent','clear','clear_denied','stop','reap'].forEach(function(op){el('hg-access-'+op).onclick=function(){var fields={};if(['status','recent'].indexOf(op)<0){if(!window.confirm(op==='clear'||op==='clear_denied'?'清理本插件最近访问观察？这不会改变访问规则。':op==='stop'?'停止本次地址库下载？保留原有效库。':'执行本次 CN 地址库操作？已有代理继续使用其启动时快照。'))return;fields.consent='1';}request('access_'+op,fields,function(d){if(op==='recent'){var mount=el('hg-access-recent');while(mount.firstChild)mount.removeChild(mount.firstChild);var t=document.createElement('table');t.className='table';(d.report.entries||[]).forEach(function(row){var tr=document.createElement('tr');[row.ip,row.host,row.allowed?'允许':'拒绝',row.reason,row.count,row.time].forEach(function(v){var td=document.createElement('td');td.textContent=String(v);tr.appendChild(td);});t.appendChild(tr);});mount.appendChild(t);}});};});
 bind('hg-web-rule','preview_web_rule',['id','domain','https','certificate']);
 bind('hg-web-target','web_target_put',['id','value']);
-['start','status','stop','reap'].forEach(function(op){el('hg-proxy-'+op).onclick=function(){var fields={};if(op==='start'){fields.selection=el('hg-proxy-run').elements.selection.value;fields.policy=el('hg-proxy-run').elements.policy.value;}if(op!=='status'){if(!window.confirm(op==='start'?'启动所选规则的工程代理？这会监听工程端口；当前不自动配置防火墙。':op==='stop'?'停止工程代理？现有连接将断开。':'收起已停止代理会话？'))return;fields.consent='1';}request('proxy_'+op,fields);};});
+['start','status','stop','reap'].forEach(function(op){el('hg-proxy-'+op).onclick=function(){var fields={};if(op==='start'){fields.selection=el('hg-proxy-run').elements.selection.value;fields.policy=el('hg-proxy-run').elements.policy.value;}if(op!=='status'){if(!window.confirm(op==='start'?'启动所选规则的工程代理？这会监听工程端口；防火墙需另行明确应用。':op==='stop'?'停止工程代理？现有连接将断开。':'收起已停止代理会话？'))return;fields.consent='1';}request('proxy_'+op,fields);};});
 bind('hg-acme-certificate','preview_acme_certificate',['id','name','account','zone','domains','email','environment']);
 bind('hg-local-certificate','preview_local_certificate',['id','name','domains']);
 bind('hg-config-account','preview_account',['id','name','provider']);bind('hg-config-rule','preview_rule',['id','account','zone','host','source','interface']);bind('hg-config-secret','secret_put',['id','provider','slot','value']);
@@ -75,4 +75,12 @@ el('hg-config-finish').onclick=function(){request('finish',{confirmation:finish,
 el('hg-config-cancel').onclick=function(){request('cancel');};refresh();
 ['enable','disable','status'].forEach(function(op){el('hg-lifecycle-'+op).onclick=function(){request('lifecycle_'+op,op==='status'?{}:{consent:'1'});};});
 ['serve','start','status','stop','reap'].forEach(function(op){el('hg-schedule-'+op).onclick=function(){request('schedule_'+op,op==='status'?{}:{consent:'1'});};});
+['apply','status','cleanup'].forEach(function(op){el('hg-firewall-'+op).onclick=function(){var fields={};if(op!=='status'){if(!window.confirm(op==='apply'?'将当前代理的 IPv6 公网入口映射到工程端口？规则只绑定本次代理会话，停止时清理。':'清理工程代理的专属 IPv6 防火墙规则？'))return;fields.consent='1';}request('firewall_'+op,fields);};});
+bind('hg-wol-host','preview_wol_host',['id','name','mac']);
+bind('hg-wol-settings','preview_wol_settings',['interface','selected_host']);
+el('hg-wol-status').onclick=function(){request('wol_status',{},function(d){var r=d.report;table('hg-wol-hosts',r.hosts||[],el('hg-wol-host'),['id','name','mac']);el('hg-wol-settings').elements.interface.value=r.interface;el('hg-wol-settings').elements.selected_host.value=r.selected_host||'';});};
+[['hg-wol-send','wol_send',['id']],['hg-wol-direct','wol_direct',['interface','mac']]].forEach(function(spec){el(spec[0]).onsubmit=function(e){e.preventDefault();if(!window.confirm('发送唤醒报文？发送计数不代表设备已经启动。'))return;var fields={consent:'1'};spec[2].forEach(function(k){fields[k]=el(spec[0]).elements[k].value;});request(spec[1],fields);};});
+el('hg-backup-export').onclick=function(){request('backup_export',{},function(d){el('hg-backup-text').value=d.backup;});};
+el('hg-backup-preview').onclick=function(){request('backup_preview',{backup:el('hg-backup-text').value});};
+bind('hg-backup-rollback','rollback_preview',['generation']);
 }());

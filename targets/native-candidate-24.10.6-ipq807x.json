@@ -1,0 +1,38 @@
+{
+  "schema": 1,
+  "scope": "native-source-candidate-package-verification",
+  "package_architecture": "all",
+  "package_format": "ipk",
+  "QWRT_runtime_ABI_verified": false,
+  "release_authorized": false,
+  "sdk": {
+    "target": "qualcommax/ipq807x",
+    "version": "24.10.6",
+    "url": "https://downloads.immortalwrt.org/releases/24.10.6/targets/qualcommax/ipq807x/immortalwrt-sdk-24.10.6-qualcommax-ipq807x_gcc-13.3.0_musl.Linux-x86_64.tar.zst",
+    "sha256": "75344bd56f3b1e1e876c41efdc01281089804b221d04235310bab76a3e966f9b"
+  },
+  "feeds": {
+    "base": {
+      "repository": "https://github.com/immortalwrt/immortalwrt",
+      "commit": "5fa11a1b5689154d296fdacf1e16a7abccb897b9",
+      "archive_url": "https://codeload.github.com/immortalwrt/immortalwrt/tar.gz/5fa11a1b5689154d296fdacf1e16a7abccb897b9",
+      "archive_sha256": "66b68b15f09c012e2450d94a676fd4a94dfac3f85d49895ae937cf6fe6cd4c2f"
+    },
+    "packages": {
+      "repository": "https://github.com/immortalwrt/packages",
+      "commit": "97af13986bcb1efa6fdcc85af9589dd5640b6e63",
+      "archive_url": "https://codeload.github.com/immortalwrt/packages/tar.gz/97af13986bcb1efa6fdcc85af9589dd5640b6e63",
+      "archive_sha256": "eefb52dfe68b264d151959342f5a3e7f5a3b1d31d9f82382c93df933d555cc8e"
+    },
+    "luci": {
+      "repository": "https://github.com/immortalwrt/luci",
+      "commit": "adb3df4dd156ee56cbf0d8a5578f5fb0d48e2685",
+      "archive_url": "https://codeload.github.com/immortalwrt/luci/tar.gz/adb3df4dd156ee56cbf0d8a5578f5fb0d48e2685",
+      "archive_sha256": "a8af0c310e00ffb9dd843ca0dada93ac520003447f42e743d02d1a16368f2739"
+    }
+  },
+  "boundary": "Pinned engineering SDK/native package and component verification only. No supported QWRT ABI, router execution or full release acceptance implied.",
+  "runtime_virtual_providers": {
+    "ip6tables": "ip6tables-zz-legacy"
+  }
+}

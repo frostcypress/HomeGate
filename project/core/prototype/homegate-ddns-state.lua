@@ -38,7 +38,8 @@ elseif mode=='decision' or mode=='begin' then
     if arg[14] then os.exit(1) end
     if mode=='decision' then io.write(decision..'\n');return end
     if decision~='ready' and decision~='stale' then os.exit(1) end
-    io.write(backup.json(state.begin(c,old,now))..'\n')
+    local started=state.begin(c,old,now);started.event_epoch=os.time();if not state.valid(started)then os.exit(1)end
+    io.write(backup.json(started)..'\n')
 elseif mode=='finish' then
     local rc=arg[14];if (rc~='0' and rc~='1') or not old or not state.same(old,c) or old.outcome~='inflight' then os.exit(1) end
     local result_raw=io.stdin:read(65537) or '';if #result_raw>65536 then os.exit(1) end

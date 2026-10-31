@@ -13,6 +13,10 @@ dir=$base/project/core/prototype
 engine=$dir/homegate-config-prototype.sh
 action=${1:-};shift || fail
 case "$action" in
+    wol-status) [ "$#" -eq 0 ] || fail;exec ash "$dir/homegate-wol.sh" status;;
+    wol) case "$#" in 2) [ "$2" = --confirm ] || fail;exec ash "$dir/homegate-wol.sh" host "$@";;3) [ "$3" = --confirm ] || fail;exec ash "$dir/homegate-wol.sh" direct "$@";;*) fail;;esac;;
+    firewall-status) [ "$#" -eq 0 ] || fail;exec ash "$dir/homegate-firewall.sh" status;;
+    firewall-apply|firewall-cleanup) [ "$#" -eq 1 ] && [ "$1" = --confirm ] || fail;exec ash "$dir/homegate-firewall.sh" "${action#firewall-}" --confirm;;
  access-update|access-refresh|access-status|access-stop|access-reap|access-quiescent) exec ash "$dir/homegate-access-region.sh" "${action#access-}" "$@";;
  access-recent) [ "$#" = 0 ] || fail;exec lua "$dir/homegate-access-audit.lua" read;;
  access-clear|access-clear-denied) [ "$#" = 1 ] && [ "$1" = --confirm ] || fail
@@ -45,7 +49,7 @@ case "$action" in
   # Recreate lost volatile locks without changing the bound durable source.
   # An existing session must still be quiescent before preparation.
   if [ -e /var/run/homegate-engineering/acme-schedule ] || [ -L /var/run/homegate-engineering/acme-schedule ];then ash "$dir/homegate-acme-schedule.sh" quiescent >/dev/null || fail 4;fi;;
- config-recover|production-copy-preview|production-copy-commit|ddns-delete|import-preview|import-commit|activate-preview|config-preview|config-commit|config-finish|config-cancel|secret-put)
+ config-rollback-preview|config-recover|production-copy-preview|production-copy-commit|ddns-delete|import-preview|import-commit|activate-preview|config-preview|config-commit|config-finish|config-cancel|secret-put)
   ash "$dir/homegate-acme-schedule.sh" quiescent >/dev/null || fail 4;;
 esac
 case "$action" in
@@ -98,6 +102,7 @@ case "$action" in
         fi
         exec ash "$dir/homegate-lifecycle-prepare.sh" record-apply "$desired" --confirm;;
     prepare|prepare-resume|config-status|config-export|import-preview|activate-preview|config-preview|config-cancel|grant-cancel) [ "$#" -eq 0 ] || fail;;
+    config-rollback-preview) [ "$#" -eq 1 ] || fail;case "$1" in ''|*[!0-9]*|0*) fail;;esac;[ "${#1}" -le 2 ] && [ "$1" -le 32 ] || fail;;
     import-commit|config-commit|config-finish|grant-commit) [ "$#" -eq 1 ] && token_valid "$1" || fail;;
     dns-provider-status|dns-zones|ddns-sync|ddns-status|grant-preview) [ "$#" -eq 1 ] && id_valid "$1" || fail;;
     grant-revoke) [ "$#" -eq 1 ] && [ "$1" = --confirm ] || fail;;
@@ -113,7 +118,7 @@ case "$action" in
 esac
 # Configuration and credential publication require the finite scheduler to be
 # quiescent. Status/export and explicit revocation remain available.
-case "$action" in ddns-delete|prepare|prepare-resume|import-preview|import-commit|activate-preview|config-preview|config-commit|config-finish|config-cancel|secret-put)
+case "$action" in config-rollback-preview|ddns-delete|prepare|prepare-resume|import-preview|import-commit|activate-preview|config-preview|config-commit|config-finish|config-cancel|secret-put)
     if [ -e /var/run/homegate-engineering/ddns-schedule ] || [ -L /var/run/homegate-engineering/ddns-schedule ];then
         ash "$dir/homegate-ddns-schedule.sh" quiescent >/dev/null || fail 4
     fi;;
@@ -127,6 +132,7 @@ done
 case "$action" in
     prepare) exec ash "$dir/homegate-lifecycle-prepare.sh" prepare;;
     prepare-resume) exec ash "$dir/homegate-lifecycle-prepare.sh" resume;;
+    config-rollback-preview) exec ash "$engine" --persistent rollback-preview "$1";;
     config-status) exec ash "$engine" --persistent status;;
     config-export) exec ash "$engine" --persistent export;;
     import-preview) exec ash "$engine" --persistent migration-source-preview;;

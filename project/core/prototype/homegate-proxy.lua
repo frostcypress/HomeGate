@@ -18,7 +18,7 @@ if mode=='plan' then
  if policy=='allow' and main.access_region=='CN'then local f=io.open('/etc/homegate/access/CN.cidr','rb');if not f then fail()end;local ok=pcall(assert(loadfile(dir..'/access-region.lua'))().cache,f,nil,os.time());f:close();if not ok then fail()end end
  local hp,sp=tonumber(main.proxy_http_port),tonumber(main.proxy_https_port)
  if not hp or hp<1024 or not sp or sp<1024 or hp==sp then fail()end
- local out={routes={},certificates={},policy=policy,http_port=hp,https_port=sp,public_https_port=tonumber(main.https_port),allow=main.access_allow,deny=main.access_deny,region=policy=='allow' and main.access_region or ''}
+ local out={routes={},certificates={},policy=policy,http_port=hp,https_port=sp,public_https_port=tonumber(main.https_port),public_http_port=tonumber(main.http_port),auto_firewall=main.auto_firewall=='1',allow=main.access_allow,deny=main.access_deny,region=policy=='allow' and main.access_region or ''}
  local seen,certs={},{}
  local function covers(pattern,name)return pattern==name or (pattern:sub(1,2)=='*.' and name:match('^[^.]+%.(.+)$')==pattern:sub(3))end
  for name in (selection..','):gmatch('(.-),')do
@@ -28,9 +28,6 @@ if mode=='plan' then
   if not assert(loadfile(dir..'/configuration-validation.lua'))().target(target,assert(loadfile(dir..'/cloudflare-record-plan.lua'))())then fail()end
   local scheme,authority,tail=target:match('^(https?)://([^/?]+)(.*)$');if not scheme then fail()end
   local host=authority:match('^%[([^%]]+)%]') or authority:match('^([^:]+)')
-  -- nginx's X509_check_host path does not establish IP SAN identity. Refuse
-  -- literal-IP HTTPS upstreams until an equivalent verified transport exists.
-  if scheme=='https' and (host:find(':',1,true) or host:match('^[%d.]+$'))then fail()end
   local base,query=tail:match('^(.-)%?(.*)$');if not base then base=tail end
   if base:sub(-1)=='/'then base=base:sub(1,-2)end
   local cert=''
@@ -133,7 +130,12 @@ if mode=='render'then
   if r.https then add('ssl_protocols TLSv1.2 TLSv1.3; ssl_certificate '..pairs[r.certificate]..'/fullchain.pem; ssl_certificate_key '..pairs[r.certificate]..'/privkey.pem;')end
   add('location / { proxy_http_version 1.1; proxy_buffering off; proxy_request_buffering off; proxy_connect_timeout 10s; proxy_read_timeout 3600s; proxy_send_timeout 60s;')
   add('proxy_set_header Host '..quote(r.authority)..'; proxy_set_header Forwarded ""; proxy_set_header X-Forwarded-For $remote_addr; proxy_set_header X-Forwarded-Host $http_host; proxy_set_header X-Forwarded-Proto $scheme; proxy_set_header X-Real-IP $remote_addr; proxy_set_header Upgrade $hg_upgrade; proxy_set_header Connection $hg_connection;')
-  if r.scheme=='https'then add('proxy_ssl_verify on; proxy_ssl_verify_depth 8; proxy_ssl_trusted_certificate /etc/ssl/certs/ca-certificates.crt; proxy_ssl_server_name on; proxy_ssl_name '..quote(r.host)..';')end
+  -- Keep IPv6 brackets through nginx's port stripping and SNI suppression.
+  -- The required private component uses binary IP SAN matching, never DNS/CN.
+  if r.scheme=='https'then
+   local ipv6=r.host:find(':',1,true);local literal=ipv6 or r.host:match('^[%d.]+$');local name=ipv6 and '['..r.host..']' or r.host
+   add('proxy_ssl_verify on; proxy_ssl_verify_depth 8; proxy_ssl_trusted_certificate /etc/ssl/certs/ca-certificates.crt; proxy_ssl_server_name '..(literal and 'off' or 'on')..'; proxy_ssl_name '..quote(name)..';')
+  end
   local uri=complex(r.base)..'$request_uri'
   if r.query then uri=complex(r.base)..'$hg_raw_path?'..complex(r.query)..'$hg_join$args' end
   add('proxy_pass '..quote(r.scheme..'://hg_up_'..r.id..uri)..'; } }')
@@ -141,7 +143,7 @@ if mode=='render'then
  add('}');write(root..'/candidate.conf',table.concat(lines,'\n')..'\n');return
 end
 if mode=='version'then
- local major,minor,patch=read(root..'/version',8192):match('^nginx version: nginx/(%d+)%.(%d+)%.(%d+)\n$')
+ local major,minor,patch=read(root..'/version',8192):match('^nginx version: nginx/(%d+)%.(%d+)%.(%d+) %(homegate%-ip%-san%-v1%)\n$')
  major,minor,patch=tonumber(major),tonumber(minor),tonumber(patch)
  if major~=1 or not minor or minor<30 or (minor==30 and patch<6)then fail()end;return
 end
@@ -156,10 +158,11 @@ end
 if mode=='report'then
  local state=arg[2];if not ({starting=true,running=true,stopped=true,failed=true,restart_required=true})[state]then fail()end
  local reload=arg[3] or 'idle';if not ({idle=true,reloading=true,verified=true,rejected=true})[reload]then fail()end
- write(root..'/report.next',codec.json({state=state,reload_state=reload})..'\n');if not os.rename(root..'/report.next',root..'/report')then fail()end;return
+ local cleanup=arg[4];if cleanup and cleanup~='true' and cleanup~='false'then fail()end
+ local report={state=state,reload_state=reload};if cleanup then report.firewall_cleanup_ok=cleanup=='true'end;write(root..'/report.next',codec.json(report)..'\n');if not os.rename(root..'/report.next',root..'/report')then fail()end;return
 end
 if mode=='status'then
  local d=json.parse(read(root..'/report',1024));if type(d)~='table' or type(d.state)~='string'then fail()end
- local p=load();io.write(codec.json({api_version=1,engineering=true,ok=true,phase='proxy',state=d.state,running=arg[2]=='true',routes=#p.routes,policy=p.policy,health_checked=false,automatic_reload=true,reload_state=d.reload_state or 'idle',generation=material('accepted').generation,cn_available=p.region=='CN',audit_available=arg[2]=='true' and read(root..'/audit-health',6)=='true\n',cn_snapshot=true,firewall_changed=false,effect='none',write_ready=false})..'\n');return
+ local p=load();io.write(codec.json({api_version=1,engineering=true,ok=true,phase='proxy',state=d.state,running=arg[2]=='true',routes=#p.routes,policy=p.policy,health_checked=false,automatic_reload=true,reload_state=d.reload_state or 'idle',generation=material('accepted').generation,cn_available=p.region=='CN',audit_available=arg[2]=='true' and read(root..'/audit-health',6)=='true\n',cn_snapshot=true,firewall_status_separate=true,firewall_cleanup_ok=d.firewall_cleanup_ok,effect='none',write_ready=false})..'\n');return
 end
 fail()

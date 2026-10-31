@@ -1,0 +1,55 @@
+--- a/src/event/ngx_event_openssl.c
++++ b/src/event/ngx_event_openssl.c
+@@ -5257,11 +5257,51 @@
+ ngx_int_t
+ ngx_ssl_check_host(ngx_connection_t *c, ngx_str_t *name)
+ {
+-    X509   *cert;
++    X509    *cert;
++    u_char  *p, address[16], text[NGX_INET6_ADDRSTRLEN + 1];
++    size_t   len, addresslen;
+ 
+     cert = SSL_get_peer_certificate(c->ssl->connection);
+     if (cert == NULL) {
+         return NGX_ERROR;
++    }
++
++    /* HomeGate: literal addresses require iPAddress SAN, never DNS/CN.
++     * nginx keeps IPv6 brackets while stripping an optional upstream port.
++     * Chain, validity and purpose checks remain in the upstream TLS path. */
++    p = name->data;
++    len = name->len;
++    addresslen = 0;
++
++    if (len >= 2 && p[0] == '[' && p[len - 1] == ']') {
++        p++;
++        len -= 2;
++    }
++
++    if (len > 0 && len < sizeof(text)
++        && ngx_strlchr(p, p + len, '\0') == NULL)
++    {
++        ngx_memcpy(text, p, len);
++        text[len] = '\0';
++
++        if (inet_pton(AF_INET, (char *) text, address) == 1) {
++            addresslen = 4;
++        }
++#if (NGX_HAVE_INET6)
++        else if (inet_pton(AF_INET6, (char *) text, address) == 1) {
++            addresslen = 16;
++        }
++#endif
++
++        if (addresslen != 0) {
++#ifdef X509_CHECK_FLAG_ALWAYS_CHECK_SUBJECT
++            if (X509_check_ip(cert, address, addresslen, 0) == 1) {
++                goto found;
++            }
++#endif
++            /* Unsupported identity API or a mismatch must fail closed. */
++            goto failed;
++        }
+     }
+ 
+ #ifdef X509_CHECK_FLAG_ALWAYS_CHECK_SUBJECT

@@ -28,5 +28,17 @@
     "path": "libs/luci-lib-nixio",
     "target_package": "luci-lib-nixio",
     "target_runtime_verified": false
-  }
+  },
+  "local_patches": {
+    "105-ip-san.patch": {
+      "sha256": "efbeca0b74c1c70eebc388ee2193590c6f927f0b5b97b8de2dca26da559f8910",
+      "author": "HomeGate project",
+      "license": "BSD-2-Clause",
+      "scope": "nginx peer identity only: X509_check_ip for binary IPv4/IPv6 SAN; existing DNS and TLS chain/validity checks unchanged",
+      "upstream_file": "src/event/ngx_event_openssl.c",
+      "reference": "https://docs.openssl.org/3.0/man3/X509_check_host/"
+    }
+  },
+  "private_build": "homegate-ip-san-v1",
+  "package_release": 2
 }

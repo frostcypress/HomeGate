@@ -40,6 +40,7 @@ jobs:
       - name: 核实版本、路径和发布门禁
         run: |
           python3 scripts/project.py --check
+          python3 scripts/native-target-audit-regressions.py
           python3 scripts/重构回归.py
           python3 scripts/CI依赖归档回归.py
       - name: 验证宿主专项分组与失败阻断
@@ -298,7 +299,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        group: [engineering-core, engineering-copy, engineering-certificate, engineering-acme-providers, engineering-acme-failure, engineering-acme-schedule, engineering-proxy, engineering-proxy-reload, engineering-access]
+        group: [native-production, engineering-core, engineering-copy, engineering-certificate, engineering-acme-providers, engineering-acme-failure, engineering-acme-schedule, engineering-proxy, engineering-proxy-reload, engineering-access, engineering-wol]
     steps:
       - name: 检出相同源码
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1

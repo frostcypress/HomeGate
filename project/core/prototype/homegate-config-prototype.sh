@@ -15,6 +15,7 @@ projection_transaction=false
 source_migration_transaction=false
 production_copy_mode=false
 production_copy_enabled=false
+native_editor_enabled=false
 # Engineering profile keeps these two fixed read-only source paths unrelocated.
 production_copy_source=/etc/config/homegate
 production_copy_runtime=/var/run/homegate
@@ -220,7 +221,7 @@ open_store() {
         workers_pending=true
     fi
     if [ "$public_mode" = true ]; then
-        case "$command" in status|export) ;;
+        case "$command" in status|export|editor-state-read) ;;
             *)
                 if [ ! -e "$store/.supervisor.lock" ] && [ ! -L "$store/.supervisor.lock" ]; then
                     (set -C; : > "$store/.supervisor.lock") 2>/dev/null || :
@@ -259,13 +260,13 @@ open_store() {
     if [ "$persistent_mode" = true ] && { [ -e "$store/startup-intent" ] || [ -L "$store/startup-intent" ] ||
         [ -e "$store/.startup-intent-next" ] || [ -L "$store/.startup-intent-next" ] ||
         [ -e "$store/.startup-active-next" ] || [ -L "$store/.startup-active-next" ]; }; then
-        case "$command" in status|export|runtime-startup-snapshot-read) ;;
+        case "$command" in status|export|editor-state-read|runtime-startup-snapshot-read) ;;
             *) fail 'Startup intent requires explicit reconciliation' 4;; esac
     fi
     # Fence source/vault mutation under the same business locks used by proxy
     # admission. Read-only certificate renewal remains available.
     if [ "$persistent_mode" = true ] && { [ -e /var/run/homegate/proxy ] || [ -L /var/run/homegate/proxy ]; };then
-        case "$command" in init|preview|cancel|credential-put|credential-delete|migration-source-commit|commit*|projection-publish|apply-finish*|restore-finish*|recover-application|recover-fence|rollback-preview)
+        case "$command" in init|preview|editor-preview|cancel|credential-put|credential-delete|migration-source-commit|commit*|projection-publish|apply-finish*|restore-finish*|recover-application|recover-fence|rollback-preview)
             ash "$(dirname "$0")/homegate-proxy.sh" quiescent >/dev/null 2>/dev/null || fail 'Proxy must be quiescent before configuration changes' 4;;esac
     fi
     max_revision=0
@@ -288,7 +289,7 @@ open_store() {
     persistent_fence_read
     journal_read
     if [ "$persistent_mode" = true ] && { [ -e "$store/dns-batch-results" ] || [ -L "$store/dns-batch-results" ] || [ -e "$store/.dns-batch-results-next" ] || [ -L "$store/.dns-batch-results-next" ]; }; then
-        case "$command" in status|export) ;;
+        case "$command" in status|export|editor-state-read) ;;
             dns-recovery-check|dns-recovery-snapshot-read|migration-source-recovery-snapshot-read|runtime-ddns-recovery-snapshot-read)
                 ash "$(dirname "$0")/homegate-ddns-batch-results.sh" check-recovery >/dev/null 2>/dev/null || fail 'Batch results require explicit recovery' 4;;
             *) ash "$(dirname "$0")/homegate-ddns-batch-results.sh" check-writer >/dev/null 2>/dev/null || fail 'Batch results require explicit recovery' 4;;
@@ -297,32 +298,32 @@ open_store() {
     if [ "$persistent_mode" = true ] && { [ -e "$store/dns-operation" ] || [ -L "$store/dns-operation" ]; }; then
         # Presence alone fences ALL mutations/lifecycle recovery, even malformed
         # or incomplete receipts. No environment or feature gate can bypass it.
-        case "$command" in status|export|dns-recovery-check|dns-recovery-snapshot-read|migration-source-recovery-snapshot-read|runtime-ddns-recovery-snapshot-read) ;;
+        case "$command" in status|export|editor-state-read|dns-recovery-check|dns-recovery-snapshot-read|migration-source-recovery-snapshot-read|runtime-ddns-recovery-snapshot-read) ;;
             *) fail 'DNS operation requires explicit durable recovery' 4;; esac
     fi
     if [ "$persistent_mode" = true ] && { [ -e "$store/dns-retirement" ] || [ -L "$store/dns-retirement" ] ||
         [ -e "$store/.dns-retirement-next" ] || [ -L "$store/.dns-retirement-next" ] ||
         [ -e "$store/dns-retiring" ] || [ -L "$store/dns-retiring" ] ||
         [ -e "$store/dns-retired" ] || [ -L "$store/dns-retired" ]; }; then
-        case "$command" in status|export|dns-recovery-check|dns-recovery-snapshot-read|migration-source-recovery-snapshot-read|runtime-ddns-recovery-snapshot-read) ;;
+        case "$command" in status|export|editor-state-read|dns-recovery-check|dns-recovery-snapshot-read|migration-source-recovery-snapshot-read|runtime-ddns-recovery-snapshot-read) ;;
             *) ash "$(dirname "$0")/homegate-dns-retention.sh" check >/dev/null 2>/dev/null || fail 'DNS retirement requires durable recovery' 4;; esac
     fi
     if [ "$persistent_mode" = true ] && { [ -e "$store/dns-settled" ] || [ -L "$store/dns-settled" ] ||
         [ -e "$store/dns-collection" ] || [ -L "$store/dns-collection" ] || [ -e "$store/.dns-collection-next" ] || [ -L "$store/.dns-collection-next" ]; }; then
-        case "$command" in status|export|dns-recovery-check|dns-recovery-snapshot-read|migration-source-recovery-snapshot-read|runtime-ddns-recovery-snapshot-read) ;;
+        case "$command" in status|export|editor-state-read|dns-recovery-check|dns-recovery-snapshot-read|migration-source-recovery-snapshot-read|runtime-ddns-recovery-snapshot-read) ;;
             *) ash "$(dirname "$0")/homegate-dns-recovery.sh" archive-check >/dev/null 2>/dev/null || fail 'DNS collection requires durable recovery' 4;; esac
     fi
     if [ "$persistent_mode" = true ]; then
         if [ "$journal_active" = true ]; then
             [ "$persistent_fence_pending" = true ] && [ "$fence_base:$fence_target:$fence_token" = "$journal_base:$journal_target:$journal_token" ] || fail 'Application and persistent fence mismatch' 7
         elif [ "$persistent_fence_pending" = true ]; then
-            case "$command" in status|export|recover-fence) ;; *) fail 'Persistent fence requires reconciliation' 7;; esac
+            case "$command" in status|export|editor-state-read|recover-fence) ;; *) fail 'Persistent fence requires reconciliation' 7;; esac
         fi
-        case "$command" in status|export|recover-application|recover-fence|service-apply|service-recover|apply-finish*|restore-finish*|projection-publish|apply-*-read|restore-*-read|apply-authorize|restore-authorize|service-intent-read) ;;
+        case "$command" in status|export|editor-state-read|recover-application|recover-fence|service-apply|service-recover|apply-finish*|restore-finish*|projection-publish|apply-*-read|restore-*-read|apply-authorize|restore-authorize|service-intent-read) ;;
             *) persistent_ready;; esac
     fi
     if [ "$journal_active" = true ]; then
-        case "$command" in status|export|recover-application|service-apply|service-recover|apply-finish|restore-finish|apply-finish-intent|restore-finish-intent|apply-finish-projection|restore-finish-projection|projection-publish|apply-snapshot-read|restore-snapshot-read|apply-authorize|restore-authorize|apply-service-snapshot-read|restore-service-snapshot-read|service-intent-read) ;;
+        case "$command" in status|export|editor-state-read|recover-application|service-apply|service-recover|apply-finish|restore-finish|apply-finish-intent|restore-finish-intent|apply-finish-projection|restore-finish-projection|projection-publish|apply-snapshot-read|restore-snapshot-read|apply-authorize|restore-authorize|apply-service-snapshot-read|restore-service-snapshot-read|service-intent-read) ;;
             *) fail 'Application recovery barrier is active' 4;; esac
     fi
 }
@@ -783,7 +784,7 @@ full_plan_write() {
     diff=$(lua "$codec" diff "$store/gen-$head_revision/public.conf" "$scratch" 2>/dev/null) || fail 'Unable to compute public diff'
     drop_scratch
     credential_policy=retain-matching-resource
-    if [ "$plan_kind" = migration ] || [ "$plan_kind" = migration-source ] || [ "$plan_kind" = production-copy ]; then
+    if [ "$plan_kind" = migration ] || [ "$plan_kind" = migration-source ] || [ "$plan_kind" = production-copy ] || [ "$plan_kind" = editor ]; then
         digest_file "$store/gen-$plan_source/manifest"; plan_digest=$digest
         credential_policy=migrate-legacy-private-fields
     fi
@@ -792,7 +793,7 @@ full_plan_write() {
     printf '%s\n' "$head_revision" "$token" "$plan_kind" "$plan_source" "$created" "$deadline" "$plan_boot" "$plan_baseline" "$plan_digest" "$plan_public" > "$scratch" || fail 'Unable to write public UCI plan'
     mv -f "$scratch" "$store/pending" || fail 'Unable to publish preview'
     scratch=
-    if [ "$plan_kind" = migration-source ] || [ "$plan_kind" = production-copy ]; then
+    if [ "$plan_kind" = migration-source ] || [ "$plan_kind" = production-copy ] || [ "$plan_kind" = editor ]; then
         fsync "$store/pending" "$store" 2>/dev/null || fail 'Unable to synchronize migration preview' 7
     fi
     printf '{"api_version":1,"prototype":true,"ok":true,"confirmation":"%s","base_revision":%s,"operation":"%s","expires_in":300,"can_commit":true,"service_enabled":false,"credentials_omitted":true,"credential_policy":"%s","scope":"public-uci-v1","changes":%s}\n' "$token" "$head_revision" "$plan_kind" "$credential_policy" "$diff"
@@ -843,7 +844,8 @@ plan_read() {
         IFS= read -r plan_base && IFS= read -r plan_token && IFS= read -r plan_kind && IFS= read -r plan_source || fail 'Invalid preview header'
         number "$plan_base" 1 32 && [ "$plan_base" = "$value" ] || fail 'Invalid preview base'
         [ "$plan_base" = "$head_revision" ] && [ "$plan_token" = "$confirmation" ] || fail 'Expired confirmation' 5
-        case "$plan_kind" in import) [ "$plan_source" = 0 ] || fail 'Invalid import preview';;
+        case "$plan_kind" in editor) [ "$persistent_mode:$native_editor_enabled" = true:true ] && number "$plan_source" 1 32 || fail 'Invalid editor preview';;
+            import) [ "$plan_source" = 0 ] || fail 'Invalid import preview';;
             rollback) number "$plan_source" 1 32 && [ "$plan_source" = "$value" ] || fail 'Invalid rollback preview';;
             migration) [ "$public_mode" = true ] && [ "$head_revision" = 1 ] && number "$plan_source" 2 32 && [ "$plan_source" = "$value" ] || fail 'Invalid migration preview';;
             migration-source)
@@ -869,7 +871,7 @@ plan_read() {
         allocate_scratch
         printf '%s\n' "$plan_public" > "$scratch" || fail 'Unable to inspect preview candidate'
         digest_file "$scratch"; drop_scratch
-        if [ "$plan_kind" = migration ] || [ "$plan_kind" = migration-source ] || [ "$plan_kind" = production-copy ]; then
+        if [ "$plan_kind" = migration ] || [ "$plan_kind" = migration-source ] || [ "$plan_kind" = production-copy ] || [ "$plan_kind" = editor ]; then
             validate_generation "$plan_source"
             [ "$validated_parent" = "$head_revision" ] && [ -e "$store/gen-$plan_source/legacy.conf" ] || fail 'Invalid migration candidate'
             [ "$(cat "$store/gen-$plan_source/public.conf")" = "$plan_public" ] || fail 'Migration public candidate changed' 5
@@ -1125,6 +1127,8 @@ case "$command" in
         [ "$#" -eq 0 ] || fail 'Unexpected recovery arguments' 2
         projection_role=restore;;
     init|status|export|preview|cancel) [ "$#" -eq 0 ] || fail 'Unexpected arguments' 2;;
+    editor-state-read) [ "$#" = 0 ] && [ "$persistent_mode:$native_editor_enabled" = true:true ] || fail 'Native editor reader is not ready' 2;;
+    editor-preview) [ "$#" = 1 ] && [ "$persistent_mode:$native_editor_enabled" = true:true ] && number "$1" 1 32 || fail 'Native editor is not ready' 2;editor_base=$1;;
     writer-check) [ "$#" -eq 0 ] && [ "$persistent_mode" = true ] || fail 'Writer check requires persistent namespace' 2;;
     dns-recovery-check|dns-recovery-snapshot-read)
         [ "$#" -eq 0 ] && [ "$persistent_mode" = true ] && [ "$dns_recovery_read_enabled" = true ] || fail 'DNS recovery reader is not ready' 2;;
@@ -1271,6 +1275,22 @@ case "$command" in
     export)
         need_initialized
         cat "$store/gen-$head_revision/public.conf" || fail 'Unable to export public config'
+        ;;
+    editor-state-read)
+        need_initialized
+        [ -p /proc/self/fd/3 ] || fail 'Private editor requires inherited pipe' 7
+        lua "$codec" editor-state "$store/gen-$head_revision" "$head_revision" 2>/dev/null || fail 'Private editor reader failed' 7
+        ;;
+    editor-preview)
+        need_initialized
+        [ "$head_revision" = "$editor_base" ] || fail 'Editor baseline changed' 5
+        begin_generation
+        head -c "$((public_limit+1))" > "$generation_dir/legacy.conf" || fail 'Editor input unavailable'
+        number "$(stat -c %s "$generation_dir/legacy.conf")" 1 "$public_limit" || fail 'Editor input size'
+        lua "$codec" editor-migrate "$generation_dir/legacy.conf" "$generation_dir" "$store/gen-$head_revision" 2>/dev/null || fail 'Editor candidate invalid'
+        seal_generation
+        plan_public=$(cat "$generation_dir/public.conf") || fail 'Editor public candidate unavailable'
+        plan_kind=editor;plan_source=$new_revision;plan_write;generation_dir=
         ;;
     snapshot-read|dns-recovery-snapshot-read)
         need_initialized
@@ -1424,13 +1444,13 @@ case "$command" in
             validate_generation "$plan_source"
             [ "$(cat "$store/gen-$plan_source/public.conf")" = "$plan_public" ] || fail 'Rollback config changed'
             copy_source=$plan_source
-        elif [ "$plan_kind" = migration ] || [ "$plan_kind" = migration-source ] || [ "$plan_kind" = production-copy ]; then copy_source=$plan_source
+        elif [ "$plan_kind" = migration ] || [ "$plan_kind" = migration-source ] || [ "$plan_kind" = production-copy ] || [ "$plan_kind" = editor ]; then copy_source=$plan_source
         else copy_source=$head_revision; fi
         begin_generation
         printf '%s\n' "$plan_public" > "$generation_dir/public.conf" || fail 'Unable to write candidate config'
         copy_vault "$copy_source"
         [ "$projection_transaction" = false ] || projection_capture
-        if [ "$plan_kind" = migration ] || [ "$plan_kind" = migration-source ] || [ "$plan_kind" = production-copy ]; then
+        if [ "$plan_kind" = migration ] || [ "$plan_kind" = migration-source ] || [ "$plan_kind" = production-copy ] || [ "$plan_kind" = editor ]; then
             cp "$store/gen-$plan_source/legacy.conf" "$generation_dir/legacy.conf" || fail 'Unable to retain private migration backup'
         fi
         publish_generation

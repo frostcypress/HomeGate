@@ -35,14 +35,17 @@
     "explicit continuous DDNS session and lifecycle enable/disable intent",
     "confirmed production configuration and private credential copy without production takeover",
     "local/ACME certificate publication and explicit renewal session",
-    "explicit isolated TLS proxy, fixed CN snapshot and bounded recent access observations"
+    "explicit isolated TLS proxy, fixed CN snapshot and bounded recent access observations",
+    "literal IPv4/IPv6 HTTPS upstream IP SAN identity; private component marker required",
+    "explicit current-proxy IPv6 firewall admission, bounded reconcile and retained cleanup ownership",
+    "explicit saved-host and config-independent direct raw+UDP WOL; confirmed transport counts are not device-wake proof"
   ],
   "excluded": [
     "full production core takeover and automatic boot dispatch",
-    "firewall",
-    "WOL",
     "public CA/DNS propagation acceptance",
-    "target worker ABI and resource acceptance"
+    "target worker ABI and resource acceptance",
+    "target kernel IPv6 NAT/REDIRECT and firewall reload/boot acceptance",
+    "target physical raw/UDP capture and hardware wake acceptance"
   ],
   "runtime_requirements": [
     "Lua 5.1",
@@ -55,18 +58,42 @@
     "ubus",
     "coreutils-stat",
     "luci-lib-nixio local UNIX datagram API",
-    "homegate-nginx 1.30.6 private native component"
+    "homegate-nginx 1.30.6-2 private native component, homegate-ip-san-v1 marker",
+    "ip6tables provider: bounded -w support, IPv6 nat REDIRECT and filter TCP; target kernel capabilities unverified",
+    "homegate-wol private libc native transport, root and actual kernel raw/interface capabilities"
   ],
   "runtime_components": {
     "homegate-nginx": {
       "recipe": "packaging/components/homegate-nginx",
       "private_binary": "/usr/libexec/homegate-nginx/nginx",
       "full_target_build_verified": false,
-      "target_execution_verified": false
+      "target_execution_verified": false,
+      "required_build": "homegate-ip-san-v1",
+      "package_release": 2,
+      "literal_IP_SAN_patch": "packaging/components/homegate-nginx/patches/105-ip-san.patch"
     },
     "luci-lib-nixio": {
       "recipe_reference": "packaging/components/homegate-nginx/sources.json",
       "target_execution_verified": false
+    },
+    "homegate-wol": {
+      "recipe": "packaging/components/homegate-wol",
+      "private_binary": "/usr/libexec/homegate-wol/send",
+      "target_execution_verified": false,
+      "real_target_raw_UDP_capture_verified": false
     }
+  },
+  "firewall_engineering": {
+    "backend": "/usr/sbin/ip6tables",
+    "owned_chains": [
+      "HG_ENG_NAT",
+      "HG_ENG_INPUT"
+    ],
+    "production_chains_modified": false,
+    "automatic_boot_admission": false,
+    "whole_operation_timeout_seconds": 6,
+    "cold_cleanup_marker": "/etc/homegate-engineering/firewall-owned",
+    "real_kernel_verified": false,
+    "package_reference": "https://github.com/openwrt/openwrt/blob/openwrt-24.10/package/network/utils/iptables/Makefile"
   }
 }

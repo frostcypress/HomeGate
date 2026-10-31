@@ -82,7 +82,7 @@ elseif arg[1]=="source-baseline" and arg[2] and arg[3] and not arg[4] then
             if value~=slots[name] then fail() end
         end
     end
-elseif arg[1]=="migrate" and arg[2] and arg[3] and not arg[4] then
+elseif (arg[1]=="migrate" and not arg[4] or arg[1]=="editor-migrate" and arg[4] and not arg[5]) and arg[2] and arg[3] then
     local body,slots=codec.migration(read(arg[2]))
     if not body then fail() end
     local function write(path,value)
@@ -95,7 +95,28 @@ elseif arg[1]=="migrate" and arg[2] and arg[3] and not arg[4] then
     -- The Shell caller holds the store lock and allocated an empty 0700
     -- generation. These are generated slot names, never caller-supplied paths.
     write(arg[3].."/public.conf",body)
+    if arg[1]=='editor-migrate'then
+        for _,slot in ipairs(allowed(codec.parse(body)))do
+            if slots[slot]==nil then local f=io.open(arg[4]..'/credentials/'..slot,'rb');if f then
+                local value=f:read(4097);if not f:close() or not value or #value<1 or #value>4096 then fail()end;slots[slot]=value
+            end end
+        end
+    end
     for slot,value in pairs(slots) do write(arg[3].."/credentials/"..slot,value) end
+elseif arg[1]=='editor-state' and arg[2] and arg[3] and not arg[4]then
+    local doc=parsed(arg[2]..'/public.conf');local flags={}
+    local f=io.open(arg[2]..'/legacy.conf','rb');if f then local raw=f:read(262145);assert(f:close());local d=codec.private_configuration(raw)
+        if d then flags=d.switches end
+    end
+    for _,s in ipairs(doc)do
+        local v=s.values;local sw=flags[s.name] or {};if sw.enabled then v.enabled=sw.enabled end;if sw.access_enabled then v.access_enabled=sw.access_enabled end
+        local names=s.kind=='dns_account' and {'key_id','secret','account_id','endpoint'} or s.kind=='ddns_rule' and {'url'} or s.kind=='web_rule' and {'target'} or {}
+        for _,key in ipairs(names)do
+            local prefix=s.kind=='dns_account' and v.provider or s.kind=='ddns_rule' and 'ddns' or 'web';local f=io.open(arg[2]..'/credentials/'..prefix..'.'..s.name..'.'..key,'rb')
+            if f then local value=f:read(4097);if not f:close() or #value>4096 then fail()end;v[key=='key_id' and 'id' or key]=value end
+        end
+    end
+    local f=assert(io.open('/proc/self/fd/3','wb'));assert(f:write(codec.json({revision=tonumber(arg[3]),configuration=doc}),'\n'));assert(f:close())
 elseif arg[1]=="diff" and arg[2] and arg[3] and not arg[4] then
     local before=parsed(arg[2])
     local cursor={foreach=function(self,pkg,kind,cb)

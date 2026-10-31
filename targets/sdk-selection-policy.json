@@ -1,0 +1,23 @@
+{
+  "schema": 1,
+  "selection_authority": "user-explicit",
+  "selection_date": "2026-10-31",
+  "policy": "Choose SDK series by package format; do not ask for the series again.",
+  "formats": {
+    "ipk": {
+      "sdk_series": "24.10",
+      "distribution": "ImmortalWrt",
+      "current_pinned_candidate": "targets/native-candidate-24.10.6-ipq807x.json",
+      "current_version": "24.10.6"
+    },
+    "apk": {
+      "sdk_series": "25.12",
+      "distribution": "ImmortalWrt",
+      "current_pinned_candidate": null,
+      "current_version": null
+    }
+  },
+  "package_format_independent_of_LuCI": true,
+  "changes_target_verification_flags": false,
+  "future_APK_SDK_download_not_performed": true
+}

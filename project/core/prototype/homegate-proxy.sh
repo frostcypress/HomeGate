@@ -86,7 +86,10 @@ quiet() {
 }
 if [ "$action" != serve ];then exec 3>&- 4>&- 5>&- 6>&- 7>&- 8>&- 9>&-;fi
 if [ "$action" = status ] || [ "$action" = stop ] || [ "$action" = quiescent ] || [ "$action" = reap ];then
- if ! hg_exists "$P";then idle;exit 0;fi
+ if ! hg_exists "$P";then
+  case "$action" in stop|quiescent|reap) ash "$HG_DIR/homegate-firewall.sh" cleanup-if-owned --confirm >/dev/null || fail 4;;esac
+  idle;exit 0
+ fi
  check && live || fail
  if [ "$action" = status ];then
   if [ "$running" = true ] && hg_exists "$P/owner";then owner || fail;actual=$(lua "$process" info "$pid" "$(cat "$P/token")") || fail
@@ -101,6 +104,7 @@ if [ "$action" = status ] || [ "$action" = stop ] || [ "$action" = quiescent ] |
   lua "$HG_DIR/homegate-proxy.lua" status "$running" || fail;exit 0
  fi
  quiet || fail 4
+ ash "$HG_DIR/homegate-firewall.sh" cleanup-if-owned --confirm >/dev/null || fail 4
  if [ "$action" = quiescent ];then idle;exit 0;fi
  control || fail 4
  clear_next || fail
@@ -144,6 +148,7 @@ if [ "$action" = start ];then
  case "$selection" in ''|*[!a-zA-Z0-9_,_-]*) fail 2;;esac
  case "$policy" in open|allow) ;;*) fail 2;;esac
  hg_dir "$HG_RUN" && hg_dir "$HG_STORE" && ! hg_exists "$P" || fail 4
+ ash "$HG_DIR/homegate-firewall.sh" cleanup-if-owned --confirm >/dev/null || fail 4
  if hg_exists /etc/homegate/access;then hg_dir /etc/homegate/access || fail;fi
  if hg_exists /etc/homegate/access/CN.cidr;then hg_file /etc/homegate/access/CN.cidr 25165824 || fail;fi
  business && ash "$HG_DIR/homegate-config-prototype.sh" --persistent writer-check >/dev/null && ash "$HG_DIR/homegate-startup-active.sh" check >/dev/null || fail 4
@@ -186,7 +191,8 @@ printf '%s:%s\n' "$$" "$5" > "$P/owner" || fail
 interrupted=false;trap 'interrupted=true' TERM INT
 finish() {
  unlock
- lua "$HG_DIR/homegate-proxy.lua" report "$1" || :
+ cleanup_ok=true;ash "$HG_DIR/homegate-firewall.sh" cleanup-if-owned --confirm >/dev/null || cleanup_ok=false
+ lua "$HG_DIR/homegate-proxy.lua" report "$1" idle "$cleanup_ok" || :
  # This process is still the validated session/group leader. Never signal a
  # recorded PID or any global nginx service. The hard tail covers all workers.
  kill -TERM -- "-$$" 2>/dev/null || :
@@ -237,7 +243,7 @@ reject() {
  now=$(lua "$process" now) || finish failed;retry_at=$((now+60))
  unlock
 }
-retry_at=0
+retry_at=0;firewall_tick=0
 while :;do
  [ "$interrupted" = false ] && ! hg_exists "$P/stop" || finish stopped
  child_live || finish failed
@@ -247,6 +253,11 @@ while :;do
  fi
  [ "$(cat "$P/binding")" = "$(hg_binding)" ] && [ "$(cat "$P/intent")" = "$(intent)" ] && ! hg_exists "$HG_STORE/startup-intent" && ! hg_exists "$HG_STORE/.startup-intent-next" && ! hg_exists "$HG_STORE/.startup-active-next" || finish restart_required
  lua "$HG_DIR/homegate-proxy.lua" validity || finish restart_required
+ if [ "$firewall_tick" -le 0 ];then
+  ash "$HG_DIR/homegate-firewall.sh" watch "$token" >/dev/null || :
+  firewall_tick=5
+ fi
+ firewall_tick=$((firewall_tick-1))
  if ! lua "$HG_DIR/homegate-proxy.lua" changed;then
   signature=$(pointers) || finish restart_required
   if hg_exists "$P/rejected";then hg_file "$P/rejected" 32768 || finish failed;[ "$(cat "$P/rejected")" != "$signature" ] || { now=$(lua "$process" now) || finish failed;if [ "$now" -lt "$retry_at" ];then sleep 1 || :;continue;fi; };fi

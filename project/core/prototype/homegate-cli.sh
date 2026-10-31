@@ -76,7 +76,7 @@ names=$(ash "$dir/homegate-config-prototype.sh" --persistent runtime-ddns-recove
 rows=
 for rule in $names; do
     row=$(ash "$dir/homegate-ddns-state.sh" status "$rule" 2>/dev/null |
-        lua "$dir/homegate-ddns-batch.lua" row "$revision" "$rule" 0 2>/dev/null) || fail
+        lua "$dir/homegate-ddns-batch.lua" row-observed "$revision" "$rule" 0 2>/dev/null) || fail
     rows=${rows:+$rows,}$row
 done
 # Publish no partial prefix if any row was unavailable or corrupt.

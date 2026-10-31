@@ -5,11 +5,17 @@ umask 077
 PATH=/usr/sbin:/usr/bin:/sbin:/bin;export PATH LC_ALL=C TZ=UTC0
 unset IPKG_INSTROOT INIT_TRACE LUA_INIT LUA_PATH LUA_CPATH HOMEGATE_CONFIG_PROTO_STORE
 certificate_material_enabled=false
+native_certificate_maintenance_enabled=false
 fail() { printf '{"api_version":1,"prototype":true,"ok":false,"phase":"certificate-material","effect":"none","write_ready":false,"error":"Certificate material unavailable; inspect retained candidate"}\n';exit "${1:-7}"; }
 [ "$certificate_material_enabled" = true ] || fail 2
 [ "$#" -ge 2 ] || fail 2
 action=$1;id=$2
 acme_internal=false;schedule_internal=false;preflight_internal=false;scope_mode=scope
+adopting=false
+if [ "$action" = adopt ];then
+ [ "$native_certificate_maintenance_enabled" = true ] && [ "$#" = 3 ] && [ "$3" = --confirm ] || fail 2
+ adopting=true;action=import;scope_mode=scope-any
+fi
 if [ "$action" = admission-status-internal ];then
  [ "$#" -eq 3 ] && [ "$3" = --confirm ] || fail 2
  HG_JOB=;acme_internal=true;preflight_internal=true;action=status;set -- status "$id"
@@ -69,7 +75,13 @@ binding() {
  private_file "$store/gen-$rev/manifest" && sha256sum "$store/gen-$rev/manifest"
 }
 expected_binding=$(binding) || fail
-recheck() { [ "$(binding)" = "$expected_binding" ] && [ "$(scope)" = "$expected_scope" ] && ash "$engine" --persistent writer-check >/dev/null 2>/dev/null; }
+legacy_binding() { for p in "$base/fullchain.pem" "$base/privkey.pem";do [ -f "$p" ] && [ ! -L "$p" ] && stat -c '%d:%i:%u:%a:%h:%s' "$p" && sha256sum "$p" || return 1;done; }
+if [ "$adopting" = true ];then
+ private_dir "$root" && private_dir "$base" || fail
+ legacy_expected=$(legacy_binding) || fail
+ if exists "$base/legacy-adopted";then private_file "$base/legacy-adopted" && [ "$(cat "$base/legacy-adopted")" = "$legacy_expected" ] || fail;fi
+fi
+recheck() { [ "$adopting" = false ] || [ "$(legacy_binding)" = "$legacy_expected" ] || return 1;[ "$(binding)" = "$expected_binding" ] && [ "$(scope)" = "$expected_scope" ] && ash "$engine" --persistent writer-check >/dev/null 2>/dev/null; }
 pair_manifest() { (cd "$1" && sha256sum fullchain.pem privkey.pem scope.json result.json); }
 pair_valid() {
  private_dir "$1" || return 1
@@ -141,7 +153,11 @@ if [ "$action" = import ];then
  count=0;for item in "$base/"pair-*;do exists "$item" || continue;private_dir "$item" || fail;count=$((count+1));done;[ "$count" -lt 16 ] || fail 4
  mkdir "$pending" || fail
  printf '%s\n' "$expected_scope" > "$pending/scope.json" && printf '%s\n' "$expected_binding" > "$pending/binding" || fail
- lua "$dir/homegate-certificate.lua" receive "$id" || fail 1
+ if [ "$adopting" = true ];then
+  pair=$(lua /usr/libexec/homegate/native-cli.lua legacy-import "$id") || fail 1
+  printf '%s\n' "$pair" | lua "$dir/homegate-certificate.lua" receive "$id" || fail 1
+  unset pair
+ else lua "$dir/homegate-certificate.lua" receive "$id" || fail 1;fi
  stage_seal > "$pending/seal" || fail
 else
  exists "$pending" || fail 5
@@ -189,4 +205,9 @@ mv -f "$base/.current.next" "$base/current" || fail
 fsync "$base/current" "$base" 2>/dev/null || fail 6
 current_pair && [ "$current" = "$candidate" ] || fail
 clean_stage
+if [ "$adopting" = true ];then
+ recheck || fail
+ if ! exists "$base/legacy-adopted";then (set -C;printf '%s\n' "$legacy_expected" > "$base/legacy-adopted") || fail;fi
+ fsync "$base/legacy-adopted" "$base" || fail 6
+fi
 printf '{"api_version":1,"engineering":true,"ok":true,"phase":"certificate-material","imported":true,"effect":"private-certificate-publication","write_ready":false}\n'

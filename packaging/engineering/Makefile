@@ -14,7 +14,7 @@ define Package/homegate-engineering-core
   SECTION:=net
   CATEGORY:=Network
   TITLE:=HomeGate isolated manual DDNS engineering core
-  DEPENDS:=+busybox +lua +luci-lib-jsonc +luci-lib-nixio +curl +ca-bundle +openssl-util +flock +coreutils-stat +ip-full +ubus +homegate-nginx
+  DEPENDS:=+busybox +lua +luci-lib-jsonc +luci-lib-nixio +curl +ca-bundle +openssl-util +flock +coreutils-stat +ip-full +ubus +ip6tables +homegate-nginx +homegate-wol
   PKGARCH:=all
 endef
 

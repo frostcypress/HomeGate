@@ -11,12 +11,12 @@ function M.valid(d)
         not integer(d.revision,1,32) or not hex(d.identity) or not hex(d.generation) or type(d.boot)~='string' or
         #d.boot~=36 or not d.boot:match('^[0-9a-f-]+$') or not integer(d.interval,60,999999999) or
         not integer(d.updated,0,999999999) or not integer(d.failures,0,8) or not integer(d.delay,0,999999999) or
-        not outcomes[d.outcome] or not kinds[d.error_kind] or
+        not outcomes[d.outcome] or not kinds[d.error_kind] or (d.event_epoch~=nil and not integer(d.event_epoch,1,253402300799)) or
         (d.last_effect~='none' and d.last_effect~='confirmed' and d.last_effect~='unknown') then return false end
     local n=0;for k in pairs(d) do
-        if k~='schema' and k~='rule' and k~='provider' and k~='revision' and k~='identity' and k~='generation' and k~='boot' and k~='interval' and k~='updated' and k~='failures' and k~='delay' and k~='outcome' and k~='error_kind' and k~='last_effect' then return false end;n=n+1
+        if k~='schema' and k~='rule' and k~='provider' and k~='revision' and k~='identity' and k~='generation' and k~='boot' and k~='interval' and k~='updated' and k~='failures' and k~='delay' and k~='outcome' and k~='error_kind' and k~='last_effect' and k~='event_epoch' then return false end;n=n+1
     end
-    if n~=14 then return false end
+    if n~=(d.event_epoch and 15 or 14) then return false end
     if d.outcome=='inflight' then return d.last_effect=='unknown' and d.error_kind=='' and d.delay==0 end
     if d.outcome=='unknown' then return d.last_effect=='unknown' and d.delay==0 and d.failures>=1 end
     if d.outcome=='created' or d.outcome=='updated' or d.outcome=='unchanged' then
@@ -67,6 +67,7 @@ end
 function M.report(d,c,now,blocked,authorized,incomplete)
     local status,wait=M.decision(d,c,now,blocked,authorized,incomplete)
     if d and not M.same(d,c) then d=nil end -- never label another generation's history as current
-    return string.format('{"api_version":1,"prototype":true,"ok":true,"phase":"ddns-state","configuration_revision":%d,"rule":"%s","provider":"%s","status":"%s","last_result":"%s","last_effect":"%s","error_kind":"%s","failures":%d,"retry_in":%d,"authorized":%s,"blocked":%s,"effect":"none","write_ready":false}\n',c.revision,c.rule,c.provider,status,d and d.outcome or 'none',d and d.last_effect or 'none',d and d.error_kind or '',d and d.failures or 0,wait,tostring(authorized),tostring(blocked or incomplete))
+    local extra=d and d.event_epoch and string.format(',"event_epoch":%.0f',d.event_epoch) or ''
+    return string.format('{"api_version":1,"prototype":true,"ok":true,"phase":"ddns-state","configuration_revision":%d,"rule":"%s","provider":"%s","status":"%s","last_result":"%s","last_effect":"%s","error_kind":"%s","failures":%d,"retry_in":%d,"authorized":%s,"blocked":%s,"effect":"none","write_ready":false%s}\n',c.revision,c.rule,c.provider,status,d and d.outcome or 'none',d and d.last_effect or 'none',d and d.error_kind or '',d and d.failures or 0,wait,tostring(authorized),tostring(blocked or incomplete),extra)
 end
 return M

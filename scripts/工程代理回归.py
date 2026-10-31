@@ -15,6 +15,8 @@ FIXTURE=ROOT/'build/nginx-fixture'
 
 def setup_state(s):
     web.setup_state(s)
+    shutil.copyfile(ROOT/'scripts/firewall-kernel-fixture.py',s/'tools/ip6tables');(s/'tools/ip6tables').chmod(0o755)
+    (s/'fw-kernel.json').write_text(json.dumps({'nat':{'PREROUTING':[['-j','HOMEGATE_NAT']],'HOMEGATE_NAT':[['-j','RETURN']]},'filter':{'INPUT':[['-j','HOMEGATE_INPUT']],'HOMEGATE_INPUT':[['-j','RETURN']]}}))
     (s/'etc/passwd').write_text((s/'etc/passwd').read_text()+'root:x:0:0:fixture:/tmp:/bin/false\n')
     (s/'etc/group').write_text((s/'etc/group').read_text()+'root:x:0:\n')
     (s/'etc/hosts').write_text('127.0.0.1 localhost upstream.example.test wrong.example.test\n::1 localhost\n')
@@ -99,12 +101,13 @@ class Proxy(web.Web):
         self.publish(s);self.cfg('lifecycle_enable',s,consent='1')
         self.certificate_import(s,self.certificate_pair('proxy'))
         return s
-    def backend(self,tls=False):
+    def backend(self,tls=False,bind='127.0.0.1',pair=None,trusted=True,label='upstream'):
         outer=self
         class Handler(http.server.BaseHTTPRequestHandler):
             protocol_version='HTTP/1.1'
             def log_message(self,*a):pass
             def do_GET(self):
+                self.server.received.append(self.path)
                 if self.headers.get('Upgrade','').lower()=='websocket':
                     accept=base64.b64encode(hashlib.sha1((self.headers['Sec-WebSocket-Key']+'258EAFA5-E914-47DA-95CA-C5AB0DC85B11').encode()).digest()).decode()
                     self.send_response(101);self.send_header('Upgrade','websocket');self.send_header('Connection','Upgrade');self.send_header('Sec-WebSocket-Accept',accept);self.end_headers();self.wfile.flush()
@@ -120,12 +123,18 @@ class Proxy(web.Web):
                         body+=self.rfile.read(n);self.rfile.read(2)
                 else:body=self.rfile.read(int(self.headers.get('Content-Length','0')))
                 out=json.dumps({'bytes':len(body),'sha256':hashlib.sha256(body).hexdigest()}).encode();self.send_response(200);self.send_header('Content-Length',str(len(out)));self.end_headers();self.wfile.write(out)
-        server=http.server.ThreadingHTTPServer(('127.0.0.1',0),Handler);server.daemon_threads=True
+        family=socket.AF_INET6 if ':' in bind else socket.AF_INET
+        class Server(http.server.ThreadingHTTPServer):address_family=family
+        server=Server((bind,0),Handler);server.daemon_threads=True;server.received=[];server.sni=[]
+        if not hasattr(self,'backends'):self.backends={}
+        self.assertNotIn(label,self.backends);self.backends[label]=server
         if tls:
-            cert,key=self.certificate_pair('upstream',domains='DNS:upstream.example.test')
-            c=STATE/'upstream.pem';k=STATE/'upstream.key';c.write_text(cert);k.write_text(key)
+            cert,key=pair or self.certificate_pair(label,domains='DNS:upstream.example.test')
+            c=STATE/(label+'.pem');k=STATE/(label+'.key');c.write_text(cert);k.write_text(key)
             context=ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER);context.load_cert_chain(c,k);server.socket=context.wrap_socket(server.socket,server_side=True)
-            with Path('/etc/ssl/certs/ca-certificates.crt').open('a') as f:f.write(cert)
+            context.set_servername_callback(lambda sock,name,ctx:server.sni.append(name))
+            if trusted:
+                with Path('/etc/ssl/certs/ca-certificates.crt').open('a') as f:f.write(cert)
         threading.Thread(target=server.serve_forever,daemon=True).start();self.addCleanup(server.server_close);self.addCleanup(server.shutdown);return server.server_port
     def exchange_proxy(self,host,path='/',tls=True,ipv6=False,headers=None,method='GET',body=None,source=None):
         context=ssl._create_unverified_context()
@@ -169,6 +178,53 @@ class Proxy(web.Web):
         # Removing the private trust root must reject even a correct hostname.
         Path('/etc/ssl/certs/ca-certificates.crt').write_bytes((STATE/'original-system-ca.pem').read_bytes())
         self.cfg('proxy_start',s,selection='good',policy='open',consent='1');self.ready();self.assertEqual(self.exchange_proxy('example.test',tls=False)[0],502);self.stop(s);self.verify_unchanged()
+    def test_upstream_ip(self):
+        cases=[('v4','127.0.0.1','127.0.0.1','IP:127.0.0.1',True),
+               ('v6','::1','[0:0:0:0:0:0:0:1]','IP:::1',True),
+               ('mapped','127.0.0.1','[::ffff:127.0.0.1]','IP:::ffff:127.0.0.1',True),
+               ('wrong4','127.0.0.1','127.0.0.1','IP:127.0.0.2',False),
+               ('wrong6','::1','[::1]','IP:::2',False),
+               ('dns4','127.0.0.1','127.0.0.1','DNS:127.0.0.1',False),
+               ('dns6','::1','[::1]','DNS:::1',False),
+               ('cn4','127.0.0.1','127.0.0.1','',False)]
+        routes=[];targets={}
+        for name,bind,address,san,good in cases:
+            pair=self.certificate_pair('ip-'+name,domains=san)
+            if name=='cn4':
+                # Deliberately valid CN=IP with no SAN must still be rejected.
+                key=STATE/'cert-fixtures/ip-cn4.key';cert=STATE/'cn-only.pem'
+                p=subprocess.run(['openssl','req','-x509','-new','-key',str(key),'-subj','/CN=127.0.0.1','-days','30','-out',str(cert)],capture_output=True,timeout=15);self.assertEqual(p.returncode,0);pair=(cert.read_text(),pair[1])
+            port=self.backend(tls=True,bind=bind,pair=pair,label=name)
+            routes.append((name,name+'.example.test',False));targets[name]=f'https://{address}:{port}/base?fixed=IP_SAN'
+        s=self.setup_proxy(routes,targets);self.cfg('proxy_start',s,selection=','.join(targets),policy='open',consent='1');self.ready()
+        for name,_,_,_,good in cases:
+            code,_,body=self.exchange_proxy(name+'.example.test','/check?q=one',tls=False)
+            self.assertEqual(code,200 if good else 502,(name,body[:200]))
+            server=self.backends[name];self.assertTrue(server.sni,name);self.assertTrue(all(x is None for x in server.sni),(name,server.sni))
+            self.assertEqual(len(server.received),1 if good else 0,name)
+            if good:self.assertEqual(json.loads(body)['path'],'/base/check?fixed=IP_SAN&q=one')
+        self.stop(s);self.verify_unchanged()
+    def test_upstream_ip_trust(self):
+        cases=[('untrusted4','127.0.0.1','127.0.0.1','IP:127.0.0.1',None),
+               ('untrusted6','::1','[::1]','IP:::1',None),
+               ('expired4','127.0.0.1','127.0.0.1','IP:127.0.0.1','expired'),
+               ('future6','::1','[::1]','IP:::1','future')]
+        routes=[];targets={}
+        for name,bind,address,san,date in cases:
+            port=self.backend(tls=True,bind=bind,pair=self.certificate_pair(name,domains=san,date_case=date),trusted=date is not None,label=name)
+            routes.append((name,name+'.example.test',False));targets[name]=f'https://{address}:{port}'
+        s=self.setup_proxy(routes,targets);self.cfg('proxy_start',s,selection=','.join(targets),policy='open',consent='1');self.ready()
+        for name,*_ in cases:
+            self.assertEqual(self.exchange_proxy(name+'.example.test',tls=False)[0],502,name);self.assertFalse(self.backends[name].received,name)
+        self.stop(s);self.verify_unchanged()
+    def test_component_profile(self):
+        session=self.login();self.cfg('prepare',session)
+        work=Path('/var/run/homegate-engineering/proxy');work.mkdir();version=work/'version'
+        p=subprocess.run([str(NGINX/'nginx'),'-v'],capture_output=True,timeout=3);self.assertEqual(p.returncode,0);actual=p.stderr
+        command=['/usr/sbin/lua','/usr/libexec/homegate-engineering/project/core/prototype/homegate-proxy.lua','version']
+        for raw,accepted in [(actual,True),(b'nginx version: nginx/1.30.6\n',False),(b'nginx version: nginx/1.30.5 (homegate-ip-san-v1)\n',False),(actual.replace(b'ip-san-v1',b'other-v1'),False),(actual+b'extra\n',False)]:
+            version.write_bytes(raw);self.assertEqual(subprocess.run(command,capture_output=True,timeout=3).returncode==0,accepted,raw)
+        version.unlink();work.rmdir();self.verify_unchanged()
     def test_acl(self):
         port=self.backend();s=self.setup_proxy([('plain','example.test',False)],{'plain':f'http://127.0.0.1:{port}'},extra='deny')
         self.cfg('proxy_start',s,selection='plain',policy='open',consent='1');self.ready();self.assertEqual(self.exchange_proxy('example.test',tls=False)[0],403);self.assertEqual(self.exchange_proxy('example.test',tls=False,ipv6=True)[0],403);self.stop(s)
@@ -181,6 +237,76 @@ class Proxy(web.Web):
             lines.append(line)
         p=self.cli('config-preview',raw=('\n'.join(lines)+'\n').encode());self.cli('config-commit',p['confirmation']);self.cfg('lifecycle_enable',s,consent='1')
         self.cfg('proxy_start',s,selection='plain',policy='allow',consent='1');self.ready();self.assertEqual(self.exchange_proxy('example.test',tls=False)[0],200);self.stop(s);self.verify_unchanged()
+    def firewall_setup(self):
+        port=self.backend();s=self.setup_proxy([('exact','example.test',True)],{'exact':f'http://127.0.0.1:{port}'})
+        self.cfg('proxy_start',s,selection='exact',policy='open',consent='1');self.ready();return s
+    def firewall_status(self):return self.cli('firewall-status')
+    def firewall_settled(self):
+        import fcntl
+        deadline=time.monotonic()+8
+        with Path('/var/run/homegate-engineering/firewall.lock').open('a') as lock:
+            while True:
+                try:fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB);break
+                except BlockingIOError:self.assertLess(time.monotonic(),deadline);time.sleep(.1)
+            fcntl.flock(lock,fcntl.LOCK_UN)
+    def firewall_baseline(self):
+        d=json.loads((STATE/'fw-kernel.json').read_text())
+        self.assertEqual(d['nat']['HOMEGATE_NAT'],[['-j','RETURN']]);self.assertEqual(d['filter']['HOMEGATE_INPUT'],[['-j','RETURN']])
+        for tab,parent,target in [('nat','PREROUTING','HOMEGATE_NAT'),('filter','INPUT','HOMEGATE_INPUT')]:self.assertIn(['-j',target],d[tab][parent])
+        return d
+    def test_firewall_apply(self):
+        s=self.firewall_setup();self.assertFalse((STATE/'fw-calls').exists())
+        try:d=self.cfg('firewall_apply',s,consent='1')['report']
+        except AssertionError:
+            for name in ['reply','report.json','err','out']:
+                p=Path('/var/run/homegate-engineering/firewall')/name
+                print('FW_DIAGNOSTIC',name,p.read_text()[-1800:] if p.exists() else 'absent',flush=True)
+            print('FW_CALLS',(STATE/'fw-calls').read_text()[-1800:] if (STATE/'fw-calls').exists() else 'absent',flush=True)
+            raise
+        self.assertTrue(d['active']);self.assertTrue(d['known']);self.assertEqual(d['wan_device'],'pppoe-wan')
+        self.firewall_settled();status,_,raw=self.cgi(web.BASE+'/configuration_api/firewall_status',cookie=s[0]);self.assertEqual(status,200,raw[:300]);self.assertTrue(json.loads(raw)['report']['active'])
+        kernel=self.firewall_baseline();rules=kernel['nat']['HG_ENG_NAT'];self.assertEqual(len(rules),2)
+        self.assertEqual([r[r.index('--dport')+1] for r in rules],['443','80']);self.assertEqual([r[-1] for r in rules],['10443','10080'])
+        self.cfg('firewall_apply',s,consent='1');self.assertEqual(json.loads((STATE/'fw-kernel.json').read_text()),kernel)
+        foreign=['-i','br-lan','-j','HG_ENG_NAT'];kernel['nat']['PREROUTING'].append(foreign);(STATE/'fw-kernel.json').write_text(json.dumps(kernel))
+        before_foreign=json.loads(json.dumps(kernel))
+        self.api('configuration_api','firewall_cleanup',s,{'consent':'1'},expected=503);kernel=self.firewall_baseline();self.assertEqual(kernel,before_foreign);self.assertIn(foreign,kernel['nat']['PREROUTING'])
+        kernel['nat']['PREROUTING'].remove(foreign);(STATE/'fw-kernel.json').write_text(json.dumps(kernel))
+        self.cfg('firewall_apply',s,consent='1');kernel=self.firewall_baseline()
+        kernel['nat']['PREROUTING'].append(['-j','HG_ENG_NAT']);(STATE/'fw-kernel.json').write_text(json.dumps(kernel))
+        self.assertEqual(kernel['nat']['PREROUTING'].count(['-j','HG_ENG_NAT']),2)
+        self.cfg('firewall_cleanup',s,consent='1');self.assertFalse(self.firewall_status()['active']);self.assertNotIn('HG_ENG_NAT',self.firewall_baseline()['nat'])
+        self.cfg('firewall_cleanup',s,consent='1');self.stop(s);self.verify_unchanged()
+    def test_firewall_reload(self):
+        s=self.firewall_setup();self.cfg('firewall_apply',s,consent='1');initial=self.firewall_baseline();lost=json.loads(json.dumps(initial))
+        for tab,parent,chain in [('nat','PREROUTING','HG_ENG_NAT'),('filter','INPUT','HG_ENG_INPUT')]:lost[tab].pop(chain);lost[tab][parent].remove(['-j',chain])
+        (STATE/'fw-kernel.json').write_text(json.dumps(lost));until=time.monotonic()+15
+        while time.monotonic()<until:
+            if json.loads((STATE/'fw-kernel.json').read_text())==initial:break
+            time.sleep(.2)
+        else:self.fail('Current admitted session did not restore missing rules')
+        self.firewall_settled();self.cfg('firewall_cleanup',s,consent='1');clean=self.firewall_baseline();time.sleep(6);self.assertEqual(json.loads((STATE/'fw-kernel.json').read_text()),clean)
+        self.cfg('firewall_apply',s,consent='1');self.firewall_settled()
+        # Losing volatile observations must not forget potentially live rules.
+        work=Path('/var/run/homegate-engineering/firewall')
+        for p in work.iterdir():p.unlink()
+        work.rmdir();self.assertTrue(Path('/etc/homegate-engineering/firewall-owned').is_file())
+        self.stop(s);self.assertNotIn('HG_ENG_NAT',self.firewall_baseline()['nat']);self.assertFalse(Path('/etc/homegate-engineering/firewall-owned').exists());self.verify_unchanged()
+    def test_firewall_failure(self):
+        s=self.firewall_setup();(STATE/'fw-fault').write_text('fail-once');self.api('configuration_api','firewall_apply',s,{'consent':'1'},expected=503)
+        self.assertFalse(self.firewall_status()['active']);self.assertNotIn('HG_ENG_NAT',self.firewall_baseline()['nat'])
+        self.cfg('firewall_apply',s,consent='1');(STATE/'fw-fault').write_text('cleanup-fail');self.cfg('proxy_stop',s,consent='1');self.ready('stopped')
+        self.assertFalse(self.cli('proxy-status')['firewall_cleanup_ok']);self.api('configuration_api','proxy_reap',s,{'consent':'1'},expected=503)
+        self.assertTrue(Path('/var/run/homegate-engineering/proxy').is_dir());self.assertTrue(self.firewall_status()['active'])
+        (STATE/'fw-fault').unlink();self.cfg('proxy_reap',s,consent='1');self.assertEqual(self.cli('proxy-status')['state'],'idle');self.assertFalse(self.firewall_status()['active']);self.firewall_baseline();self.verify_unchanged()
+    def test_firewall_safety(self):
+        s=self.firewall_setup();status,_,_=self.cgi(web.BASE+'/configuration_api/firewall_apply',cookie=s[0],verb='POST',fields={'consent':'1','token':'bad'});self.assertEqual(status,403)
+        self.assertFalse((STATE/'fw-calls').exists());self.cli('firewall-apply',ok=False);self.assertFalse((STATE/'fw-calls').exists())
+        (STATE/'fw-fault').write_text('permission');self.api('configuration_api','firewall_apply',s,{'consent':'1'},expected=503)
+        denied=self.cli('firewall-status',ok=False);self.assertFalse(denied['known']);self.assertEqual(denied['effect'],'unknown')
+        (STATE/'fw-fault').write_text('hold');start=time.monotonic();self.api('configuration_api','firewall_cleanup',s,{'consent':'1'},expected=503);self.assertLess(time.monotonic()-start,9)
+        pid=int((STATE/'fw-held-pid').read_text());stat=Path('/proc/'+str(pid)+'/stat');self.assertTrue(not stat.exists() or stat.read_text().split(') ',1)[1].startswith(('Z ','X ')))
+        (STATE/'fw-fault').unlink();self.cfg('firewall_cleanup',s,consent='1');self.stop(s);self.firewall_baseline();self.verify_unchanged()
     def test_lifecycle_proxy(self):
         port=self.backend();s=self.setup_proxy([('plain','example.test',True)],{'plain':f'http://127.0.0.1:{port}'})
         self.cfg('proxy_start',s,selection='plain',policy='open',consent='1');self.ready()
@@ -358,13 +484,13 @@ os.execv(real,['nginx',*a])
 
 def main():
     global NGINX,FIXTURE
-    p=argparse.ArgumentParser();p.add_argument('--runtime-dir',type=Path,default=ROOT/'build/rpcd');p.add_argument('--http-runtime-dir',type=Path,default=ROOT/'build/uhttpd');p.add_argument('--luci-runtime-dir',type=Path,default=ROOT/'build/luci');p.add_argument('--nginx-runtime-dir',type=Path,default=NGINX);p.add_argument('--nginx-fixture-dir',type=Path,default=FIXTURE);p.add_argument('--inside-net');p.add_argument('--inside-uid');p.add_argument('--group',choices=['routing','streaming','upstream_tls','acl','lifecycle_proxy','security_proxy','reload','reload_reject','reload_rollback','reload_stop','cn_policy','cn_cache','access_audit','access_stop']);a=p.parse_args()
+    p=argparse.ArgumentParser();p.add_argument('--runtime-dir',type=Path,default=ROOT/'build/rpcd');p.add_argument('--http-runtime-dir',type=Path,default=ROOT/'build/uhttpd');p.add_argument('--luci-runtime-dir',type=Path,default=ROOT/'build/luci');p.add_argument('--nginx-runtime-dir',type=Path,default=NGINX);p.add_argument('--nginx-fixture-dir',type=Path,default=FIXTURE);p.add_argument('--inside-net');p.add_argument('--inside-uid');p.add_argument('--group',choices=['routing','streaming','upstream_tls','upstream_ip','upstream_ip_trust','component_profile','firewall_apply','firewall_reload','firewall_failure','firewall_safety','acl','lifecycle_proxy','security_proxy','reload','reload_reject','reload_rollback','reload_stop','cn_policy','cn_cache','access_audit','access_stop']);a=p.parse_args()
     NGINX=a.nginx_runtime_dir.resolve();FIXTURE=a.nginx_fixture_dir.resolve();rpc.WORK,luci.HTTP,luci.LUA=a.runtime_dir.resolve(),a.http_runtime_dir.resolve(),a.luci_runtime_dir.resolve();luci.BASE,luci.PAGE=web.BASE,web.PAGE
     if a.inside_net:
         rpc.OUTER_NET,rpc.OUTER_UID=a.inside_net,a.inside_uid
         return 0 if unittest.TextTestRunner(verbosity=2).run(unittest.TestSuite([Proxy('test_'+a.group)])).wasSuccessful() else 1
     spec=importlib.util.spec_from_file_location('nginx_runtime',ROOT/'scripts/prepare-nginx.py');runtime=importlib.util.module_from_spec(spec);spec.loader.exec_module(runtime);runtime.validate_runtime(NGINX);runtime.validate_fixture(FIXTURE)
-    for group in [a.group] if a.group else ['routing','streaming','upstream_tls','acl','lifecycle_proxy','security_proxy','reload','reload_reject','reload_rollback','reload_stop','cn_policy','cn_cache','access_audit','access_stop']:
+    for group in [a.group] if a.group else ['routing','streaming','upstream_tls','upstream_ip','upstream_ip_trust','component_profile','firewall_apply','firewall_reload','firewall_failure','firewall_safety','acl','lifecycle_proxy','security_proxy','reload','reload_reject','reload_rollback','reload_stop','cn_policy','cn_cache','access_audit','access_stop']:
         result=rpc.isolated(rpc.WORK,guest_script=Path(__file__).resolve(),extra_ro=(luci.HTTP,luci.LUA,NGINX,FIXTURE),extra_mounts=lambda s:((Path('/usr/bin'),'/fixture-host-bin'),(s/'usr-bin','/usr/bin'),(s/'controllers',luci.LUA/'prefix/lib/lua/luci/controller'),(s/'models',luci.LUA/'prefix/lib/lua/luci/model'),(s/'libexec','/usr/libexec'),(s/'tools','/usr/sbin'),(s/'curl-fixture','/usr/bin/curl')),extra_rw_mounts=lambda s:((s/'etc/homegate-engineering','/etc/homegate-engineering'),(s/'etc/config','/etc/config'),(s/'etc/ssl','/etc/ssl')),state_setup=setup_state,guest_args=['--http-runtime-dir',str(luci.HTTP),'--luci-runtime-dir',str(luci.LUA),'--nginx-runtime-dir',str(NGINX),'--nginx-fixture-dir',str(FIXTURE),'--group',group])
         if result:return result
     return 0

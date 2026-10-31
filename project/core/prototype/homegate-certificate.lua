@@ -15,6 +15,12 @@ local function pattern(v)
  for label in body:gmatch('[^.]+')do if #label<1 or #label>63 or label:sub(1,1)=='-' or label:sub(-1)=='-' then return nil end end
  if body:sub(1,1)=='.' or body:sub(-1)=='.' then return nil end;return v
 end
+if mode=='unreferenced'then
+ if arg[3]then fail()end
+ local snapshot=assert(loadfile(dir..'/private-snapshot.lua'))().read(io.stdin,codec);if not snapshot then fail()end
+ for _,s in ipairs(snapshot.configuration)do if s.kind=='certificate' and s.name==selected or s.kind=='web_rule' and s.values.certificate==selected then fail()end end
+ io.write('{"ok":true,"unreferenced":true}\n');return
+end
 if mode=='scope' or mode=='scope-acme' or mode=='scope-any' then
  if arg[3] then fail() end
  local snapshot=assert(loadfile(dir..'/private-snapshot.lua'))().read(io.stdin,codec);if not snapshot then fail() end

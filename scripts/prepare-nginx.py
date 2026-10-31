@@ -3,13 +3,15 @@
 import argparse,hashlib,json,os,shutil,subprocess,sys,tarfile,urllib.request
 from pathlib import Path
 VERSION='1.30.6'
+BUILD='homegate-ip-san-v1'
+PATCH=Path(__file__).resolve().parents[1]/'packaging/components/homegate-nginx/patches/105-ip-san.patch'
 SOURCES={
  'nginx.tar.gz':('https://nginx.org/download/nginx-1.30.6.tar.gz','3cf46f5ed7504d460125866b7bea99fb357f31d887e2e63b35503310e9b8b6c8'),
  'pcre2.tar.bz2':('https://github.com/PCRE2Project/pcre2/releases/download/pcre2-10.47/pcre2-10.47.tar.bz2','47fe8c99461250d42f89e6e8fdaeba9da057855d06eb7fc08d9ca03fd08d7bc7')}
 def sha(p):return hashlib.sha256(p.read_bytes()).hexdigest()
 def validate_runtime(work):
  d=json.loads((work/'build-metadata.json').read_text())
- if d.get('recipe')!=1 or d.get('version')!=VERSION:raise ValueError('nginx metadata mismatch')
+ if d.get('recipe')!=2 or d.get('version')!=VERSION or d.get('build')!=BUILD or d.get('patch_sha256')!=sha(PATCH):raise ValueError('nginx metadata mismatch; use a new runtime directory for changed component inputs')
  for n,(_,h) in SOURCES.items():
   if sha(work/n)!=h:raise ValueError('nginx source changed')
  if d['binary_sha256']!=sha(work/'nginx'):raise ValueError('nginx executable changed')
@@ -33,7 +35,9 @@ def prepare(work):
   roots=list(dest.iterdir())
   if len(roots)!=1:raise ValueError('Source layout mismatch')
   roots[0].rename(work/(name.split('.')[0]+'-source'));dest.rmdir()
- args=['./configure','--with-http_ssl_module','--with-pcre='+str(work/'pcre2-source'),
+ with (work/'patch.log').open('xb') as log:
+  subprocess.run(['patch','--batch','--fuzz=0','-p1','-i',str(PATCH)],cwd=work/'nginx-source',stdout=log,stderr=subprocess.STDOUT,check=True)
+ args=['./configure','--build='+BUILD,'--with-http_ssl_module','--with-pcre='+str(work/'pcre2-source'),
        '--without-http_gzip_module','--without-http_autoindex_module','--without-http_ssi_module',
        '--user=root','--group=root','--with-cc-opt=-O2']
  with (work/'build.log').open('xb') as log:
@@ -41,7 +45,7 @@ def prepare(work):
   subprocess.run(['make','-j2'],cwd=work/'nginx-source',stdout=log,stderr=subprocess.STDOUT,check=True)
  shutil.copyfile(work/'nginx-source/objs/nginx',work/'nginx');(work/'nginx').chmod(0o755)
  info=subprocess.run([str(work/'nginx'),'-V'],capture_output=True,text=True,check=True).stderr
- d={'recipe':1,'version':VERSION,'sources':{n:h for n,(_,h) in SOURCES.items()},'binary_sha256':sha(work/'nginx'),
+ d={'recipe':2,'version':VERSION,'build':BUILD,'patch_sha256':sha(PATCH),'sources':{n:h for n,(_,h) in SOURCES.items()},'binary_sha256':sha(work/'nginx'),
     'configure':args,'version_output':info,'system_installed':False,
     'boundary':'host test binary only; root is the mapped outer UID65534. The external fixture profile selects process mode; r149 same-credential adapter supports real master/workers without new outer privileges. Target nginx defaults/workers/ABI remain unverified.'}
  (work/'build-metadata.json').write_text(json.dumps(d,indent=2)+'\n');validate_runtime(work)

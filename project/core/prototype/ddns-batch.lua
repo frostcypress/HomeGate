@@ -45,7 +45,7 @@ function M.slice(snapshot,intent,plan,rule,planner,authority,network,records,jso
     local narrow=authority.intent(snapshot,rule,planner.id)
     return planner.build(snapshot,rule,sample,records,narrow),narrow
 end
-function M.row(raw,d,revision,rule,rc,planner,sync,parse)
+function M.row(raw,d,revision,rule,rc,planner,sync,parse,observed)
     if type(d)~='table' or not planner.id(rule) or (rc~='0' and rc~='1' and rc~='4') then return nil end
     local provider,status,effect,kind,retry,wait=d.provider,nil,'none','',false,0
     if d.phase=='ddns-sync' then
@@ -60,11 +60,18 @@ function M.row(raw,d,revision,rule,rc,planner,sync,parse)
         if (rc~='0' and rc~='4') or not providers[provider] or not decisions[d.status] or not outcomes[d.last_result] or not kinds[d.error_kind] or
             (d.last_effect~='none' and d.last_effect~='confirmed' and d.last_effect~='unknown') or not integer(d.failures,8) or not integer(d.retry_in,999999999) or
             type(d.authorized)~='boolean' or type(d.blocked)~='boolean' then return nil end
-        local expected=string.format('{"api_version":1,"prototype":true,"ok":true,"phase":"ddns-state","configuration_revision":%s,"rule":"%s","provider":"%s","status":"%s","last_result":"%s","last_effect":"%s","error_kind":"%s","failures":%d,"retry_in":%d,"authorized":%s,"blocked":%s,"effect":"none","write_ready":false}\n',revision,rule,provider,d.status,d.last_result,d.last_effect,d.error_kind,d.failures,d.retry_in,tostring(d.authorized),tostring(d.blocked))
+        if d.event_epoch~=nil and (not integer(d.event_epoch,253402300799) or d.event_epoch<1)then return nil end
+        local extra=d.event_epoch and string.format(',"event_epoch":%.0f',d.event_epoch) or ''
+        local expected=string.format('{"api_version":1,"prototype":true,"ok":true,"phase":"ddns-state","configuration_revision":%s,"rule":"%s","provider":"%s","status":"%s","last_result":"%s","last_effect":"%s","error_kind":"%s","failures":%d,"retry_in":%d,"authorized":%s,"blocked":%s,"effect":"none","write_ready":false%s}\n',revision,rule,provider,d.status,d.last_result,d.last_effect,d.error_kind,d.failures,d.retry_in,tostring(d.authorized),tostring(d.blocked),extra)
         if raw~=expected then return nil end
         status,kind,retry,wait=d.status,d.error_kind,d.status=='retry_wait',d.retry_in
     else return nil end
     if not providers[provider] then return nil end
-    return string.format('{"rule":"%s","provider":"%s","status":"%s","effect":"%s","error_kind":"%s","retryable":%s,"retry_in":%d}',rule,provider,status,effect,kind,tostring(retry),wait),effect
+    local extra=''
+    if observed and d.phase=='ddns-state'then
+        extra=string.format(',"last_result":"%s","last_effect":"%s"',d.last_result,d.last_effect)
+        if d.event_epoch then extra=extra..',"event_at":"'..os.date('!%Y-%m-%dT%H:%M:%SZ',d.event_epoch)..'"'end
+    end
+    return string.format('{"rule":"%s","provider":"%s","status":"%s","effect":"%s","error_kind":"%s","retryable":%s,"retry_in":%d%s}',rule,provider,status,effect,kind,tostring(retry),wait,extra),effect
 end
 return M

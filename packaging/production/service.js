@@ -1,0 +1,2 @@
+el('hg-service-plan').onsubmit=function(e){e.preventDefault();if(!window.confirm('保存持续运行的任务范围？这不会授予新的 DDNS 权限。'))return;var form=el('hg-service-plan'),fields={consent:'1'};['service_ddns','service_certs','service_web','policy'].forEach(function(k){fields[k]=form.elements[k].value;});request('service_plan_set',fields);};
+['start','stop','status'].forEach(function(op){el('hg-service-'+op).onclick=function(){if(op!=='status'&&!window.confirm(op==='start'?'按已保存任务及授权启动服务？':'停止服务及其所有业务任务？'))return;request('service_'+op,op==='status'?{}:{consent:'1'});};});

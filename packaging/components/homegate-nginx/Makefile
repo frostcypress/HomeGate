@@ -3,7 +3,7 @@ include $(TOPDIR)/rules.mk
 
 PKG_NAME:=homegate-nginx
 PKG_VERSION:=1.30.6
-PKG_RELEASE:=1
+PKG_RELEASE:=2
 PKG_SOURCE:=nginx-$(PKG_VERSION).tar.gz
 PKG_SOURCE_URL:=https://nginx.org/download/
 PKG_HASH:=3cf46f5ed7504d460125866b7bea99fb357f31d887e2e63b35503310e9b8b6c8
@@ -27,6 +27,7 @@ CONFIGURE_VARS += CONFIG_BIG_ENDIAN=$(CONFIG_BIG_ENDIAN)
 # Replace autotools defaults: nginx rejects --host/--target/--build.
 # Keep unknown nginx configure options fatal; never apply ignore-options patch.
 CONFIGURE_ARGS := \
+  --build=homegate-ip-san-v1 \
   --crossbuild=Linux::$(ARCH) \
   --prefix=/usr/libexec/homegate-nginx \
   --sbin-path=/usr/libexec/homegate-nginx/nginx \

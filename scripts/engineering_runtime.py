@@ -9,6 +9,8 @@ import re
 SCOPE = 'isolated-ddns-contract-engineering'
 PROTO = 'project/core/prototype/'
 GATES = {
+ 'homegate-wol.sh': ['wol_runtime_enabled'],
+ 'homegate-firewall.sh': ['firewall_runtime_enabled'],
  'homegate-access-region.sh': ['access_region_enabled'],
  'homegate-proxy.sh': ['proxy_runtime_enabled'],
  'homegate-acme-schedule.sh': ['acme_schedule_enabled'],

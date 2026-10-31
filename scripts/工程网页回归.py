@@ -654,6 +654,9 @@ config wol_host 'host_a'
             index=work/(name+'.index');index.touch();serial=work/(name+'.serial');serial.write_text('01\n')
             conf=work/(name+'.cnf');conf.write_text('[ca]\ndefault_ca=local\n[local]\ndatabase='+str(index)+'\nnew_certs_dir='+str(work)+'\nserial='+str(serial)+'\nprivate_key='+str(key)+'\ncertificate='+str(cert)+'\ndefault_md=sha256\npolicy=policy\nx509_extensions=ext\n[policy]\ncommonName=supplied\n[ext]\nsubjectAltName='+domains+'\n')
             dated=work/(name+'.dated.pem');start,end=('20200101000000Z','20200102000000Z') if date_case=='expired' else ('20990101000000Z','20990201000000Z')
+            if date_case=='current':
+                from datetime import datetime,timedelta,timezone
+                now=datetime.now(timezone.utc);start=(now-timedelta(minutes=2)).strftime('%Y%m%d%H%M%SZ');end=(now+timedelta(days=30)).strftime('%Y%m%d%H%M%SZ')
             result=run(['openssl','ca','-batch','-selfsign','-config',str(conf),'-in',str(csr),'-startdate',start,'-enddate',end,'-notext','-out',str(dated)])
             self.assertEqual(result.returncode,0,'Private validity-window fixture generation failed');cert=dated
         return cert.read_text(),key.read_text()

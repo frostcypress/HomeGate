@@ -1,5 +1,27 @@
 # 目标 SDK 与 LuCI 验证入口
 
+## r170 当前构建选择与只读依赖核对（2026-10-31）
+
+用户明确固定按包格式选 SDK：**IPK 使用 ImmortalWrt 24.10 系列，APK 使用 25.12 系列**，见 `targets/sdk-selection-policy.json`；后续不重复询问 SDK 系列。当前目标为 IPK，沿用 24.10.6。APK 的 25.12 系列选择已记录，尚未为未指定的 APK 目标下载或编造 SDK URL/摘要。用户报告 24.10 SDK 构建的其他插件已在其路由器成功运行。当前沿用已校验字节和缓存的 24.10.6 SDK，不再以寻找同分支 QWRT SDK 作为构建前置。目标清单记录该候选选择及摘要，`verified=false`、`abi=null` 与实际组件/设备验收状态保持。
+
+历史目标报告给出的内核为 5.4.213、libc 为 1.1.24-2；候选完整 SDK 依赖闭包含内核 6.6.133 和 libc 1.2.5。闭包是工程导出，不是实际路由器安装计划：应核对并复用满足依赖的已安装系统提供者，不能将整个 SDK 内核模块闭包照搬到目标。历史 `libopenssl3` 包的版本为 1.1.1w-1，不能只凭包名判断它提供 `libssl.so.3`／`libcrypto.so.3`。
+
+已获准访问目标后，运行新的只读入口，保存完整输出到本地即可；脚本不连接远端、不安装 readelf、不导出 UCI/凭据/私钥、不运行 HomeGate 或启停服务：
+
+```sh
+sh scripts/核实原生ABI.sh
+```
+
+该入口收集固定公开系统库路径的哈希、64 字节 ELF 头及可用时的 SONAME/NEEDED/指定动态符号。没有 readelf 时明确缺少动态元数据，后续可用可信宿主工具检查公开库文件副本；不要为采集单独安装工具。命令返回 0 只表示清单收集完成，非 OpenWrt/opkg 环境返回 2；不表示兼容验收通过。
+
+离线比对入口如下，`--inventory` 可重复指定主报告、补充报告和新输出。`--closure` 接受候选 `dependency-closure.json` 或带闭包的构建证据；这些详细输入仅本地使用：
+
+```sh
+python3 scripts/native-target-audit.py --target targets/qwrt-r26.3.8-ipq807x.json --candidate targets/native-candidate-24.10.6-ipq807x.json --closure /path/to/dependency-closure.json --inventory /path/to/device-report.txt
+```
+
+工具仅输出带输入摘要的具体差异/缺项，不写入任何输入，不授予安装/发布权限。其退出码 2 表示诊断仍不构成目标验收；其他插件的运行经验支持 SDK 选择，本项目实际 NGINX/WOL 的动态库、符号和目标功能/异常/资源仍需独立验证。以下 r137 及更早说明为历史背景。
+
 ## r137 工程构建已落实（2026-10-27）
 
 已校验官方24.10.6 SDK字节并实际构建独立Shell/Lua工程三包，完成包内入口和模板验证，详见[工程验证三包](工程验证三包.md)。工程manifest及构建入口与正式目标清单/发布门禁分开；不将QWRT verified或ABI改成已通过，不以独立只读包代替完整产品。以下原正式构建关口继续适用，历史“本阶段不构建”描述不否认r137工程产物。

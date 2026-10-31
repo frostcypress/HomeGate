@@ -16,8 +16,13 @@
     "bootstrap": true
   },
   "sdk": {
-    "url": null,
-    "sha256": null
+    "url": "https://downloads.immortalwrt.org/releases/24.10.6/targets/qualcommax/ipq807x/immortalwrt-sdk-24.10.6-qualcommax-ipq807x_gcc-13.3.0_musl.Linux-x86_64.tar.zst",
+    "sha256": "75344bd56f3b1e1e876c41efdc01281089804b221d04235310bab76a3e966f9b",
+    "version": "24.10.6",
+    "selection": "user-approved-candidate",
+    "selection_date": "2026-10-31",
+    "basis": "User reports other plugins built with ImmortalWrt 24.10 run successfully on this router; continue existing SDK builds.",
+    "runtime_abi_verified": false
   },
   "resources": {
     "ram_kib": null,

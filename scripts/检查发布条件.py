@@ -5,7 +5,7 @@ import json
 from pathlib import Path
 import re
 import sys
-from project import ROOT, identity, verify_generated
+from project import ROOT, identity, verify_generated, selected_sdk_series
 
 
 def validate(target, frontend, fmt, release=False, root=ROOT):
@@ -23,6 +23,10 @@ def validate(target, frontend, fmt, release=False, root=ROOT):
     if target.get('luci', {}).get(frontend) is not True or target.get('luci', {}).get('bootstrap') is not True:
         errors.append('所选 LuCI 实现或 Bootstrap 基准尚未核实')
     sdk = target.get('sdk', {})
+    if actual in ('ipk','apk'):
+        series=selected_sdk_series(actual,root)
+        if not isinstance(sdk.get('version'),str) or not re.fullmatch(re.escape(series)+r'(?:\.\d+)?(?:[-+][A-Za-z0-9._-]+)?',sdk['version']):
+            errors.append(f'包格式 {actual} 必须使用用户选定的 SDK {series} 系列')
     if not isinstance(sdk.get('url'), str) or not sdk['url'].startswith('https://'):
         errors.append('缺少可信 HTTPS SDK URL')
     if not re.fullmatch(r'[a-f0-9]{64}', str(sdk.get('sha256', ''))):

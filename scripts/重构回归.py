@@ -122,6 +122,8 @@ class Migration(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             (root / 'scripts').mkdir()
+            (root / 'targets').mkdir()
+            (root / 'targets/sdk-selection-policy.json').write_bytes((ROOT / 'targets/sdk-selection-policy.json').read_bytes())
             for name in ('VERSION', 'RELEASE', 'PROJECT_ID', 'homegate-version.mk', 'scripts/install.sh', 'scripts/offline-verify.sh'):
                 (root / name).write_bytes((ROOT / name).read_bytes())
             (root / 'project.json').write_text(json.dumps({'core': {'implementation': 'c', 'migration_complete': True, 'package': 'homegate-core'}, 'release_ready': False}))
@@ -131,12 +133,16 @@ class Migration(unittest.TestCase):
                           resources={'ram_kib': 128 * 1024, 'overlay_available_kib': 8192})
             for fmt in ('ipk', 'apk'):
                 target['package_format'] = fmt
+                target['sdk']['version']='24.10.6' if fmt=='ipk' else '25.12.0'
                 for frontend in ('lua', 'js'):
                     self.assertEqual(gate.validate(target, frontend, 'auto', root=root), fmt)
                     with self.assertRaises(ValueError):
                         gate.validate(target, frontend, 'apk' if fmt == 'ipk' else 'ipk', root=root)
                     with self.assertRaisesRegex(ValueError, '实机'):
                         gate.validate(target, frontend, fmt, release=True, root=root)
+                correct=target['sdk']['version'];target['sdk']['version']='25.12.0' if fmt=='ipk' else '24.10.6'
+                with self.assertRaisesRegex(ValueError,'用户选定的 SDK'):gate.validate(target,'lua','auto',root=root)
+                target['sdk']['version']=correct
 
     def test_draft_contains_complete_sources_and_no_packages(self):
         with tempfile.TemporaryDirectory() as directory:

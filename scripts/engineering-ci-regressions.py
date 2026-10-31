@@ -27,7 +27,7 @@ def choices(name):
 
 class Coverage(unittest.TestCase):
     def test_real_scenario_parsers_partition_without_loss_or_duplicates(self):
-        for kind, script in [('web', '工程网页回归.py'), ('proxy', '工程代理回归.py')]:
+        for kind, script in [('production', '生产接管回归.py'), ('web', '工程网页回归.py'), ('proxy', '工程代理回归.py'), ('wol', '工程WOL回归.py')]:
             actual = [case for k, cases in dispatch.GROUPS.values() if k == kind for case in cases]
             self.assertEqual(len(actual), len(set(actual)))
             self.assertEqual(set(actual), set(choices(script)))
@@ -63,8 +63,8 @@ class Coverage(unittest.TestCase):
         for group, (kind, _) in dispatch.GROUPS.items():
             commands = dispatch.commands(group, ROOT/'build/runtime with spaces', True)
             self.assertEqual([Path(c[1]).name for c in commands[:4]], ['prepare-ucode.py', 'prepare-rpcd.py', 'prepare-uhttpd.py', 'prepare-luci.py'])
-            self.assertEqual(len(commands), 6 if kind == 'proxy' else 4)
-            if kind == 'proxy':
+            self.assertEqual(len(commands), 8 if kind=='production' else 6 if kind in ('proxy','wol') else 4)
+            if kind in ('proxy','production','wol'):
                 self.assertEqual(commands[-1][-2], '--fixture-dir')
             for command in dispatch.commands(group, ROOT/'build/runtime with spaces'):
                 self.assertIn(str(ROOT/'build/runtime with spaces/rpcd'), command)

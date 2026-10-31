@@ -2,6 +2,7 @@
 
 check:
 	python3 scripts/project.py --check
+	python3 scripts/native-target-audit-regressions.py
 	python3 scripts/重构回归.py
 	python3 scripts/导航安全回归.py
 	python3 scripts/frontend-source-regressions.py

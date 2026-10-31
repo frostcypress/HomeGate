@@ -10,7 +10,7 @@ fail() { printf '{"api_version":1,"engineering":true,"ok":false,"error":"Enginee
 [ "$#" -ge 1 ] || fail
 case "$1" in
     version|dns-provider-catalog|acme-ca-catalog|check-stdin) [ "$#" -eq 1 ] || fail;;
-    dns-provider-status|dns-zones|prepare|prepare-resume|access-*|proxy-*|web-target-put|config-*|cert-*|acme-*|production-copy-*|import-*|activate-preview|secret-put|grant-*|ddns-*|schedule-*|lifecycle-*)
+    wol|wol-status|dns-provider-status|dns-zones|prepare|prepare-resume|firewall-*|access-*|proxy-*|web-target-put|config-*|cert-*|acme-*|production-copy-*|import-*|activate-preview|secret-put|grant-*|ddns-*|schedule-*|lifecycle-*)
         exec ash /usr/libexec/homegate-engineering/ddns-control.sh "$@";;
     *) fail;;
 esac

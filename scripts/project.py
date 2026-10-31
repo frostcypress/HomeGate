@@ -6,6 +6,17 @@ from pathlib import Path
 import re
 
 ROOT = Path(__file__).resolve().parents[1]
+
+def selected_sdk_series(package_format, root=ROOT):
+    """User-selected SDK family; package format is independent of LuCI."""
+    path=root/'targets/sdk-selection-policy.json'
+    with path.open('rb') as file:raw=file.read(65537)
+    if len(raw)>65536:raise ValueError('SDK selection policy exceeds bound')
+    policy=json.loads(raw)
+    if policy.get('schema')!=1 or package_format not in ('ipk','apk'):raise ValueError('Invalid SDK selection policy/format')
+    series=policy.get('formats',{}).get(package_format,{}).get('sdk_series')
+    if not isinstance(series,str) or not re.fullmatch(r'\d{2}\.\d{2}',series):raise ValueError('Missing SDK series for package format')
+    return series
 CORE = ROOT / 'project/core'
 LUA = ROOT / 'project/luci/lua'
 JS = ROOT / 'project/luci/js'

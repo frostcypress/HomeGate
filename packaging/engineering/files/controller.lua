@@ -1,6 +1,14 @@
 module('luci.controller.homegate_engineering',package.seeall)
 
 function index()
+    -- Before dispatcher POST/CSRF parsing, bound only this request's backup
+    -- form to the existing 2 MiB frontend contract. Other routes keep LuCI's
+    -- original parser limit. This does not change the framework source.
+    local h=require('luci.http')
+    local size=tonumber(h.getenv('CONTENT_LENGTH') or '0')
+    if h.getenv('REQUEST_METHOD')=='POST' and
+       h.getenv('PATH_INFO')=='/admin/services/homegate_engineering/configuration_api/backup_preview' and
+       size and size>=0 and size<=2097152 then h.HTTP_MAX_CONTENT=2097152 end
     local node=entry({'admin','services','homegate_engineering'},call('action_overview'),_('HomeGate Engineering'),90)
     node.dependent=false
     entry({'admin','services','homegate_engineering','configuration'},call('configuration'),_('Configuration and Credentials'),20).leaf=true
@@ -11,8 +19,8 @@ function index()
     entry({'admin','services','homegate_engineering','configuration_api','acme_status'},call('config_acme_status')).leaf=true
     entry({'admin','services','homegate_engineering','configuration_api','acme_schedule_status'},call('config_acme_schedule_status')).leaf=true
     entry({'admin','services','homegate_engineering','configuration_api','proxy_status'},call('config_proxy_status')).leaf=true
-    for _,action in ipairs({'access_status','access_recent'})do entry({'admin','services','homegate_engineering','configuration_api',action},call('config_'..action)).leaf=true end
-    for _,action in ipairs({'preview_access','access_update','access_refresh','access_clear','access_clear_denied','access_stop','access_reap','preview_web_rule','web_target_put','proxy_start','proxy_stop','proxy_reap','acme_schedule_start','acme_schedule_stop','acme_schedule_reap','acme_issue','acme_renew','acme_stop','acme_cleanup','preview_acme_certificate','cert_import','cert_resume','cert_cancel','preview_local_certificate','recover','production_copy_preview','production_copy_commit','lifecycle_enable','lifecycle_disable','provider_status','zones','delete_rule','prepare','cancel','activate_preview','preview_account','preview_rule','secret_put','apply','finish','schedule_serve','schedule_start','schedule_stop','schedule_reap'})do
+    for _,action in ipairs({'backup_export','wol_status','firewall_status','access_status','access_recent'})do entry({'admin','services','homegate_engineering','configuration_api',action},call('config_'..action)).leaf=true end
+    for _,action in ipairs({'backup_preview','rollback_preview','wol_send','wol_direct','preview_wol_host','preview_wol_settings','firewall_apply','firewall_cleanup','preview_access','access_update','access_refresh','access_clear','access_clear_denied','access_stop','access_reap','preview_web_rule','web_target_put','proxy_start','proxy_stop','proxy_reap','acme_schedule_start','acme_schedule_stop','acme_schedule_reap','acme_issue','acme_renew','acme_stop','acme_cleanup','preview_acme_certificate','cert_import','cert_resume','cert_cancel','preview_local_certificate','recover','production_copy_preview','production_copy_commit','lifecycle_enable','lifecycle_disable','provider_status','zones','delete_rule','prepare','cancel','activate_preview','preview_account','preview_rule','secret_put','apply','finish','schedule_serve','schedule_start','schedule_stop','schedule_reap'})do
         entry({'admin','services','homegate_engineering','configuration_api',action},post('config_'..action)).leaf=true
     end
 end
@@ -24,7 +32,7 @@ end
 local function config(action)
     local h=require('luci.http')
     local length=tonumber(h.getenv('CONTENT_LENGTH') or '0')
-    if not length or length<0 or length>(action=='cert_import' and 262144 or 32768) then h.status(413,'Request Entity Too Large');return end
+    if not length or length<0 or length>(action=='backup_preview' and 2097152 or action=='cert_import' and 262144 or 32768) then h.status(413,'Request Entity Too Large');return end
     local value=require('luci.model.homegate_engineering.configuration').call(action,h.formvalue() or {})
     if not value.ok then h.status(503,'Service Unavailable') end
     h.prepare_content('application/json');h.write(require('luci.jsonc').stringify(value)..'\n')
@@ -113,3 +121,17 @@ function config_access_clear_denied()config('access_clear_denied')end
 function config_access_stop()config('access_stop')end
 
 function config_access_reap()config('access_reap')end
+
+function config_firewall_status()config('firewall_status')end
+function config_firewall_apply()config('firewall_apply')end
+function config_firewall_cleanup()config('firewall_cleanup')end
+
+function config_wol_status()config('wol_status')end
+function config_wol_send()config('wol_send')end
+function config_wol_direct()config('wol_direct')end
+function config_preview_wol_host()config('preview_wol_host')end
+function config_preview_wol_settings()config('preview_wol_settings')end
+
+function config_backup_export()config('backup_export')end
+function config_backup_preview()config('backup_preview')end
+function config_rollback_preview()config('rollback_preview')end

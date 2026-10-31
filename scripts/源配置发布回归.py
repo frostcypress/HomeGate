@@ -35,7 +35,10 @@ class Static(unittest.TestCase):
         from lupa.lua51 import LuaRuntime
         source=(SCRIPT.parent/'config-codec.lua').read_text()
         LuaRuntime().compile(source)
-        branch=source.split('elseif arg[1]=="source-baseline"',1)[1].split('elseif arg[1]=="migrate"',1)[0]
+        marker='elseif arg[1]=="source-baseline"'
+        self.assertEqual(source.count(marker),1)
+        branch,separator,_=source.split(marker,1)[1].partition('\nelseif ')
+        self.assertTrue(separator,'Missing next top-level codec branch')
         self.assertNotIn('io.write',branch)
         self.assertNotIn('os.getenv',branch)
 

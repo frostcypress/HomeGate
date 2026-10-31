@@ -38,7 +38,7 @@ class Static(unittest.TestCase):
         body=(PROTO/'homegate-config-prototype.sh').read_text()
         barrier=body.split('# A private main-switch preparation record',1)[1].split('max_revision=0',1)[0]
         self.assertIn('startup-intent',barrier);self.assertIn('.startup-intent-next',barrier)
-        self.assertIn('status|export|runtime-startup-snapshot-read',barrier)
+        self.assertIn('status|export|editor-state-read|runtime-startup-snapshot-read',barrier)
         self.assertNotIn('enabled',barrier);self.assertNotIn('writer-check',barrier)
 
 class Published(ApplicationRequest,PublishedBase):

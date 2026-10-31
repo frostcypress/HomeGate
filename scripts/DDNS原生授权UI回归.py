@@ -32,6 +32,18 @@ class Static(unittest.TestCase):
   check=lambda x:policy.response('preview','a',lua.table_from(x,recursive=True),None,select,id,codec.json,schedule)
   self.assertTrue(check(d))
   for k,v in [('rule','b'),('secret','PRIVATE_SENTINEL'),('authorized',True),('expires_in',301),('service_started',True)]:self.assertFalse(check({**d,k:v}))
+ def test_status_observations_are_validated_before_batch_projection(self):
+  lua=LuaRuntime(unpack_returned_tuples=True);policy=lua.execute((PROTO/'ddns-ui-policy.lua').read_bytes());select=lua.execute((PROTO/'ddns-authority.lua').read_bytes()).selection;id=lua.execute((PROTO/'ddns-plan.lua').read_bytes()).id;codec=lua.execute((ROOT/'project/luci/lua/luasrc/model/homegate/backup.lua').read_bytes());schedule=lua.execute((PROTO/'ddns-schedule.lua').read_bytes())
+  d={'api_version':1,'prototype':True,'ok':True,'phase':'ddns-status','configuration_revision':1,'effect':'none','write_ready':False,'rules':[{'rule':'a','provider':'cloudflare','status':'ready','effect':'none','error_kind':'','retryable':False,'retry_in':0}]}
+  def check(value,raw=None):
+   if raw is None:raw=json.dumps(value,separators=(',',':'))+'\n'
+   return policy.response('status','',lua.table_from(value,recursive=True),raw,select,id,codec.json,schedule)
+  self.assertTrue(check(d));d['rules'][0].update(last_result='updated',last_effect='confirmed');self.assertTrue(check(d));d['rules'][0]['event_at']='2026-10-31T01:02:03Z';self.assertTrue(check(d))
+  for k,v in [('last_result','FOREIGN'),('last_effect','write'),('last_effect',False),('event_at','2026-02-30T01:02:03Z'),('event_at','2026-13-01T01:02:03Z'),('event_at','2026-10-31T24:02:03Z'),('event_at','PRIVATE_SENTINEL'),('event_at',42),('effect','confirmed'),('secret','PRIVATE_SENTINEL'),('retry_in',-1),('retryable','false')]:
+   bad=copy.deepcopy(d);bad['rules'][0][k]=v;self.assertFalse(check(bad),k)
+  for k in ['last_result','last_effect']:
+   bad=copy.deepcopy(d);del bad['rules'][0][k];self.assertFalse(check(bad))
+  self.assertFalse(check(d,json.dumps(d)+'\n'));self.assertFalse(check({**d,'secret':'PRIVATE_SENTINEL'}))
 
 class UIMixin:
  def setUp(self):

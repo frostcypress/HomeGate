@@ -117,6 +117,17 @@ class Native(web.Web):
         super().tearDown()
     def cli(self,*args,ok=True):
         p=subprocess.run(['/usr/bin/homegate',*args],capture_output=True,timeout=75 if args and args[0] in ['cert-renew','access-update','access-refresh'] else 18)
+        if ok and p.returncode and args and args[0] in ['firewall-apply','firewall-cleanup']:
+            # Failure-only public state: no raw admission token/configuration.
+            detail={'command':args[0],'exit':p.returncode}
+            for name in ['desired.json','report.json','reply']:
+                try:
+                    with Path('/var/run/homegate/firewall',name).open('rb') as f:raw=f.read(32769)
+                    d=json.loads(raw) if len(raw)<=32768 else {}
+                    detail[name]={k:d[k] for k in ['ok','known','active','state','enabled','reconcile','failure','error_kind'] if k in d}
+                except (OSError,ValueError,TypeError):detail[name]='unavailable'
+            detail['locks']=Path('/proc/locks').read_text()[:4096]
+            print('FIREWALL_FAILURE_STATE:'+json.dumps(detail),flush=True)
         self.assertEqual(p.returncode==0,ok,(args,p.returncode,p.stdout[:400]))
         d=json.loads(p.stdout);self.assertNotIn('SECRET_SENTINEL',p.stdout.decode())
         if INSTALLED:print('PACKAGE_CLI:'+json.dumps({'command':args[0],'arity':len(args)-1,'exit_code':p.returncode,'ok':d.get('ok'),'fields':sorted(d)}),flush=True)
@@ -468,7 +479,16 @@ class Native(web.Web):
         fault.write_text('permission');unknown=self.cli('firewall-status');self.assertFalse(unknown['known']);self.assertFalse(unknown['ok']);self.assertEqual(json.loads(kernel.read_text()),baseline);fault.unlink()
         self.action_result('firewall-direct-failure',partial_apply_cleaned=True,failed_cleanup_retained=True,explicit_recovery_succeeded=True,backend_denial_unknown=True,real_kernel_verified=False)
         self.cli('proxy-stop','--confirm');deadline=time.monotonic()+12
-        while self.cli('proxy-status')['running']:self.assertLess(time.monotonic(),deadline);time.sleep(.1)
+        while True:
+            report=self.cli('proxy-status')
+            # Only after accepted stop: a query may return the exact unknown
+            # response while the owner exits between its lock/identity reads.
+            # Unknown never proves stopped; retain the original12s deadline.
+            unknown=all(report.get(k)==v for k,v in {'api_version':1,'native':True,'ok':False,'phase':'proxy','effect':'none','write_ready':False,'error':'Proxy unavailable; inspect retained session'}.items())
+            if not unknown:
+                self.assertIs(report.get('ok'),True,report);self.assertIsInstance(report.get('running'),bool,report)
+                if report.get('state')=='stopped' and report['running'] is False:break
+            self.assertLess(time.monotonic(),deadline);time.sleep(.1)
         self.cli('proxy-reap','--confirm');self.verify_unchanged()
     def test_cli_selftest(self):
         s=self.configured();before=self.backup(s);store=Path('/etc/homegate/transactions')

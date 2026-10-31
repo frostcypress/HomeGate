@@ -5,6 +5,14 @@ local function keys(d,allowed,n)
  local count=0;for k in pairs(d) do if not allowed[k] then return false end;count=count+1 end;return count==n
 end
 local function hex(s)return type(s)=='string' and #s==32 and s:match('^[0-9a-f]+$') end
+local function timestamp(s)
+ if type(s)~='string' then return false end
+ local y,m,d,h,n,z=s:match('^(%d%d%d%d)%-(%d%d)%-(%d%d)T(%d%d):(%d%d):(%d%d)Z$')
+ if not y then return false end
+ y,m,d,h,n,z=tonumber(y),tonumber(m),tonumber(d),tonumber(h),tonumber(n),tonumber(z)
+ local days={31,(y%4==0 and (y%100~=0 or y%400==0)) and 29 or 28,31,30,31,30,31,31,30,31,30,31}
+ return y>=1970 and m>=1 and m<=12 and d>=1 and d<=days[m] and h<=23 and n<=59 and z<=59
+end
 function M.request(d,select,id)
  if type(d)~='table' then return nil end
  if d.action=='maintain_preview' and keys(d,{action=true,job=true},2) and hex(d.job) then return 'maintain_preview',d.job end
@@ -26,17 +34,33 @@ function M.response(action,payload,d,raw,select,id,json,schedule,jobs)
   if not keys(d,{api_version=true,prototype=true,ok=true,phase=true,configuration_revision=true,effect=true,write_ready=true,rules=true},8) or d.phase~='ddns-status' or d.effect~='none' or d.write_ready~=false or type(d.rules)~='table' or #d.rules>32 then return false end
   for k in pairs(d.rules) do if type(k)~='number' or k<1 or k>#d.rules or k~=math.floor(k) then return false end end
   local names={};for i,row in ipairs(d.rules) do if type(row)~='table' or not id(row.rule) or (i>1 and names[i-1]>=row.rule) then return false end;names[i]=row.rule end
-  local copy={};for k,v in pairs(d) do copy[k]=v end;copy.phase='ddns-batch';copy.sampled=false
-  local frame
-  if raw then frame=raw:gsub('"phase":"ddns%-status"','"phase":"ddns-batch"'):gsub('"write_ready":false','"sampled":false,"write_ready":false')
-  else
-   local rows={}
-   for i,row in ipairs(d.rules) do
-    if not id(row.provider) or not id(row.status) or type(row.error_kind)~='string' or not row.error_kind:match('^[a-z_]*$') or type(row.retryable)~='boolean' or type(row.retry_in)~='number' then return false end
-    rows[i]=string.format('{"rule":"%s","provider":"%s","status":"%s","effect":"none","error_kind":"%s","retryable":%s,"retry_in":%s}',row.rule,row.provider,row.status,row.error_kind,tostring(row.retryable),tostring(row.retry_in))
+  if type(d.configuration_revision)~='number' or d.configuration_revision~=math.floor(d.configuration_revision) or d.configuration_revision<1 or d.configuration_revision>32 then return false end
+  local copy={};for k,v in pairs(d) do copy[k]=v end;copy.phase='ddns-batch';copy.sampled=false;copy.rules={}
+  local rows,public_rows={},{}
+  for i,row in ipairs(d.rules) do
+   local observed=row.last_result~=nil or row.last_effect~=nil or row.event_at~=nil
+   local fields={rule=true,provider=true,status=true,effect=true,error_kind=true,retryable=true,retry_in=true}
+   local count=7;local extra=''
+   if observed then
+    fields.last_result=true;fields.last_effect=true;count=9
+    if not ({none=true,inflight=true,created=true,updated=true,unchanged=true,retry_wait=true,paused=true,unknown=true})[row.last_result] or not ({none=true,confirmed=true,unknown=true})[row.last_effect] then return false end
+    extra=string.format(',"last_result":"%s","last_effect":"%s"',row.last_result,row.last_effect)
+    if row.event_at~=nil then
+     if not timestamp(row.event_at) then return false end
+     fields.event_at=true;count=count+1;extra=extra..',"event_at":"'..row.event_at..'"'
+    end
    end
-   frame=string.format('{"api_version":1,"prototype":true,"ok":true,"phase":"ddns-batch","configuration_revision":%s,"effect":"none","sampled":false,"write_ready":false,"rules":[%s]}\n',tostring(d.configuration_revision),table.concat(rows,','))
+   if not keys(row,fields,count) or not id(row.provider) or not id(row.status) or row.effect~='none' or type(row.error_kind)~='string' or not row.error_kind:match('^[a-z_]*$') or type(row.retryable)~='boolean' or type(row.retry_in)~='number' then return false end
+   rows[i]=string.format('{"rule":"%s","provider":"%s","status":"%s","effect":"none","error_kind":"%s","retryable":%s,"retry_in":%s}',row.rule,row.provider,row.status,row.error_kind,tostring(row.retryable),tostring(row.retry_in))
+   public_rows[i]=rows[i]:sub(1,-2)..extra..'}'
+   copy.rules[i]={rule=row.rule,provider=row.provider,status=row.status,effect=row.effect,error_kind=row.error_kind,retryable=row.retryable,retry_in=row.retry_in}
   end
+  -- Validate the complete public frame before projecting only the original
+  -- admission fields into the unchanged batch policy. Keep observations in
+  -- the returned report; they never become scheduling or write authority.
+  local expected=string.format('{"api_version":1,"prototype":true,"ok":true,"phase":"ddns-status","configuration_revision":%s,"effect":"none","write_ready":false,"rules":[%s]}\n',tostring(d.configuration_revision),table.concat(public_rows,','))
+  if raw and raw~=expected then return false end
+  local frame=string.format('{"api_version":1,"prototype":true,"ok":true,"phase":"ddns-batch","configuration_revision":%s,"effect":"none","sampled":false,"write_ready":false,"rules":[%s]}\n',tostring(d.configuration_revision),table.concat(rows,','))
   return schedule.batch(frame,copy,tostring(d.configuration_revision),'0',names,json)=='none'
  end
  if d.phase~='ddns-authority' or d.service_started~=false then return false end

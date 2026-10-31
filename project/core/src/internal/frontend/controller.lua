@@ -2729,7 +2729,9 @@ end
 
 function action_access_delete_rule()
     local kind = trim(http().formvalue("kind")):lower()
-    local token = trim(http().formvalue("token"))
+    -- Rule data must not share the transport's CSRF token field. Retain the
+    -- old data key for direct, already-authorized core requests only.
+    local token = trim(http().formvalue("rule_token") or http().formvalue("token"))
     if (kind ~= "allow" and kind ~= "deny") or token == "" or #token > 256 then
         return redirect_page("public", nil, "Invalid access rule")
     end

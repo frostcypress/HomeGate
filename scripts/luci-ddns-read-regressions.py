@@ -222,7 +222,7 @@ class ReadOnly(luci.LuaLuCI):
             self.assertEqual(result, {'api_version':1,'prototype':True,'ok':True,'phase':'ddns-status',
                 'configuration_revision':self.revision,'effect':'none','write_ready':False,'rules':[
                     {'rule':'ddns_'+str(i),'provider':provider,'status':'unauthorized','effect':'none',
-                     'error_kind':'','retryable':False,'retry_in':0} for i, provider in enumerate(PROVIDERS)]})
+                     'error_kind':'','retryable':False,'retry_in':0,'last_result':'none','last_effect':'none'} for i, provider in enumerate(PROVIDERS)]})
             self.assertEqual(self.read('jobs', sid), {'api_version':1,'prototype':True,'ok':True,
                               'phase':'ddns-jobs','jobs':[],'effect':'none','write_ready':False})
         self.assertFalse((RUN / 'ddns-state').exists());self.assertFalse((RUN / 'ddns-ui-jobs').exists())

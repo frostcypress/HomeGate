@@ -12,9 +12,12 @@ define Package/homegate-core
   SECTION:=net
   CATEGORY:=Network
   TITLE:=HomeGate native candidate core
-  DEPENDS:=+lua +luci-lib-jsonc +luci-lib-nixio +curl +ca-bundle +openssl-util +flock +coreutils-stat +ip-full +ubus +homegate-nginx +homegate-wol
+  DEPENDS:=+lua +luci-lib-jsonc +luci-lib-nixio +curl +ca-bundle +openssl-util +coreutils-stat +ip-full +ubus +homegate-nginx +homegate-wol
   # Runtime virtual providers are resolved by opkg. Auto-selecting either here
   # makes this SDK generate a self-referential provider comparison in Kconfig.
+  # flock is an executable capability checked before writes by native preinst;
+  # customized BusyBox images need not register a separate flock IPK/provider.
+  # Every runtime lock acquisition remains mandatory and fail-closed.
   EXTRA_DEPENDS:=busybox, ip6tables
   CONFLICTS:=homegate homegate-engineering-core
   PKGARCH:=all
@@ -50,6 +53,11 @@ define Package/homegate-core/install
 endef
 define Package/luci-app-homegate/install
 	$(CP) $(PKG_BUILD_DIR)/web/. $(1)/
+endef
+define Package/luci-app-homegate/postinst
+#!/bin/sh
+[ -n "$${IPKG_INSTROOT}" ] || exec lua /usr/libexec/homegate/native-luci-cache.lua invalidate
+exit 0
 endef
 define Package/luci-i18n-homegate-zh-cn/install
 	$(INSTALL_DIR) $(1)/usr/lib/lua/luci/i18n

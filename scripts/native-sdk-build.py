@@ -83,7 +83,7 @@ def build(target_file,archive,feed_cache,work,output):
         if line.startswith('Package: '):package=line.split(': ',1)[1];recipes[package]=source
         if line.startswith('Provides: '):
             for alias in line.split(': ',1)[1].split():providers.setdefault(alias,[]).append(package)
-    needed=selected+['busybox','lua','luci-lib-jsonc','curl','ca-bundle','openssl-util','flock','coreutils-stat','ip-full','ubus','ip6tables','luci-base']
+    needed=selected+['busybox','lua','luci-lib-jsonc','curl','ca-bundle','openssl-util','coreutils-stat','ip-full','ubus','ip6tables','luci-base']
     missing=[n for n in needed if n not in recipes and n not in providers]
     if missing:raise ValueError('Pinned runtime recipes missing: '+', '.join(missing))
     # Actually compile the complete TLS component. Never substitute the earlier

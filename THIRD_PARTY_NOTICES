@@ -42,3 +42,18 @@ Cross-compile patches: ImmortalWrt packages commit fce1553dac2d00c0b0f66647d8a9b
 Feed packaging is GPL-2.0; corresponding repository COPYING is preserved under legal/.
 Only cross-compile feature/size/error-range/endianness patches are used. No optional modules or system service/config are installed by this recipe.
 Source/patch digests and target verification boundaries: packaging/components/homegate-nginx/sources.json.
+
+HomeGate private nginx component static dependencies (r172 / component release 3)
+The selected ImmortalWrt 24.10.6 SDK supplies OpenSSL 3.0.19 and PCRE2 10.42 static archives.
+They are linked into the private executable, without installing shared libraries over the router's system copies.
+Original OpenSSL Apache-2.0 and PCRE2 license texts are retained under
+packaging/components/homegate-nginx/licenses/ and installed under /usr/share/licenses/homegate-nginx/.
+The local static-link/config-isolation patch is BSD-2-Clause. Exact source and patch hashes are in sources.json.
+
+Temporary native component probe supervisor (r173)
+HomeGate scripts/native-component-probe.c is MIT licensed. The temporary AArch64
+supervisor is statically linked using the existing ImmortalWrt 24.10.6 toolchain;
+it does not install or replace the router's libc or tools. Original musl 1.2.5
+copyright/license and GCC runtime notices are retained under legal/ and in the
+temporary probe bundle. GCC runtime licensing includes the GCC Runtime Library
+Exception; the retained GPL-3.0 and GCC-13-runtime-copyright texts provide its terms.

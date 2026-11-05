@@ -40,19 +40,19 @@ for line in (SRC/'project/luci/common/po/zh_Hans/homegate.po').read_text(encodin
 lua.globals().translate=lambda s:translations.get(str(s),str(s))
 lua.globals().pcdata=lambda s:html.escape(str(s or ''),quote=True)
 lua.globals().url=lambda s:'/'+s
-for name,value in {'services':[],'main':{},'dns_accounts':[],'certificates':[],'access_regions':[],'notice':'','error_message':'','token':'test-only','default_renew_days':'30','dns_provider_catalog':[{'name':'aliyun','display_name':'Aliyun DNS','credentials':[{'name':'key_id','label':'AccessKey ID','required':True},{'name':'secret','label':'AccessKey Secret','required':True}]}],'acme_ca_catalog':[{'name':'letsencrypt','display_name':"Let's Encrypt",'directories':{'production':'https://example.invalid/acme','staging':'https://example.invalid/staging'}}]}.items():
+for name,value in {'services':[],'main':{},'dns_accounts':[],'certificates':[],'access_regions':[],'notice':'','error_message':'','token':'test-only','default_renew_days':'5','dns_provider_catalog':[{'name':'aliyun','display_name':'Aliyun DNS','credentials':[{'name':'key_id','label':'AccessKey ID','required':True},{'name':'secret','label':'AccessKey Secret','required':True}]}],'acme_ca_catalog':[{'name':'letsencrypt','display_name':"Let's Encrypt",'directories':{'production':'https://example.invalid/acme','staging':'https://example.invalid/staging'}}]}.items():
     lua.globals()[name]=lua.table_from(value,recursive=True) if isinstance(value,(dict,list)) else value
 for p in app.glob('*.htm'):
     code=compile_template(p.read_text(encoding='utf-8'))
     lua.execute('assert(loadstring(...))',code)
 results['luci_template_syntax']='5 templates compiled with Lua 5.1'
 rendered_public=lua.execute(compile_template(public))
-assert 'placeholder="默认不足30天时自动续期"' in rendered_public
+assert 'placeholder="默认不足5天时自动续期"' in rendered_public
 rendered_common=lua.execute(compile_template(common))
 lua.globals().default_renew_days='45'
 dynamic_public=lua.execute(compile_template(public))
 assert '默认不足45天时自动续期' in dynamic_public
-lua.globals().default_renew_days='30'
+lua.globals().default_renew_days='5'
 for p in app.glob('*.htm'):
     blocks=re.findall(r'<script type="text/javascript">(.*?)</script>',p.read_text(encoding='utf-8'),re.S)
     if blocks:
@@ -172,7 +172,7 @@ with sync_playwright() as pw:
     page.evaluate('hgPublicOpenAdd()')
     assert page.locator('#hg-public-renew-days').input_value()==''
     assert page.locator('#hg-public-renew-days').get_attribute('placeholder')
-    assert '30' in page.locator('#hg-public-renew-days').get_attribute('placeholder')
+    assert '5' in page.locator('#hg-public-renew-days').get_attribute('placeholder')
     assert page.locator('#hg-public-renew-days').evaluate('(e)=>getComputedStyle(e,"::placeholder").color')=='rgb(156, 169, 183)'
     assert page.locator('#hg-public-access-label-time').inner_text()=='访问时间'
     assert page.locator('#hg-public-renew-note').count()==0

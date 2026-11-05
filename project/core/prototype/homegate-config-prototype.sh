@@ -1258,7 +1258,7 @@ case "$command" in
         else
             printf '%s\n' 'homegate-prototype-config:1' 'slug=homegate' 'schema=main-public-v1' \
                 'enabled=0' 'access_enabled=0' 'auto_firewall=1' 'log_level=info' 'log_max_lines=1024' \
-                'ddns_interval=300' 'renew_days=30' 'https_port=443' 'http_port=0' \
+                'ddns_interval=300' 'renew_days=5' 'https_port=443' 'http_port=0' \
                 'proxy_https_port=10443' 'proxy_http_port=10080' > "$generation_dir/public.conf" || fail 'Unable to write defaults'
         fi
         publish_generation

@@ -20,8 +20,8 @@ def module(path,name):
     spec=importlib.util.spec_from_file_location(name,path)
     result=importlib.util.module_from_spec(spec);spec.loader.exec_module(result);return result
 
-def verify_lifecycle_hooks(control,make):
-    hooks=('preinst','prerm','postinst','postrm');entries={};result={}
+def verify_lifecycle_hooks(control,make,package='homegate-core',hooks=('preinst','prerm','postinst','postrm')):
+    entries={};result={}
     with tarfile.open(fileobj=io.BytesIO(control),mode='r:*') as archive:
         for entry in archive:
             name=entry.name.removeprefix('./')
@@ -31,7 +31,7 @@ def verify_lifecycle_hooks(control,make):
                 raise ValueError('Unsafe native lifecycle hook')
             entries[name]=archive.extractfile(entry).read()
     for hook in hooks:
-        wanted=(make.split('define Package/homegate-core/'+hook+'\n')[1].split('\nendef')[0].replace('$$','$').strip()+'\n').encode()
+        wanted=(make.split('define Package/'+package+'/'+hook+'\n')[1].split('\nendef')[0].replace('$$','$').strip()+'\n').encode()
         actual=entries.get(hook)
         if actual==wanted:
             if hook+'-pkg' in entries:raise ValueError('Unexpected duplicate native lifecycle body')
@@ -89,6 +89,8 @@ def prepare_kit(root,packages,destination):
             verify_gzip(body);verify_gzip(control)
             if name==NAMES[0]:
                 hook_validation=verify_lifecycle_hooks(control,make)
+            elif name==NAMES[1]:
+                verify_lifecycle_hooks(control,make,package=name,hooks=('postinst',))
             controls[name]=hashlib.sha256(control).hexdigest()
             actual={}
             with tarfile.open(fileobj=io.BytesIO(body),mode='r:*') as archive:

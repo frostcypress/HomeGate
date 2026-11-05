@@ -22,7 +22,7 @@ const (
 	CertificateEnvProduction      = "production"
 	CertificateEnvStaging         = "staging"
 	DefaultCertificateEnvironment = CertificateEnvProduction
-	DefaultRenewDays              = 30
+	DefaultRenewDays              = 5
 	DefaultHTTPSPort              = 443
 	DefaultHTTPPort               = 0
 	DefaultProxyHTTPSPort         = 10443

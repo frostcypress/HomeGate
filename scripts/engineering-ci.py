@@ -46,7 +46,11 @@ def commands(group, base, prepare=False):
         flags += ['--nginx-runtime-dir', str(base/'nginx'), '--nginx-fixture-dir', str(base/'nginx-fixture')]
     if kind in ('wol','production'):
         flags += ['--wol-runtime-dir', str(base/'wol'), '--wol-fixture-dir', str(base/'wol-fixture')]
-    return [[sys.executable, str(script/('生产接管回归.py' if kind == 'production' else '工程WOL回归.py' if kind == 'wol' else '工程代理回归.py' if kind == 'proxy' else '工程网页回归.py')), *flags, '--group', case] for case in cases]
+    result = [[sys.executable, str(script/('生产接管回归.py' if kind == 'production' else '工程WOL回归.py' if kind == 'wol' else '工程代理回归.py' if kind == 'proxy' else '工程网页回归.py')), *flags, '--group', case] for case in cases]
+    if kind == 'production':
+        result.append([sys.executable,str(script/'luci-cache-regressions.py'),'--runtime-dir',str(base/'luci')])
+        result.append([sys.executable,str(script/'native-maintenance-regressions.py'),'--nixio-dir',str(base/'luci/prefix/lib/lua'),'--jsonc-dir',str(base/'luci/prefix/lib/lua'),'--busybox',str(ROOT/'build/busybox-runtime/busybox-1.33.2/busybox')])
+    return result
 
 
 def run_group(group, base, prepare=False):

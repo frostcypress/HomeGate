@@ -154,7 +154,7 @@ config_check() {
     numeric_option log_max_lines 1024 64 20000 'Invalid log limit'; log_limit=$option
     numeric_option ddns_interval 300 -999999999 999999999 'Invalid DDNS interval'; interval=$option
     [ "$interval" -ge 60 ] || interval=60
-    numeric_option renew_days 30 1 3650 'Invalid renewal window'; renew=$option
+    numeric_option renew_days 5 1 3650 'Invalid renewal window'; renew=$option
     numeric_option https_port 443 0 65535 'Invalid HTTPS port'; https=$option
     numeric_option http_port 0 0 65535 'Invalid HTTP port'; http=$option
     numeric_option proxy_https_port 10443 0 65535 'Invalid proxy HTTPS port'; proxy_https=$option

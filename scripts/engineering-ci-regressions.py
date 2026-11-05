@@ -67,7 +67,13 @@ class Coverage(unittest.TestCase):
             if kind in ('proxy','production','wol'):
                 self.assertEqual(commands[-1][-2], '--fixture-dir')
             for command in dispatch.commands(group, ROOT/'build/runtime with spaces'):
-                self.assertIn(str(ROOT/'build/runtime with spaces/rpcd'), command)
+                if command[1].endswith('native-maintenance-regressions.py'):
+                    self.assertIn(str(ROOT/'build/runtime with spaces/luci/prefix/lib/lua'),command)
+                    self.assertIn(str(ROOT/'build/busybox-runtime/busybox-1.33.2/busybox'),command)
+                elif command[1].endswith('luci-cache-regressions.py'):
+                    self.assertEqual(command[-2:], ['--runtime-dir',str(ROOT/'build/runtime with spaces/luci')])
+                else:
+                    self.assertIn(str(ROOT/'build/runtime with spaces/rpcd'), command)
 
     def test_real_cli_rejects_unknown_group_without_preparation(self):
         p = subprocess.run([sys.executable, str(ROOT/'scripts/engineering-ci.py'), 'unknown', '--prepare'], capture_output=True, timeout=10)

@@ -1,5 +1,13 @@
 # HomeGate 私有代理组件
 
+当前配方 `1.30.6-r3` 使用所选 SDK 的 OpenSSL/PCRE2 静态归档，将它们链接进专用 NGINX；运行时保留 libc/libgcc 依赖，不安装共享 TLS/PCRE2 库、不覆盖路由器系统库。`PKG_BUILD_DEPENDS` 保留实际源码构建依赖，运行依赖不再声明系统 OpenSSL/PCRE2。缺少静态归档或首次配置探测失败时停止，不回退到系统动态库；编译后再检查 ELF，出现 TLS/PCRE 动态依赖则拒绝打包。SDK 中其余包（例如 curl）的 TLS 依赖仍独立存在，本修复不表示全项目依赖已与目标兼容。
+
+专用 TLS 初始化关闭外部 OpenSSL 配置加载，避免加载系统旧 ABI 的配置/engine/provider。原有 IP SAN 补丁、证书链/有效期/DNS 与 IP 身份校验和 worker 默认身份不变。静态依赖的原始许可证随组件安装，源码及本地补丁摘要见 `sources.json`。更换 SDK 或归档需重新记录实际版本/哈希，静态组合更新后必须重新构建本组件。
+
+2026-10-31 用户提供库的离线证据显示 `.so.3` 实为 OpenSSL 1.1 SONAME，缺当前候选的五个 TLS 符号；PCRE2 固定路径亦未找到。新实际 AArch64 IPK 的 NEEDED 仅 libc/libgcc，静态符号覆盖不等于目标实际加载、TLS 功能或资源验收。`scripts/native-component-probe.sh` 供固定哈希的临时版本探测包使用，不是安装器；从r173起附带专用静态执行器，以每个10秒有界执行 `-V`/`--version`，不依赖目标timeout命令，不启动服务或发送WOL。见`docs/原生组件版本探测.md`。
+
+以下为历史背景；原“目标动态 TLS/PCRE 待落实”由上述私有静态配方替代，实机验收仍待完成。
+
 固定 nginx 1.30.6 官方归档与 SHA，保留 TLS、PCRE2、geo、map、rewrite、proxy 和 WebSocket 所需能力。仅安装 `/usr/libexec/homegate-nginx/nginx` 及许可证，不安装系统 nginx 服务或配置，不覆盖 `/usr/sbin/nginx`。核心显式依赖 `homegate-nginx`，审计显式依赖 `luci-lib-nixio`。
 
 四个交叉补丁来自 ImmortalWrt packages 固定提交 `fce1553dac2d00c0b0f66647d8a9bd102b73e49c` 的 `net/nginx/patches/nginx`，来源和逐文件 SHA 见 `sources.json`，GPL-2.0 许可全文见源码 `legal/immortalwrt-packages-LICENSE`。不使用上游配方“忽略未知 configure 选项”的补丁，配置错误仍须失败。

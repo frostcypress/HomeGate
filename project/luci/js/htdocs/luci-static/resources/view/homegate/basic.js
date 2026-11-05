@@ -1,9 +1,9 @@
 'use strict';
 'require view';
 'require homegate.transport as transport';
-'require homegate.basic as template';
+'require homegate.overview as template';
 return view.extend({
- load: function() {return transport.load('basic');},
+ load: function() {return transport.load('overview');},
  render: function(data) {
   const root = E('div',{'class':'homegate-native'});
   root.innerHTML = template.render(data);
@@ -22,5 +22,5 @@ return view.extend({
   // Never apply unrelated LuCI UCI changes or promise network rollback here.
   return transport.submitPage(this.root,'basic','apply');
  },
- handleReset: function() {location.href=L.url('admin','services','homegate','basic');}
+ handleReset: function() {location.href=L.url('admin','services','homegate','overview');}
 });

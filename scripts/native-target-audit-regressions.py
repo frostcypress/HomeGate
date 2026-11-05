@@ -22,6 +22,14 @@ class TargetAudit(unittest.TestCase):
         target['package_format']='apk';self.assertIn('SDK-series-selection-mismatch',{x['code'] for x in self.assess(target=target)['issues']})
         candidate=copy.deepcopy(CANDIDATE);candidate['sdk']['version']='25.12.0'
         r=audit.assess(target,candidate,CLOSURE,audit.load_inventory(INVENTORY));self.assertEqual(r['user_selected_SDK_series'],'25.12');self.assertNotIn('SDK-series-selection-mismatch',{x['code'] for x in r['issues']});self.assertFalse(r['deployable'])
+    def test_collector_covers_actual_candidate_ELF_requirements(self):
+        import re
+        profile=json.loads((ROOT/'targets/native-candidate-24.10.6-ipq807x.json').read_text())
+        paths=re.search(r'for path in (.*?);do',(ROOT/'scripts/核实原生ABI.sh').read_text()).group(1).split()
+        components=profile['native_ELF_requirements']['components'];self.assertEqual({x['package'] for x in components},{'homegate-nginx','homegate-wol'})
+        for component in components:
+            self.assertIn(component['interpreter'],paths);self.assertTrue(set(component['NEEDED'])<={Path(x).name for x in paths})
+            self.assertRegex(component['binary_SHA256'],r'^[0-9a-f]{64}$');self.assertFalse(component['target_execution_verified'])
     def test_duplicate_and_oversized_inputs_refused(self):
         for raw in [INVENTORY+'libc - different\n',INVENTORY+'\0', 'a'*(audit.MAX_BYTES+1),'x'*8193]:
             with self.subTest(length=len(raw)):
@@ -56,10 +64,10 @@ class TargetAudit(unittest.TestCase):
             text=re.sub(r'for path in .*?;do','for path in '+str(library)+';do',text,count=1)
             prefix="""opkg(){ case "$1" in print-architecture) printf 'arch all 1\\narch aarch64_cortex-a53 10\\n';;list-installed) printf 'kernel - 5.4.213\\nlibc - 1.1.24-2\\nsecret-package - KEEP\\n';;*) return 9;;esac; }
 uname(){ printf 'Linux 5.4.213\\n'; }
-readelf(){ case "$1" in -h) printf '  Machine: AArch64\\n';;-d) awk 'BEGIN {for(i=1;i<=1000;i++)print "0x (SONAME) Library soname: [libfixture.so]"}';;*) awk 'BEGIN {for(i=1;i<=1000;i++)print "X509_check_ip"}';;esac; }
+readelf(){ case "$1" in -h) printf '  Machine: AArch64\\n';;-d) awk 'BEGIN {for(i=1;i<=1000;i++){print "0x (SONAME) Library soname: [libfixture.so]"}}';;--use-dynamic) [ "$2" = --symbols ] && [ "$3" = --wide ] || return 9;awk 'BEGIN {for(i=1;i<=1000;i++){print "X509_check_ip@@OPENSSL_3.0.0";print "_Unwind_Resume@GLIBC_2.0"}}';;*) return 9;;esac; }
 """
             before={p.name:hashlib.sha256(p.read_bytes()).hexdigest() for p in root.iterdir()};run=subprocess.run(['sh'],input=(prefix+text).encode(),capture_output=True,timeout=10);self.assertEqual(run.returncode,0,run.stderr)
-            output=run.stdout.decode();self.assertNotIn('SECRET_SHOULD_NOT_EXPORT',output);self.assertNotIn('secret-package',output);self.assertEqual(output.count('(SONAME)'),64);self.assertEqual(output.count('X509_check_ip'),24);self.assertIn('acceptance=false',output);self.assertIn(header.hex(),output)
+            output=run.stdout.decode();self.assertNotIn('SECRET_SHOULD_NOT_EXPORT',output);self.assertNotIn('secret-package',output);self.assertEqual(output.count('(SONAME)'),64);self.assertEqual(output.count('X509_check_ip'),24);self.assertEqual(output.count('symbol_version=OPENSSL_3.0.0'),1);self.assertEqual(output.count('symbol_version=GLIBC_2.0'),1);self.assertIn('acceptance=false',output);self.assertIn(header.hex(),output)
             self.assertEqual(before,{p.name:hashlib.sha256(p.read_bytes()).hexdigest() for p in root.iterdir()})
     @unittest.skipUnless(os.name=='posix' and shutil.which('sh') and not Path('/etc/openwrt_release').exists(),'Non-OpenWrt host guard')
     def test_collector_refuses_non_target_before_inventory(self):

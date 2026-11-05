@@ -1668,3 +1668,57 @@ msgstr "恢复候选中的服务和访问控制均已关闭。"
 
 msgid "Credentials, source URLs, upstream URLs and certificate files must be restored separately."
 msgstr "凭据、来源地址、上游地址及证书文件需要单独恢复。"
+
+msgid "Backup and Restore"
+msgstr "备份与恢复"
+
+msgid "Import Check"
+msgstr "导入检查"
+
+msgid "Close Check"
+msgstr "关闭检查"
+
+msgid "Import check complete."
+msgstr "导入检查完成。"
+
+msgid "Confirm Restore"
+msgstr "确认恢复"
+
+msgid "Replace the current HomeGate configuration with this file? Services will remain disabled."
+msgstr "确认用此文件替换当前HomeGate配置？恢复后服务保持停用。"
+
+msgid "Configuration restored. Complete the missing information before enabling services."
+msgstr "配置已恢复，请补齐缺失信息后再启用服务。"
+
+msgid "Unable to restore configuration"
+msgstr "无法恢复配置"
+
+msgid "Processing..."
+msgstr "正在处理……"
+
+msgid "Unable to check current configuration"
+msgstr "无法检查当前配置"
+
+msgid "Configuration changed. Import the file again before restoring."
+msgstr "配置已变化，请重新选择文件检查后再恢复。"
+
+msgid "Action timed out; inspect status before retrying"
+msgstr "操作等待超时，请先核对结果再重试。"
+
+msgid "Invalid HomeGate action"
+msgstr "无效的HomeGate操作"
+
+msgid "Invalid HomeGate bridge response"
+msgstr "操作返回了无效结果"
+
+msgid "Unable to read action result"
+msgstr "无法读取操作结果，请稍后核对。"
+
+msgid "Download"
+msgstr "下载"
+
+msgid "Action failed"
+msgstr "操作失败"
+
+msgid "Service Overview"
+msgstr "服务概览"

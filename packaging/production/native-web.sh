@@ -25,7 +25,7 @@ case "$action" in
    if [ -e "$p/owner.lock" ];then empty "$p/owner.lock" || fail;exec 9>>"$p/owner.lock";flock -n 9 || fail;exec 9>&-;fi
   done
   exec lua "$codec" purge -;;
- read) setsid ash "$base/native-web.sh" read-owner "$value" & child=$!;wait "$child";exit $?;;
+ read) lua "$base/native-web-session.lua" read-owner "$value" & child=$!;wait "$child";exit $?;;
  read-owner)
   clock=$base/project/core/prototype/worker-process.lua
   info=$(lua "$clock" info "$$" none) || fail;oldifs=$IFS;IFS=:;set -- $info;IFS=$oldifs;[ "$#" = 6 ] && [ "$3:$4" = "$$:$$" ] || fail
@@ -50,12 +50,12 @@ case "$action" in
   token=$(lua "$codec" submit "$value") || fail
   valid_id "$token" || fail
   fsync "$root/$token/request" "$root/$token" "$root" || fail
-  setsid ash "$base/native-web.sh" owner "$token" 7>&- </dev/null >/dev/null &
+  lua "$base/native-web-session.lua" owner "$token" 7>&- </dev/null >/dev/null &
   printf '{"ok":true,"pending":true,"job":"%s"}\n' "$token";exit 0;;
  job)
   valid_id "$value" && dir "$root" && dir "$root/$value" || fail
   if [ ! -e "$root/$value/owner.lock" ] && [ ! -L "$root/$value/owner.lock" ] && [ ! -e "$root/$value/result" ];then
-   file "$root/$value/request" || fail;setsid ash "$base/native-web.sh" owner "$value" </dev/null >/dev/null &
+   file "$root/$value/request" || fail;lua "$base/native-web-session.lua" owner "$value" </dev/null >/dev/null &
   fi
   exec ash "$base/native-web.sh" status "$value";;
  status|ack)
@@ -71,10 +71,10 @@ case "$action" in
   work=$root/$value;file "$work/request" || fail
   [ ! -e "$work/owner.lock" ] && [ ! -L "$work/owner.lock" ] || fail
   (set -C;: > "$work/owner.lock") || fail
-  started=false
+  started=false;not_started_reason=preflight
   before_work_exit(){
    if [ "$started" = false ] && [ ! -e "$work/result" ];then
-    lua "$codec" not-started > "$work/result.next" && fsync "$work/result.next" && mv "$work/result.next" "$work/result" || return
+    lua "$codec" not-started "$not_started_reason" > "$work/result.next" && fsync "$work/result.next" && mv "$work/result.next" "$work/result" || return
     for name in request deadline;do if [ -e "$work/$name" ];then file "$work/$name" && rm "$work/$name" || return;fi;done
     fsync "$work"
    fi
@@ -92,11 +92,16 @@ case "$action" in
   (set -C;printf '%s\n' "$deadline" > "$work/deadline") || fail
   info=$(lua "$clock" info "$$" none) || fail
   oldifs=$IFS;IFS=:;set -- $info;IFS=$oldifs;[ "$#" = 6 ] && [ "$3:$4" = "$$:$$" ] || fail
+  not_started_reason=runtime-directory
+  if [ ! -e "$run" ] && [ ! -L "$run" ];then mkdir "$run" || dir "$run" || fail;fi
   dir "$run" || fail
+  not_started_reason=runtime-lock
   if [ ! -e "$run/frontend-web.lock" ] && [ ! -L "$run/frontend-web.lock" ];then (set -C;: > "$run/frontend-web.lock") || :;fi
   empty "$run/frontend-web.lock" || fail;exec 8>>"$run/frontend-web.lock"
-  not_started(){ lua "$codec" not-started > "$work/result.next" && fsync "$work/result.next" && mv "$work/result.next" "$work/result" && rm "$work/request" "$work/deadline" && fsync "$work" || fail;exit 0; }
+  not_started(){ lua "$codec" not-started "$not_started_reason" > "$work/result.next" && fsync "$work/result.next" && mv "$work/result.next" "$work/result" && rm "$work/request" "$work/deadline" && fsync "$work" || fail;exit 0; }
+  not_started_reason=busy
   while ! flock -n 8;do now=$(lua "$clock" now) || fail;[ "$now" -lt "$deadline" ] || not_started;sleep .1;done
+  not_started_reason=package-state
   held && not_started
   stopped=false;trap 'stopped=true' TERM INT
   started=true;trap - EXIT

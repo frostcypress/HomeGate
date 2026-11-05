@@ -6,11 +6,22 @@ PATH=/usr/sbin:/usr/bin:/sbin:/bin;export PATH LC_ALL=C
 unset IPKG_INSTROOT INIT_TRACE LUA_INIT LUA_PATH LUA_CPATH HOMEGATE_PACKAGE_UPGRADE_STATE HOMEGATE_PACKAGE_OPKG_CMDLINE
 exec 3>&- 4>&- 5>&- 6>&- 7>&- 8>&- 9>&-
 root=/etc/.homegate-transition;kit=/tmp/homegate-native-kit;codec=$kit/native-transition.lua
+have_tool() {
+ case "$1" in /*) [ -f "$1" ] && [ -x "$1" ];return;;esac
+ tool_ifs=$IFS;IFS=:
+ for tool_dir in $PATH;do
+  if [ -f "$tool_dir/$1" ] && [ -x "$tool_dir/$1" ];then IFS=$tool_ifs;return 0;fi
+ done
+ IFS=$tool_ifs;return 1
+}
 fail() { printf '{"api_version":1,"ok":false,"phase":"legacy-package-transition","recovery_retained":true,"error":"Transition incomplete; retained configuration and hooks require recovery"}\n';exit "${1:-7}"; }
 dir() { [ -d "$1" ] && [ ! -L "$1" ] && [ "$(stat -c '%u:%a' "$1")" = 0:700 ]; }
 file() { [ -f "$1" ] && [ ! -L "$1" ] && [ "$(stat -c '%u:%a:%h' "$1")" = 0:600:1 ] && [ "$(stat -c %s "$1")" -le 65536 ]; }
 [ "$(id -u)" = 0 ] && [ "$#" = 2 ] && [ "$2" = --confirm ] || fail 2
 action=$1;case "$action" in prepare|install|recover) ;;*) fail 2;;esac
+for tool in stat fsync flock lua sha256sum opkg mkdir mv rm sleep cat;do
+ have_tool "$tool" || { printf 'HomeGate transition prerequisite missing: %s\n' "$tool" >&2;fail; }
+done
 dir "$kit" && file "$codec" && file "$kit/receipt.json" || fail
 checks=$(lua "$codec" kit) || fail;printf '%s\n' "$checks" | sha256sum -c - >/dev/null 2>&1 || fail
 [ -d /etc/homegate ] && [ ! -L /etc/homegate ] && [ "$(stat -c %u /etc/homegate)" = 0 ] || fail

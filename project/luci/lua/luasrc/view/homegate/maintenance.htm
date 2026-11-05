@@ -5,15 +5,7 @@
 <% if error_message ~= "" then %><div class="hg-notice hg-notice-error"><%=pcdata(translate(error_message))%></div><% end %>
 <div class="hg-notice hg-notice-pending" id="hg-maintenance-dirty" style="display:none"><%:Changes are not saved yet.%></div>
 
-<div class="cbi-section hg-section">
-  <h3><%:Version Management%></h3>
-  <div class="cbi-value"><label class="cbi-value-title">Core</label><div class="cbi-value-field"><%=pcdata(packages.core or '-')%></div></div>
-  <div class="cbi-value"><label class="cbi-value-title">LuCI</label><div class="cbi-value-field"><%=pcdata(packages.luci or '-')%></div></div>
-  <div class="cbi-value"><label class="cbi-value-title"><%:Language Package%></label><div class="cbi-value-field"><%=pcdata(packages.i18n or '-')%></div></div>
-  <p><%=pcdata(translate(packages.core and packages.core ~= '-' and packages.core == packages.luci and packages.core == packages.i18n and 'Packages match' or 'Package versions require verification'))%></p>
-  <p><a href="<%=url('admin/system/packages')%>"><%:Software Packages%></a></p>
-</div>
-
+<p id="hg-maintenance-result" role="status" aria-live="polite" hidden="hidden"></p>
 <div class="hg-maintenance-log-card">
 <form method="post" action="<%=url('admin/services/homegate/maintenance_apply')%>" id="homegate-maintenance-form">
 <input type="hidden" name="mode" value="apply" />
@@ -28,34 +20,30 @@
 <div id="hg-maintenance-log" class="hg-log hg-log-large"><%:Loading...%></div>
 <div class="hg-log-actions hg-log-actions-inline hg-log-actions-below">
   <button class="cbi-button hg-btn-4" type="button" onclick="hgMaintenanceRefreshLog()"><%:Refresh%></button>
-  <form method="post" action="<%=url('admin/services/homegate/log_clear')%>" onsubmit="return confirm('<%:Clear the HomeGate runtime log?%>')"><input type="hidden" name="token" value="<%=pcdata(token)%>"/><button class="cbi-button hg-btn-4" type="submit"><%:Clear Log%></button></form>
-  <form method="post" action="<%=url('admin/services/homegate/diagnostic_download')%>"><input type="hidden" name="token" value="<%=pcdata(token)%>"/><button class="cbi-button hg-btn-4" type="submit"><%:Download Diagnostic%></button></form>
+  <form method="post" action="<%=url('admin/services/homegate/log_clear')%>" onsubmit="return hgMaintenanceSubmit(this, true)"><input type="hidden" name="token" value="<%=pcdata(token)%>"/><button class="cbi-button hg-btn-4" type="submit"><%:Clear Log%></button></form>
+  <form method="post" action="<%=url('admin/services/homegate/diagnostic_download')%>" onsubmit="return hgMaintenanceSubmit(this, false)"><input type="hidden" name="token" value="<%=pcdata(token)%>"/><button class="cbi-button hg-btn-4" type="submit"><%:Download Diagnostic%></button></form>
 </div>
 </div>
 
 <div class="cbi-section hg-section">
   <h3><%:Configuration Management%></h3>
-  <p><%:Export omits credentials and upstream URLs. Restore them before enabling services.%></p>
-  <p><%:Preview only. Configuration remains unchanged.%></p>
   <div class="hg-button-row">
-    <form method="post" action="<%=url('admin/services/homegate/config_export')%>"><input type="hidden" name="token" value="<%=pcdata(token)%>"/><button class="cbi-button hg-btn-4" type="submit"><%:Export Configuration%></button></form>
-    <form method="post" action="<%=url('admin/services/homegate/config_import')%>" id="hg-config-import-form" onsubmit="return false"><input type="hidden" name="token" value="<%=pcdata(token)%>"/><input class="hg-hidden-file" type="file" id="hg-config-import-file" accept=".conf,.txt" onchange="hgMaintenanceImportSelected(this)"/><button class="cbi-button hg-btn-4" type="button" id="hg-config-import-button" onclick="document.getElementById('hg-config-import-file').click()"><%:Import Preview%></button></form>
+    <form method="post" action="<%=url('admin/services/homegate/config_export')%>" onsubmit="return hgMaintenanceSubmit(this, false)"><input type="hidden" name="token" value="<%=pcdata(token)%>"/><button class="cbi-button hg-btn-4" type="submit"><%:Export Configuration%></button></form>
+    <form method="post" action="<%=url('admin/services/homegate/config_import')%>" id="hg-config-import-form" onsubmit="return false"><input type="hidden" name="token" value="<%=pcdata(token)%>"/><input class="hg-hidden-file" type="file" id="hg-config-import-file" accept=".conf,.txt" onchange="hgMaintenanceImportSelected(this)"/><button class="cbi-button hg-btn-4" type="button" id="hg-config-import-button" onclick="document.getElementById('hg-config-import-file').click()"><%:Import Configuration%></button></form>
 
+    <form method="post" action="<%=url('admin/services/homegate/config_reset')%>" onsubmit="return hgMaintenanceSubmit(this, false)"><input type="hidden" name="token" value="<%=pcdata(token)%>"/><button class="cbi-button hg-btn-4" type="submit"><%:Restore Default Configuration%></button></form>
   </div>
   <div id="hg-config-preview" hidden="hidden" aria-live="polite">
-    <h4><%:Import Preview%></h4>
+    <h4><%:Import Configuration%></h4>
     <p id="hg-config-preview-message"></p>
     <ul id="hg-config-preview-warnings"></ul>
     <div class="hg-table-scroll-wrap"><table class="table cbi-section-table hg-table hg-table-stable"><thead><tr class="tr cbi-section-table-titles"><th class="th"><%:Configuration Field%></th><th class="th"><%:Current Value%></th><th class="th"><%:Restore Candidate%></th></tr></thead><tbody id="hg-config-preview-changes"></tbody></table></div>
-    <button class="cbi-button" type="button" onclick="hgMaintenanceClosePreview()"><%:Close Preview%></button>
+    <button class="cbi-button cbi-button-apply" type="button" id="hg-config-restore-confirm" hidden="hidden" onclick="hgMaintenanceRestore()"><%:Confirm Restore%></button>
+    <button class="cbi-button" type="button" onclick="hgMaintenanceClosePreview()"><%:Close Check%></button>
   </div>
 </div>
 
-<div class="cbi-section hg-section">
-  <h3><%:Plugin Operations%></h3>
-    <form method="post" action="<%=url('admin/services/homegate/config_reset')%>" onsubmit="return confirm('<%:Restore HomeGate default configuration? Current settings and service rules will be removed.%>')"><input type="hidden" name="token" value="<%=pcdata(token)%>"/><button class="cbi-button hg-btn-4" type="submit"><%:Restore Defaults%></button></form>
-  <p><a href="<%=url('admin/system/packages')%>"><%:Software Packages%></a></p>
-</div>
+
 
 </div>
 <div class="cbi-page-actions">
@@ -69,16 +57,78 @@
 <span id="hg-maintenance-preview-pending" hidden="hidden"><%:Validating configuration...%></span>
 <span id="hg-maintenance-preview-no-changes" hidden="hidden"><%:No public configuration changes.%></span>
 <span id="hg-maintenance-preview-error" hidden="hidden"><%:Unable to preview configuration.%></span>
-<span id="hg-maintenance-preview-only" hidden="hidden"><%:Preview only. Configuration remains unchanged.%></span>
+<span id="hg-maintenance-preview-only" hidden="hidden"><%:Import check complete.%></span>
 <span id="hg-maintenance-preview-disabled" hidden="hidden"><%:Services and access control are disabled in the restore candidate.%></span>
 <span id="hg-maintenance-preview-omitted" hidden="hidden"><%:Credentials, source URLs, upstream URLs and certificate files must be restored separately.%></span>
 
 <script type="text/javascript">
 var hgMaintenanceDirtyTracker=null;
 var hgMaintenancePreviewSequence=0;
+var hgMaintenanceImportPayload='',hgMaintenanceImportConfirmation='',hgMaintenanceImportBusy=false;
+function hgMaintenanceMessage(text){var node=document.getElementById('hg-maintenance-result');node.hidden=false;node.textContent=text;}
+function hgMaintenanceAction(url,values,done){
+  var route=url.match(/\/homegate\/([a-z_]+)$/);
+  if(!route){done({ok:false,error:'<%:Invalid HomeGate action%>'});return;}
+  if(typeof window.homegateMaintenanceAction==='function'){window.homegateMaintenanceAction(route[1],values).then(done,function(e){done({ok:false,error:e.message});});return;}
+  var base=url.slice(0,url.lastIndexOf('/')),attempts=0;
+  function xhr(method,path,body,callback){
+    var req=new XMLHttpRequest();req.open(method,path,true);req.timeout=20000;
+    req.setRequestHeader('Accept','application/json');
+    if(method==='POST')req.setRequestHeader('Content-Type','application/x-www-form-urlencoded');
+    req.onload=function(){try{callback(JSON.parse(req.responseText));}catch(e){done({ok:false,error:'<%:Unable to read action result%>'});}};
+    req.onerror=req.ontimeout=function(){done({ok:false,error:'<%:Unable to read action result%>'});};req.send(body);
+  }
+  function poll(id){
+    xhr('GET',base+'/compat_job/'+id,null,function(d){
+      if(!d.ok){done(d);return;}
+      if(d.pending){if(++attempts<240)setTimeout(function(){poll(id);},1000);else done({ok:false,error:'<%:Action timed out; inspect status before retrying%>'});return;}
+      if(!d.result){done({ok:false,error:'<%:Invalid HomeGate bridge response%>'});return;}
+      if(!d.result.uncertain){var ack=new XMLHttpRequest();ack.open('POST',base+'/compat_ack/'+id,true);ack.timeout=20000;ack.setRequestHeader('Content-Type','application/x-www-form-urlencoded');ack.send('token='+encodeURIComponent(values.token||''));}
+      done(d.result);
+    });
+  }
+  var body=Object.keys(values).map(function(k){return encodeURIComponent(k)+'='+encodeURIComponent(values[k]);}).join('&');
+  xhr('POST',url,body,function(d){if(d.ok&&d.pending&&/^[0-9a-f]{32}$/.test(d.job||''))poll(d.job);else done(d);});
+}
+function hgMaintenanceSubmit(form,clear){
+  if(form.getAttribute('data-busy')==='1')return false;
+  if(clear&&!confirm('<%:Clear the HomeGate runtime log?%>'))return false;
+  var reset=/\/config_reset$/.test(form.action);
+  if(reset&&!confirm('<%:Restore HomeGate default configuration? Current settings and service rules will be removed.%>'))return false;
+  form.setAttribute('data-busy','1');var button=form.querySelector('button');if(button)button.disabled=true;
+  hgMaintenanceMessage('<%:Processing...%>');
+  hgMaintenanceAction(form.action,{token:form.elements.token.value},function(result){
+    form.removeAttribute('data-busy');if(button)button.disabled=false;
+    if(!result.ok){hgMaintenanceMessage(result.error||'<%:Action failed%>');return;}
+    if(clear){hgMaintenanceMessage('<%:Log cleared%>');hgMaintenanceRefreshLog();return;}
+    if(reset){
+      window.location.assign(form.action.replace(/\/config_reset$/, '/maintenance')+'?notice='+encodeURIComponent('Default configuration restored'));
+      return;
+    }
+    var headers=result.headers||{},match=(headers['Content-Disposition']||'').match(/filename="([a-zA-Z0-9_.-]+)"/);
+    if(!match||typeof result.body!=='string'){hgMaintenanceMessage('<%:Invalid HomeGate bridge response%>');return;}
+    var href=URL.createObjectURL(new Blob([result.body],{type:headers['Content-Type']||'text/plain'})),a=document.createElement('a');
+    a.href=href;a.download=match[1];a.hidden=true;
+    document.body.appendChild(a);
+    try {a.click();} finally {a.remove();setTimeout(function(){URL.revokeObjectURL(href);},60000);}
+    var node=document.getElementById('hg-maintenance-result');node.textContent='';node.hidden=true;
+  });return false;
+}
+function hgMaintenanceRestore(){
+  if(hgMaintenanceImportBusy||!hgMaintenanceImportPayload||!hgMaintenanceImportConfirmation)return;
+  if(!confirm('<%:Replace the current HomeGate configuration with this file? Services will remain disabled.%>'))return;
+  var form=document.getElementById('hg-config-import-form'),button=document.getElementById('hg-config-restore-confirm');
+  hgMaintenanceImportBusy=true;button.disabled=true;var sequence=hgMaintenancePreviewSequence;
+  hgMaintenanceRequestPreview(form,hgMaintenanceImportPayload,function(result){
+    hgMaintenanceImportBusy=false;button.disabled=false;if(sequence!==hgMaintenancePreviewSequence)return;
+    if(result&&result.ok&&result.restored){hgMaintenanceClosePreview();hgMaintenanceMessage('<%:Configuration restored. Complete the missing information before enabling services.%>');return;}
+    hgMaintenanceImportConfirmation='';button.hidden=true;hgMaintenanceMessage((result&&result.error)||'<%:Unable to restore configuration%>');
+  },'restore',hgMaintenanceImportConfirmation);
+}
 function hgMaintenancePreviewText(id){return document.getElementById(id).textContent;}
 function hgMaintenanceClosePreview(){
-  hgMaintenancePreviewSequence++;
+  if(hgMaintenanceImportBusy)return;
+  hgMaintenancePreviewSequence++;hgMaintenanceImportPayload='';hgMaintenanceImportConfirmation='';document.getElementById('hg-config-restore-confirm').hidden=true;
   document.getElementById('hg-config-preview').hidden=true;
   document.getElementById('hg-config-preview-message').textContent='';
   document.getElementById('hg-config-preview-warnings').textContent='';
@@ -87,38 +137,40 @@ function hgMaintenanceClosePreview(){
 function hgMaintenanceShowPreview(result){
   var box=document.getElementById('hg-config-preview'),message=document.getElementById('hg-config-preview-message');
   var warnings=document.getElementById('hg-config-preview-warnings'),changes=document.getElementById('hg-config-preview-changes');
-  box.hidden=false;warnings.textContent='';changes.textContent='';
+  box.hidden=false;warnings.textContent='';changes.textContent='';hgMaintenanceImportConfirmation='';document.getElementById('hg-config-restore-confirm').hidden=true;
   if(!result||result.ok!==true){message.textContent=(result&&result.error)||hgMaintenancePreviewText('hg-maintenance-preview-error');return;}
-  if(result.can_commit!==false||!Array.isArray(result.changes)||result.changes.length>8192){message.textContent=hgMaintenancePreviewText('hg-maintenance-preview-error');return;}
+  if(result.can_commit!==true||typeof result.confirmation!=='string'||!result.confirmation||!Array.isArray(result.changes)||result.changes.length>8192){message.textContent=hgMaintenancePreviewText('hg-maintenance-preview-error');return;}
+  hgMaintenanceImportConfirmation=result.confirmation;document.getElementById('hg-config-restore-confirm').hidden=false;
   message.textContent=hgMaintenancePreviewText(result.changes.length?'hg-maintenance-preview-only':'hg-maintenance-preview-no-changes');
-  ['hg-maintenance-preview-only','hg-maintenance-preview-disabled','hg-maintenance-preview-omitted'].forEach(function(id){var li=document.createElement('li');li.textContent=hgMaintenancePreviewText(id);warnings.appendChild(li);});
+  ['hg-maintenance-preview-disabled','hg-maintenance-preview-omitted'].forEach(function(id){var li=document.createElement('li');li.textContent=hgMaintenancePreviewText(id);warnings.appendChild(li);});
   result.changes.forEach(function(change){
     var row=document.createElement('tr');row.className='tr cbi-section-table-row';
     [String(change.section||'')+'.'+String(change.field||''),change.before,change.after].forEach(function(value){var cell=document.createElement('td');cell.className='td';cell.textContent=String(value==null?'':value);row.appendChild(cell);});
     changes.appendChild(row);
   });
 }
-function hgMaintenanceRequestPreview(form,payload,done){
-  var values={config_payload:payload,token:form.elements.token.value};
-  if(typeof window.homegatePreviewImport==='function'){window.homegatePreviewImport(values).then(done,function(){done({ok:false});});return;}
-  var xhr=new XMLHttpRequest();xhr.open('POST',form.action,true);xhr.timeout=18000;
-  xhr.setRequestHeader('Content-Type','application/x-www-form-urlencoded');
-  xhr.onload=function(){try{done(xhr.status===200?JSON.parse(xhr.responseText):{ok:false});}catch(e){done({ok:false});}};
-  xhr.onerror=xhr.ontimeout=function(){done({ok:false});};
-  xhr.send('token='+encodeURIComponent(values.token)+'&config_payload='+encodeURIComponent(values.config_payload));
+function hgMaintenanceRequestPreview(form,payload,done,mode,confirmation){
+  var values={config_payload:payload,token:form.elements.token.value,mode:mode||'check',confirmation:confirmation||''};
+  hgMaintenanceAction(form.action,values,function(result){
+    if(!result.ok||result.redirect){done({ok:false,error:result.error});return;}
+    try{done(JSON.parse(result.body||'{}'));}catch(e){done({ok:false});}
+  });
 }
+
 function hgMaintenanceRefreshLog(){
   hgLoadText('<%=url('admin/services/homegate/api/logs')%>','hg-maintenance-log');
 }
 function hgMaintenanceImportSelected(file){
   var form=document.getElementById('hg-config-import-form');
+  if(hgMaintenanceImportBusy)return;
+  hgMaintenanceImportPayload='';
   if(!file||!file.files||!file.files.length||!form)return;
   var sequence=++hgMaintenancePreviewSequence;
   hgMaintenanceShowPreview({ok:false,error:hgMaintenancePreviewText('hg-maintenance-preview-pending')});
   var f=file.files[0];
   if(f.size>262144){hgMaintenanceShowPreview({ok:false,error:hgMaintenancePreviewText('hg-maintenance-import-too-large')});file.value='';return;}
   var r=new FileReader();
-  r.onload=function(){if(sequence!==hgMaintenancePreviewSequence)return;var payload=String(r.result||'');hgMaintenanceRequestPreview(form,payload,function(result){if(sequence===hgMaintenancePreviewSequence)hgMaintenanceShowPreview(result);});file.value='';};
+  r.onload=function(){if(sequence!==hgMaintenancePreviewSequence)return;var payload=String(r.result||'');hgMaintenanceRequestPreview(form,payload,function(result){if(sequence===hgMaintenancePreviewSequence){hgMaintenanceImportPayload=payload;hgMaintenanceShowPreview(result);}});file.value='';};
   r.onerror=function(){if(sequence===hgMaintenancePreviewSequence)hgMaintenanceShowPreview({ok:false,error:hgMaintenancePreviewText('hg-maintenance-import-read-error')});file.value='';};
   r.readAsText(f);
 }

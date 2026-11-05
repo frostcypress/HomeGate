@@ -729,12 +729,12 @@ assert(original(arg[0]))()
         done=self.web_wait(self.web_request('diagnostic_download',{},True)['job']);self.assertTrue(done['ok'],done);self.assertIn('HomeGate diagnostic report',done['body']);self.assertNotIn('SECRET_SENTINEL',done['body']);self.assertEqual(source.read_bytes(),before)
         log=Path('/var/log/homegate.log');log.write_text('2026-10-30 00:00:00 [INFO] fixture maintenance\n');log.chmod(0o600)
         done=self.web_wait(self.web_request('log_clear',{},True)['job']);self.assertTrue(done['ok'],done);self.assertEqual(log.read_bytes(),b'');self.assertEqual(source.read_bytes(),before)
-        done=self.web_wait(self.web_request('config_import',{'config_payload':self.backup(s)},True)['job']);self.assertTrue(done['ok'],done);self.assertFalse(json.loads(done['body'])['can_commit']);self.assertEqual(source.read_bytes(),before)
+        done=self.web_wait(self.web_request('config_import',{'config_payload':self.backup(s)},True)['job']);self.assertTrue(done['ok'],done);self.assertTrue(json.loads(done['body'])['can_commit']);self.assertEqual(source.read_bytes(),before)
         done=self.web_wait(self.web_request('certificate_apply',{'name':'ACME certificate','zone':'example.test','domains':'example.test','renew_days':'30','account_id':'dns_a','certificate_ca':'letsencrypt','certificate_environment':'production'},True)['job']);self.assertTrue(done['ok'],done)
         self.action_result('maintenance-read-log-preview-certificate',diagnostic_redacted=True,log_cleared=True,import_preview_only=True,legacy_certificate_metadata_saved=True)
         done=self.web_wait(self.web_request('config_reset',{},True)['job'],seconds=50);self.assertTrue(done['ok'],done)
-        self.assertEqual(self.web_request('basic')['data']['main']['enabled'],'1');self.assertTrue(self.cli('status')['service']['running'])
-        self.action_result('config-reset',completed=True,default_switch_restored=True,empty_coordinator_running=True);self.verify_unchanged()
+        self.assertEqual(self.web_request('overview')['data']['main']['enabled'],'0');self.assertFalse(self.cli('status')['service']['running'])
+        self.action_result('config-reset',completed=True,default_switch_restored=True,empty_coordinator_running=False);self.verify_unchanged()
     def test_cli_acme(self):
         s=self.acme_setup();self.cfg('lifecycle_enable',s,consent='1')
         self.assertEqual(self.cli('cert-renew')['results'],[]);self.assertFalse((STATE/'acme-fixture.json').exists())
@@ -810,7 +810,7 @@ else:
                 pairs=[('/etc/.homegate-transition',str(root/'transition')),('/tmp/homegate-native-kit',str(root/'kit')),('/usr/lib/opkg/info',str(root/'info')),('/etc/homegate',str(data)),('/etc/config',str(root/'config')),('/var/run/homegate',str(root/'run')),('/usr/bin/homegate',str(old)),('/etc/init.d/homegate',str(init)),('/tmp/.homegate-purge-request',str(root/'purge')),('/tmp/homegate-frontend-jobs',str(root/'jobs'))]
                 for n,(a,b) in enumerate(pairs):raw=raw.replace(a,'@@PATH_'+str(n)+'@@')
                 for n,(a,b) in enumerate(pairs):raw=raw.replace('@@PATH_'+str(n)+'@@',b)
-                return raw.replace('opkg remove ',str(opkg)+' remove ').replace('opkg install ',str(opkg)+' install ')
+                return raw.replace('opkg remove ',str(opkg)+' remove ').replace('opkg install ',str(opkg)+' install ').replace('sha256sum opkg mkdir','sha256sum '+str(opkg)+' mkdir')
             kit=root/'kit';driver=kit/'native-transition.sh';driver.write_text(mapped((ROOT/'packaging/production/native-transition.sh').read_text()));driver.chmod(0o600)
             (kit/'native-transition.lua').write_text(mapped((ROOT/'packaging/production/native-transition.lua').read_text()))
             (kit/'factory.config').write_bytes(factory)
@@ -946,14 +946,16 @@ else:
         self.fail('Web task did not settle: '+str({'status':d,'processes':processes,'reports':reports,'store_files':[str(p.relative_to('/etc/homegate/transactions')) for p in Path('/etc/homegate/transactions').iterdir()]}))
     def test_web_forms(self):
         s=self.configured()
-        for route in ['overview','basic','public','wol','maintenance','settings/basic','settings/public','settings/wol']:
+        for route in ['overview','public','wol','maintenance']:
             d=self.web_request(route);self.assertIn('template',d,(route,d));self.assertNotIn('SECRET_SENTINEL',json.dumps(d))
+        for route,destination in [('basic','overview'),('settings/basic','overview'),('settings/public','public'),('settings/wol','wol')]:
+            self.assertEqual(self.web_request(route)['redirect'],BASE+'/'+destination)
         for route in ['api/status','api/version','api/network','api/ddns','api/certs','api/proxy','api/firewall','api/wol','api/logs','api/log_events','api/access_recent','api/dns_zones','domain','web']:
             d=self.web_request(route);self.assertTrue(d['ok'],(route,d));self.assertTrue('body' in d or 'redirect' in d,(route,d))
         d=self.web_request('basic_apply',{'mode':'save','ddns_interval':'420','https_port':'444','proxy_https_port':'10444','auto_firewall':'1'},True)
         result=self.web_wait(d['job']);self.assertTrue(result['ok'],result);self.assertIn('notice=',result['redirect'])
         self.assertIn("option ddns_interval '420'",Path('/etc/config/homegate').read_text())
-        self.assertEqual(self.web_request('basic')['data']['main']['ddns_interval'],'420')
+        self.assertEqual(self.web_request('overview')['data']['main']['ddns_interval'],'420')
         d=self.web_request('wol_apply',{'wol_interface':'br-lan','wol_host_count':'1','wol_host_name_1':'Test desktop','wol_host_mac_1':'02:11:22:33:44:55'},True)
         result=self.web_wait(d['job']);self.assertTrue(result['ok'],result)
         hosts=self.web_request('wol')['data']['hosts'];self.assertEqual(len(hosts),1);self.assertEqual(hosts[0]['mac'],'02:11:22:33:44:55')
@@ -961,11 +963,11 @@ else:
         d=self.web_request('basic_apply',{'https_port':'99999'},True);result=self.web_wait(d['job']);self.assertFalse(result['ok']);self.assertEqual(Path('/etc/config/homegate').read_bytes(),before)
         d=self.web_request('config_export',{},True);result=self.web_wait(d['job']);self.assertTrue(result['ok'],result);self.assertIn('# secrets: omitted',result['body']);self.assertNotIn('SECRET_SENTINEL',result['body'])
         d=self.web_request('basic_apply',{'mode':'apply','enabled':'1'},True);result=self.web_wait(d['job'],seconds=25);self.assertTrue(result['ok'],result);self.assertTrue(result['runtime_applied'])
-        self.assertEqual(self.web_request('basic')['data']['main']['enabled'],'1');self.assertTrue(self.cli('status')['service']['running'])
+        self.assertEqual(self.web_request('overview')['data']['main']['enabled'],'1');self.assertTrue(self.cli('status')['service']['running'])
         self.verify_unchanged()
     def test_web_http(self):
         s=self.configured();sid,token=s
-        for route in ['overview','settings/basic','settings/public','settings/wol','maintenance']:
+        for route in ['overview','public','wol','maintenance']:
             code,_,body=self.cgi(BASE+'/'+route,cookie=sid);self.assertEqual(code,200,(route,body[:300]));self.assertNotIn(b'SECRET_SENTINEL',body)
             self.assertIn(b'<form' if route!='overview' else b'Overview',body,(route,body[:200]));self.assertNotIn(b'Internal Server Error',body)
             import re
@@ -984,7 +986,7 @@ else:
         before=Path('/etc/config/homegate').read_bytes()
         code,_,body=self.exchange(path=BASE+'/config_import',verb='POST',headers={'Cookie':'sysauth='+sid,'Content-Type':'application/x-www-form-urlencoded','Accept':'application/json'},raw=urlencode({'token':token,'config_payload':self.backup(s)}).encode())
         self.assertEqual(code,200,body[:300]);submitted=json.loads(body);self.assertTrue(submitted['pending'])
-        result=self.web_wait(submitted['job']);self.assertTrue(result['ok'],result);preview=json.loads(result['body']);self.assertTrue(preview['ok']);self.assertFalse(preview['can_commit']);self.assertEqual(Path('/etc/config/homegate').read_bytes(),before)
+        result=self.web_wait(submitted['job']);self.assertTrue(result['ok'],result);preview=json.loads(result['body']);self.assertTrue(preview['ok']);self.assertTrue(preview['can_commit']);self.assertEqual(Path('/etc/config/homegate').read_bytes(),before)
         print('NATIVE_WEB_PREVIEW:'+json.dumps(preview),flush=True)
         self.verify_unchanged()
     def test_web_security(self):

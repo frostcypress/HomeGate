@@ -13,10 +13,10 @@ local FIELDS = {
 local DIRECTORY = "https://acme-v02.api.letsencrypt.org/directory"
 local STAGING = "https://acme-staging-v02.api.letsencrypt.org/directory"
 local DEFAULTS = {
-    homegate = {enabled="0", log_level="info", log_max_lines="1024", access_enabled="0", access_allow="", access_deny="", access_region="", wol_interface="br-lan", last_wol_host="", ddns_interval="300", https_port="443", http_port="0", proxy_https_port="10443", proxy_http_port="10080", auto_firewall="1", acme_email="", acme_directory=DIRECTORY, renew_days="30", version=""},
+    homegate = {enabled="0", log_level="info", log_max_lines="1024", access_enabled="0", access_allow="", access_deny="", access_region="", wol_interface="br-lan", last_wol_host="", ddns_interval="300", https_port="443", http_port="0", proxy_https_port="10443", proxy_http_port="10080", auto_firewall="1", acme_email="", acme_directory=DIRECTORY, renew_days="5", version=""},
     dns_account = {name=""},
     ddns_rule = {enabled="0", name="", account="", zone="", host="@", type="AAAA", source="auto", interface="", ttl="600"},
-    certificate = {enabled="0", name="", source="acme", account="", zone="", email="", renew_days="30", ca="letsencrypt", environment="production"},
+    certificate = {enabled="0", name="", source="acme", account="", zone="", email="", renew_days="5", ca="letsencrypt", environment="production"},
     web_rule = {enabled="0", domain="", https="1", certificate="", certificate_mode="auto", certificate_managed="0"},
     wol_host = {name="", mac=""}
 }

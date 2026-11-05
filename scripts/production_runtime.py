@@ -44,7 +44,7 @@ def payload(root):
     key=BASE+'project/core/prototype/homegate-config-prototype.sh'
     files[key]=files[key].replace(b'production_copy_enabled=true',b'production_copy_enabled=false')
     files['usr/bin/homegate']=(root/'packaging/production/native-cli.sh').read_bytes()
-    for name in ['native-cli.lua','native-service.sh','native-service.lua','native-package.sh','native-package.lua','native-adapters.sh','native-adapters.lua','native-certificates.sh','native-certificates.lua','native-public.lua','native-public-listeners.lua']:
+    for name in ['native-cli.lua','native-service.sh','native-service.lua','native-package.sh','native-package.lua','native-adapters.sh','native-adapters.lua','native-certificates.sh','native-certificates.lua','native-public.lua','native-public-listeners.lua','native-luci-cache.lua']:
         files[BASE+name]=(root/'packaging/production'/name).read_bytes()
     files['etc/init.d/homegate']=(root/'packaging/production/homegate.init').read_bytes()
     files['etc/hotplug.d/iface/95-homegate']=(root/'packaging/production/95-homegate').read_bytes()
@@ -55,6 +55,23 @@ def payload(root):
  case "$action" in config-status|config-export|*-status|*-quiescent|*-stop|*-reap|acme-job|acme-stop|acme-cleanup|firewall-cleanup) ;;*) fail 4;;esac
 fi
 ''')
+    # Local configuration preparation needs no detached worker. Publication
+    # retains the service observer's session and deadline through nixio.
+    tools = b'for tool in ash lua stat sha256sum flock fsync setsid head;do'
+    assert files[control].count(tools) == 1
+    files[control] = files[control].replace(tools, b'''session_tool=setsid
+case "$action" in prepare|prepare-resume|config-status|config-export|config-commit) session_tool=;;esac
+for tool in ash lua stat sha256sum flock fsync head $session_tool;do''')
+    config_engine = BASE+'project/core/prototype/homegate-config-prototype.sh'
+    observer = b'setsid ash "$(dirname "$0")/homegate-service-observer-watchdog.sh" "$confirmation" 3>'
+    assert files[config_engine].count(observer) == 1
+    files[config_engine] = files[config_engine].replace(
+        observer, b'lua /usr/libexec/homegate/native-web-session.lua observe-config-service "$confirmation" 3>')
+    health_read = BASE+'project/core/prototype/homegate-health-read.sh'
+    observer = b'setsid ash "$dir/homegate-service-observer-watchdog.sh" --health-status "$ticket" "$revision" "$job"'
+    assert files[health_read].count(observer) == 1
+    files[health_read] = files[health_read].replace(
+        observer, b'lua /usr/libexec/homegate/native-web-session.lua observe-config-health "$ticket" "$revision" "$job"')
     ui=BASE+'project/core/prototype/homegate-ddns-ui.sh'
     anchor=b'action=${parsed%%:*};payload=${parsed#*:};rc=0\n'
     assert anchor in files[ui]
@@ -126,7 +143,7 @@ def web_runtime(root,files):
     key=BASE+'project/core/prototype/homegate-certificate.sh'
     assert files[key].count(b'native_certificate_maintenance_enabled=false\n')==1
     files[key]=files[key].replace(b'native_certificate_maintenance_enabled=false\n',b'native_certificate_maintenance_enabled=true\n')
-    for name in ['native-web.sh','native-web.lua','native-web-store.lua','native-selftest.lua']:
+    for name in ['native-web.sh','native-web-session.lua','native-web.lua','native-web-store.lua','native-selftest.lua']:
         files[BASE+name]=(root/'packaging/production'/name).read_bytes()
     parser=(root/'project/core/prototype/cloudflare-codec.lua').read_text()
     parser=parser[parser.index('local function parse(body)'):parser.index('local function envelope(')]
@@ -207,24 +224,6 @@ fi
     for path in (root/'project/luci/lua/luasrc/view/homegate').glob('*.htm'):
         if path.stem in ['overview','basic','public','wol','maintenance','common']:
             raw=path.read_text().replace('homegate/common','homegate_legacy/common')
-            if path.stem in ['basic','public','wol']:
-                raw=raw.replace('<%+homegate_legacy/common%>','<%+homegate_legacy/common%>\n<p>保存配置会暂停运行中的任务；保存并应用会按启用范围重启并核验。<a href="<%=url("admin/services/homegate/configuration")%>">任务与恢复操作</a></p>')
-            if path.stem=='maintenance':raw=raw.replace('<%+footer%>','''<p><a href="<%=luci.dispatcher.build_url("admin","services","homegate","configuration")%>">配置接管、授权与故障恢复</a></p>
-<script type="text/javascript">
-window.homegatePreviewImport=function(values){
- var base='<%=url("admin/services/homegate")%>',job,attempt=0;
- function read(url,options){return fetch(url,options).then(function(r){if(!r.ok)throw new Error('预览请求未完成');return r.json();});}
- function poll(){return read(base+'/compat_job/'+job,{credentials:'same-origin',cache:'no-store'}).then(function(d){
-  if(!d.ok)throw new Error('预览查询未完成');
-  if(d.pending){if(++attempt>=190)throw new Error('预览状态未确认，任务号：'+job);return new Promise(function(resolve){setTimeout(resolve,1000);}).then(poll);}
-  var result=d.result;if(!result||!result.ok||result.uncertain)throw new Error('预览未完成，任务号：'+job);
-  var preview=JSON.parse(result.body);if(!preview||typeof preview.ok!=='boolean')throw new Error('预览回执无效');
-  return read(base+'/compat_ack/'+job,{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:'token='+encodeURIComponent(values.token)}).then(function(ack){if(!ack.ok)throw new Error('预览回执已保留');return preview;});
- });}
- return read(base+'/config_import',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/x-www-form-urlencoded','Accept':'application/json'},body:'token='+encodeURIComponent(values.token)+'&config_payload='+encodeURIComponent(values.config_payload)}).then(function(d){if(!d.ok||!d.pending||typeof d.job!=='string'||!/^[0-9a-f]{32}$/.test(d.job))throw new Error('预览任务未受理');job=d.job;return poll();});
-};
-</script>
-<%+footer%>''')
             files['usr/lib/lua/luci/view/homegate_legacy/'+path.name]=raw.encode()
     for name,dest in [('native-web-http.lua','usr/lib/lua/luci/model/homegate/legacy.lua'),('native-web-pending.htm','usr/lib/lua/luci/view/homegate_legacy/pending.htm')]:
         files[dest]=(root/'packaging/production'/name).read_bytes()
@@ -236,9 +235,10 @@ window.homegatePreviewImport=function(values){
         name='legacy_route_'+str(i)
         addition.append("function "+name+"()legacy.dispatch("+repr(route)+","+str(spec['write']).lower()+")end\n")
         path=','.join(repr(v) for v in ['admin','services','homegate',*route.split('/')])
-        title={'overview':'概览','settings/basic':'基础设置','settings/public':'公网服务','settings/wol':'网络唤醒','maintenance':'维护'}.get(route)
-        entries.append('entry({'+path+'},'+('post' if spec['write'] else 'call')+'('+repr(name)+')'+(','+repr(title) if title else '')+').leaf=true')
-    entries.append("entry({'admin','services','homegate','settings'},alias('admin','services','homegate','settings','basic'),'设置',20)")
+        title={'overview':'服务概览','public':'公网服务','wol':'网络唤醒','maintenance':'插件维护'}.get(route)
+        order={'overview':10,'public':20,'wol':30,'maintenance':40}.get(route)
+        entries.append('entry({'+path+'},'+('post' if spec['write'] else 'call')+'('+repr(name)+')'+(','+repr(title)+','+str(order) if title else '')+').leaf=true')
+    entries.append("entry({'admin','services','homegate','settings'},alias('admin','services','homegate','public'),nil)")
     marker=b"function index()\n";assert files[controller].count(marker)==1
     files[controller]=files[controller].replace(marker,marker+b'''    local web_http=require('luci.http');local web_size=tonumber(web_http.getenv('CONTENT_LENGTH') or '0')
     if web_http.getenv('REQUEST_METHOD')=='POST' and (web_http.getenv('PATH_INFO') or ''):match('^/admin/services/homegate/') and web_size and web_size>=0 and web_size<=2097152 then web_http.HTTP_MAX_CONTENT=2097152 end

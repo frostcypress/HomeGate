@@ -1,0 +1,50 @@
+--- a/auto/lib/openssl/conf
++++ b/auto/lib/openssl/conf
+@@ -63,9 +63,14 @@
+         ngx_feature_run=no
+         ngx_feature_incs="#include <openssl/ssl.h>"
+         ngx_feature_path=
+-        ngx_feature_libs="-lssl -lcrypto $NGX_LIBDL $NGX_LIBPTHREAD"
++        ngx_feature_libs="-l:libssl.a -l:libcrypto.a $NGX_LIBDL $NGX_LIBPTHREAD"
+         ngx_feature_test="SSL_CTX_set_options(NULL, 0)"
+         . auto/feature
++
++        if [ $ngx_found = no ]; then
++            echo "$0: error: HomeGate requires SDK static OpenSSL archives"
++            exit 1
++        fi
+ 
+         if [ $ngx_found = no ]; then
+ 
+--- a/auto/lib/pcre/conf
++++ b/auto/lib/pcre/conf
+@@ -80,11 +80,16 @@
+         ngx_feature_incs="#define PCRE2_CODE_UNIT_WIDTH 8
+                           #include <pcre2.h>"
+         ngx_feature_path=
+-        ngx_feature_libs="-lpcre2-8"
++        ngx_feature_libs="-l:libpcre2-8.a"
+         ngx_feature_test="pcre2_code *re;
+                           re = pcre2_compile(NULL, 0, 0, NULL, NULL, NULL);
+                           if (re == NULL) return 1"
+         . auto/feature
++
++        if [ $ngx_found = no ]; then
++            echo "$0: error: HomeGate requires SDK static PCRE2 archive"
++            exit 1
++        fi
+ 
+         if [ $ngx_found = no ]; then
+ 
+--- a/src/event/ngx_event_openssl.c
++++ b/src/event/ngx_event_openssl.c
+@@ -154,7 +154,8 @@
+     uint64_t                opts;
+     OPENSSL_INIT_SETTINGS  *init;
+ 
+-    opts = OPENSSL_INIT_LOAD_CONFIG;
++    /* The private TLS stack must not load foreign ABI config/providers. */
++    opts = OPENSSL_INIT_NO_LOAD_CONFIG;
+ 
+ #if (NGX_OPENSSL_NO_CONFIG)
+ 

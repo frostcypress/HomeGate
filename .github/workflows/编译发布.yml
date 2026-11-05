@@ -41,6 +41,8 @@ jobs:
         run: |
           python3 scripts/project.py --check
           python3 scripts/native-target-audit-regressions.py
+          python3 scripts/native-component-probe-regressions.py
+          python3 scripts/native-install-plan-regressions.py
           python3 scripts/重构回归.py
           python3 scripts/CI依赖归档回归.py
       - name: 验证宿主专项分组与失败阻断

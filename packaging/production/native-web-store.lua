@@ -79,5 +79,8 @@ elseif mode=='status' or mode=='ack'then
  end
  io.write(codec.json({ok=true,job=token,pending=false,result=result}),'\n');return
 elseif mode=='error'then io.write(codec.json({api_version=1,ok=false,error='Web task interrupted; inspect retained operation before retry',uncertain=true}),'\n');return
-elseif mode=='not-started'then io.write(codec.json({api_version=1,ok=false,error='Writer unavailable; operation was not started'}),'\n');return end
+elseif mode=='not-started'then
+ local reasons={['runtime-directory']='运行目录不可用，操作未执行。', ['runtime-lock']='操作锁不可用，操作未执行。',busy='其它操作尚未结束，本次操作未执行。', ['package-state']='软件包正在变更，操作未执行。',preflight='操作准备失败，本次操作未执行。'}
+ local reason=reasons[arg[2]] and arg[2] or 'preflight'
+ io.write(codec.json({api_version=1,ok=false,started=false,error_code=reason,error=reasons[reason]}),'\n');return end
 fail()

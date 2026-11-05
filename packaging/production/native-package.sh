@@ -7,6 +7,14 @@ PATH=/usr/sbin:/usr/bin:/sbin:/bin;export PATH LC_ALL=C
 exec 3>&- 4>&- 5>&- 6>&- 7>&- 8>&- 9>&-
 [ "$(id -u)" = 0 ] || exit 7
 root=/etc/homegate;record=$root/package-state
+have_tool() {
+ case "$1" in /*) [ -f "$1" ] && [ -x "$1" ];return;;esac
+ tool_ifs=$IFS;IFS=:
+ for tool_dir in $PATH;do
+  if [ -f "$tool_dir/$1" ] && [ -x "$tool_dir/$1" ];then IFS=$tool_ifs;return 0;fi
+ done
+ IFS=$tool_ifs;return 1
+}
 dir() { [ -d "$1" ] && [ ! -L "$1" ] && [ "$(stat -c '%u:%a' "$1")" = 0:700 ]; }
 file() { [ -f "$1" ] && [ ! -L "$1" ] && [ "$(stat -c '%u:%a:%h' "$1")" = 0:600:1 ] && [ "$(stat -c %s "$1")" -le 64 ]; }
 read_record() {
@@ -54,6 +62,10 @@ case "$action" in
   # Old Go package postrm performs FULL PURGE. Never let opkg remove it as a
   # side effect of an unprepared package-name transition.
   [ ! -e /usr/lib/opkg/info/homegate.control ] && [ ! -L /usr/lib/opkg/info/homegate.control ] || { printf '%s\n' 'Legacy HomeGate package transition requires the coordinated migration installer.' >&2;exit 4; }
+  # Firmware BusyBox applets vary. Refuse before mkdir/record/config writes.
+  for tool in stat fsync flock lua sha256sum mkdir mv cat;do
+   have_tool "$tool" || { printf 'HomeGate package prerequisite missing: %s\n' "$tool" >&2;exit 7; }
+  done
   if [ ! -e "$root" ] && [ ! -L "$root" ];then mkdir "$root" || exit 7;fi
   dir "$root" || exit 7
   if [ -e "$record" ] || [ -L "$record" ];then read_record && [ "$mode" != stopping ] || exit 7

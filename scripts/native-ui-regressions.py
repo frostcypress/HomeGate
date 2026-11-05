@@ -40,7 +40,7 @@ def legacy(page, data):
 data = dict(status={'service':{'running':True}},main={'enabled':'1','access_enabled':'1','access_region':'','access_allow':''}, packages={'product':'1.3.0-11','core':'1.3.0-11','luci':'1.3.0-11','i18n':'1.3.0-11','arch':'fixture_arch'},
             services=[], hosts=[], dns_accounts=[], certificates=[], access_regions=[{"key":"CN","label":"China / Mainland","updated":""}], retired_access_region=False, dns_provider_catalog=[], acme_ca_catalog=[],
             wol_interfaces=[{'name':'br-lan','kind':'bridge'},{'name':'eth0','kind':'ethernet'}], wol_clients=[], wol_selected_interface='br-lan',
-            public_count=0, wol_count=0, notice='', error_message='', token='rpc', default_renew_days='30', resume_account='',resume_public='')
+            public_count=0, wol_count=0, notice='', error_message='', token='rpc', default_renew_days='5', resume_account='',resume_public='')
 fixtures = [data, {**data,'status':{},'packages':{'core':'1.3.0-11','luci':'1.3.0-10','i18n':'1.3.0-11'},'default_renew_days':'45','notice':'<img onerror=alert(1)> & "\'','hosts':[{'id':'host_a','name':'','mac':'AA:BB:CC:DD:EE:FF'}],
                   'retired_access_region':True,'services':[{'web_id':'web_a','enabled':'1','https':'0','domain':'test.example','target':'http://192.168.1.2:80','cert_managed':False,'cert_shared':True}],
                   'dns_provider_catalog':[{'name':'aliyun','display_name':'Aliyun DNS','credentials':[{'name':'key_id','label':'AccessKey ID','required':True},{'name':'secret','label':'AccessKey Secret','required':True}]}]}]
@@ -61,11 +61,9 @@ with tempfile.TemporaryDirectory() as temp:
                 print(''.join(list(difflib.unified_diff(clean(old).splitlines(True),clean(native).splitlines(True)))[:35]))
                 raise AssertionError('Lua/JS HTML mismatch: ' + name + '/' + str(i))
             if name == 'overview':
-                assert ('>Running</div>' in native) == (i == 0)
-                assert ('>Unknown</div>' in native) == (i == 1)
+                assert 'homegate-basic-form' in native and 'Quick Access' not in native
             if name == 'maintenance':
-                assert ('Packages match' in native) == (i == 0)
-                assert ('Package versions require verification' in native) == (i == 1)
+                assert 'Version Management' not in native and 'packages.core' not in native
             if name == 'public':
                 options=re.findall(r'<option value="([^"<>]*)"[^>]*>(.*?)</option>',native[native.index('id="hg-public-access-scope"'):native.index('</select>',native.index('id="hg-public-access-scope"'))],re.S)
                 assert [v for v,_ in options] == ['', '__manual__', 'CN'], options

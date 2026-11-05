@@ -191,11 +191,11 @@
       "write": false
     },
     "settings/public": {
-      "handler": "action_public",
+      "handler": "action_legacy_public_redirect",
       "write": false
     },
     "settings/wol": {
-      "handler": "action_wol",
+      "handler": "action_legacy_wol_redirect",
       "write": false
     },
     "web": {

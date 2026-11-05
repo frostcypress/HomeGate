@@ -10,7 +10,7 @@ results=[]
 with sync_playwright() as pw:
  edge=Path(r'C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe');exe=os.environ.get('HOMEGATE_BROWSER') or (str(edge) if edge.exists() else None)
  browser=pw.chromium.launch(**({'executable_path':exe} if exe else {}),headless=True)
- for name in ('basic','public','wol','maintenance'):
+ for name in ('overview','basic','public','wol','maintenance'):
   text=(ROOT/'build/native-ui-regressions'/(name+'.html')).read_text(encoding='utf-8')
   css=re.search(r'<style type="text/css">(.*?)</style>',text,re.S)[1]
   body=re.sub(r'<script\b.*?</script>','',text,flags=re.S);body=re.sub(r'<style\b.*?</style>','',body,flags=re.S)
@@ -41,4 +41,4 @@ with sync_playwright() as pw:
     results.append([name,lang,width]);page.close()
  browser.close()
 (out/'results.json').write_text(json.dumps({'native_footer_style_invariance':results,'minimum_content_gap_px':18,'theme':'Pinned upstream Bootstrap CSS','boundaries':'Does not certify every third party LuCI theme'},indent=2))
-print('PASS native theme styles/forms: 16 page/language/viewport cases; maintenance fallback text fits')
+print('PASS native theme styles/forms: 20 page/language/viewport cases; maintenance fallback text fits')

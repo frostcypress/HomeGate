@@ -5,6 +5,22 @@ import (
 	"testing"
 )
 
+func TestRenewalDefaultAndExplicitOverride(t *testing.T) {
+	for _, tc := range []struct {
+		input string
+		want  int
+	}{{"", 5}, {"30", 30}, {"45", 45}} {
+		input := "homegate.main=homegate\n"
+		if tc.input != "" {
+			input += "homegate.main.renew_days='" + tc.input + "'\n"
+		}
+		got, err := ParseShow(input)
+		if err != nil || got.Main.RenewDays != tc.want {
+			t.Fatalf("renewal input %q: got %d, err %v, want %d", tc.input, got.Main.RenewDays, err, tc.want)
+		}
+	}
+}
+
 func TestParseR6CompatibleMain(t *testing.T) {
 	in := `homegate.main=homegate
 homegate.main.enabled='1'

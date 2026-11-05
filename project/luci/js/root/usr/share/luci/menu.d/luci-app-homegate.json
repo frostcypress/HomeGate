@@ -14,8 +14,8 @@
   "admin/services/homegate/basic": {
     "order": 10,
     "action": {
-      "type": "view",
-      "path": "homegate/basic"
+      "type": "alias",
+      "path": "admin/services/homegate/overview"
     }
   },
   "admin/services/homegate/public": {
@@ -23,25 +23,27 @@
     "action": {
       "type": "view",
       "path": "homegate/public"
-    }
+    },
+    "title": "Public Services"
   },
   "admin/services/homegate/wol": {
     "order": 30,
     "action": {
       "type": "view",
       "path": "homegate/wol"
-    }
+    },
+    "title": "Wake-on-LAN"
   },
   "admin/services/homegate/maintenance": {
-    "title": "Maintenance",
-    "order": 30,
+    "title": "Plugin Maintenance",
+    "order": 40,
     "action": {
       "type": "view",
       "path": "homegate/maintenance"
     }
   },
   "admin/services/homegate/overview": {
-    "title": "Overview",
+    "title": "Service Overview",
     "order": 10,
     "action": {
       "type": "view",
@@ -49,34 +51,28 @@
     }
   },
   "admin/services/homegate/settings": {
-    "title": "Settings",
-    "order": 20,
     "action": {
-      "type": "firstchild"
+      "type": "alias",
+      "path": "admin/services/homegate/public"
     }
   },
   "admin/services/homegate/settings/basic": {
-    "title": "Basic Settings",
     "order": 10,
     "action": {
-      "type": "view",
-      "path": "homegate/basic"
+      "type": "alias",
+      "path": "admin/services/homegate/overview"
     }
   },
   "admin/services/homegate/settings/public": {
-    "title": "Public Services",
-    "order": 20,
     "action": {
-      "type": "view",
-      "path": "homegate/public"
+      "type": "alias",
+      "path": "admin/services/homegate/public"
     }
   },
   "admin/services/homegate/settings/wol": {
-    "title": "Wake-on-LAN",
-    "order": 30,
     "action": {
-      "type": "view",
-      "path": "homegate/wol"
+      "type": "alias",
+      "path": "admin/services/homegate/wol"
     }
   }
 }

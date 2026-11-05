@@ -34,5 +34,70 @@
   "boundary": "Pinned engineering SDK/native package and component verification only. No supported QWRT ABI, router execution or full release acceptance implied.",
   "runtime_virtual_providers": {
     "ip6tables": "ip6tables-zz-legacy"
+  },
+  "native_ELF_requirements": {
+    "scope": "actual-cached-component-ELF-requirements-only",
+    "SDK_series": "24.10",
+    "SDK_version": "24.10.6",
+    "source_artifact_revision": "r172-nginx/r168-wol",
+    "components": [
+      {
+        "package": "homegate-nginx",
+        "package_version": "1.30.6-r3",
+        "source_artifact_revision": "r172",
+        "package_SHA256": "d22137637dcdeb9b157f67a7c11f24f0c33c6b1d4611d3f0453d5a741c01ba19",
+        "installed_path": "/usr/libexec/homegate-nginx/nginx",
+        "binary_SHA256": "73c5ee25336eedc9d2fc2db9fda136aca08f8e0a8e6d62c3bb428f76d7724a81",
+        "bytes": 5466497,
+        "ELF_class": "ELF64",
+        "ELF_machine": "AArch64",
+        "interpreter": "/lib/ld-musl-aarch64.so.1",
+        "NEEDED": [
+          "libc.so",
+          "libgcc_s.so.1"
+        ],
+        "required_symbol_versions": [
+          "GLIBC_2.0"
+        ],
+        "dynamic_version_requirements_present": true,
+        "future_version_only_args": [
+          "-V"
+        ],
+        "target_execution_verified": false
+      },
+      {
+        "package": "homegate-wol",
+        "package_version": "1-r1",
+        "package_SHA256": "0547dca4c367becfa0a2c6d87f44ec8a42a325d0d9171394fe6c23e6e39d0f1a",
+        "installed_path": "/usr/libexec/homegate-wol/send",
+        "binary_SHA256": "3cba184665548d682616163741ce247853d330ea69388e35c975e8429725b233",
+        "bytes": 65499,
+        "ELF_class": "ELF64",
+        "ELF_machine": "AArch64",
+        "interpreter": "/lib/ld-musl-aarch64.so.1",
+        "NEEDED": [
+          "libc.so",
+          "libgcc_s.so.1"
+        ],
+        "required_symbol_versions": [
+          "GLIBC_2.0"
+        ],
+        "dynamic_version_requirements_present": true,
+        "empty_version_output_is_not_absence_proof": true,
+        "legacy_section_symbol_rows": 0,
+        "dynamic_program_symbol_rows": 0,
+        "future_version_only_args": [
+          "--version"
+        ],
+        "target_execution_verified": false
+      }
+    ],
+    "required_libraries": [
+      "libc.so",
+      "libgcc_s.so.1"
+    ],
+    "target_execution_verified": false,
+    "version_namespace_does_not_identify_libc": true,
+    "static_TLS_PCRE2": true
   }
 }

@@ -3,14 +3,15 @@ include $(TOPDIR)/rules.mk
 
 PKG_NAME:=homegate-nginx
 PKG_VERSION:=1.30.6
-PKG_RELEASE:=2
+PKG_RELEASE:=3
 PKG_SOURCE:=nginx-$(PKG_VERSION).tar.gz
 PKG_SOURCE_URL:=https://nginx.org/download/
 PKG_HASH:=3cf46f5ed7504d460125866b7bea99fb357f31d887e2e63b35503310e9b8b6c8
 PKG_BUILD_DIR:=$(BUILD_DIR)/nginx-$(PKG_VERSION)
-PKG_LICENSE:=BSD-2-Clause
+PKG_LICENSE:=BSD-2-Clause Apache-2.0 BSD-3-Clause
 PKG_LICENSE_FILES:=LICENSE
 PKG_BUILD_PARALLEL:=1
+PKG_BUILD_DEPENDS:=openssl pcre2
 
 include $(INCLUDE_DIR)/package.mk
 
@@ -19,7 +20,7 @@ define Package/homegate-nginx
   CATEGORY:=Network
   TITLE:=HomeGate private TLS proxy component
   URL:=https://nginx.org/
-  DEPENDS:=+libopenssl +libpcre2 +libpthread
+  DEPENDS:=+libpthread
 endef
 
 CONFIGURE_CMD:=./configure
@@ -45,11 +46,25 @@ CONFIGURE_ARGS := \
   --without-http_autoindex_module \
   --without-http_ssi_module
 
+define Build/Configure
+	test -s $(STAGING_DIR)/usr/lib/libssl.a
+	test -s $(STAGING_DIR)/usr/lib/libcrypto.a
+	test -s $(STAGING_DIR)/usr/lib/libpcre2-8.a
+	$(call Build/Configure/Default)
+endef
+
+define Build/Compile
+	$(call Build/Compile/Default)
+	$(TARGET_CROSS)readelf -d $(PKG_BUILD_DIR)/objs/nginx > $(PKG_BUILD_DIR)/homegate-dynamic.txt
+	! grep -E '\(NEEDED\).*\[(libssl|libcrypto|libpcre)' $(PKG_BUILD_DIR)/homegate-dynamic.txt
+endef
+
 define Package/homegate-nginx/install
 	$(INSTALL_DIR) $(1)/usr/libexec/homegate-nginx
 	$(INSTALL_BIN) $(PKG_BUILD_DIR)/objs/nginx $(1)/usr/libexec/homegate-nginx/nginx
 	$(INSTALL_DIR) $(1)/usr/share/licenses/homegate-nginx
 	$(INSTALL_DATA) $(PKG_BUILD_DIR)/LICENSE $(1)/usr/share/licenses/homegate-nginx/LICENSE
+	$(INSTALL_DATA) ./licenses/* $(1)/usr/share/licenses/homegate-nginx/
 endef
 
 $(eval $(call BuildPackage,homegate-nginx))

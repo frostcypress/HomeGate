@@ -124,7 +124,7 @@ else:
         data = self.run_cli('check')
         self.assertFalse(data['complete_validation'])
         self.assertEqual(data['main'], {'enabled': False, 'access_enabled': False, 'auto_firewall': True,
-                         'log_level': 'info', 'log_max_lines': 1024, 'ddns_interval': 300, 'renew_days': 30,
+                         'log_level': 'info', 'log_max_lines': 1024, 'ddns_interval': 300, 'renew_days': 5,
                          'https_port': 443, 'http_port': 0, 'proxy_https_port': 10443, 'proxy_http_port': 10080})
         self.assertFalse(self.state.exists(), 'Read-only check wrote queue state')
 

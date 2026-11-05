@@ -43,7 +43,7 @@ visible = {}
 for key, value in lua.globals().routes.items():
     if value['title'] and key.count('/') == 3:
         visible[key.rsplit('/', 1)[1]] = value['title']
-assert visible == {'overview': 'Overview', 'settings': 'Settings', 'maintenance': 'Maintenance'}, visible
+assert visible == {'overview': 'Service Overview', 'public': 'Public Services', 'wol': 'Wake-on-LAN', 'maintenance': 'Plugin Maintenance'}, visible
 menu = json.loads((ROOT / 'project/luci/js/root/usr/share/luci/menu.d/luci-app-homegate.json').read_text(encoding='utf-8'))
 modern = {key.rsplit('/', 1)[1]: value['title'] for key, value in menu.items()
           if key.count('/') == 3 and value.get('title')}
@@ -85,6 +85,6 @@ for page in ('overview', 'maintenance'):
             chunks.append(tag)
     lua.execute('assert(loadstring(...))', '\n'.join(chunks))
 po = (ROOT / 'project/luci/common/po/zh_Hans/homegate.po').read_text(encoding='utf-8')
-for title in ('Overview', 'Settings', 'Maintenance', 'Version Management', 'Runtime Logs', 'Plugin Operations'):
+for title in ('Service Overview', 'Public Services', 'Wake-on-LAN', 'Plugin Maintenance', 'Runtime Logs'):
     assert 'msgid ' + json.dumps(title) in po, title
 print('PASS Lua/JS navigation, real Lua safe export, quoting, list preservation, unknown-secret exclusion, template syntax')

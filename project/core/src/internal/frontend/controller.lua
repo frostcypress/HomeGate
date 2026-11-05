@@ -14,10 +14,10 @@ local FIELDS = {
 local DIRECTORY = "https://acme-v02.api.letsencrypt.org/directory"
 local STAGING = "https://acme-staging-v02.api.letsencrypt.org/directory"
 local DEFAULTS = {
-    homegate = {enabled="0", log_level="info", log_max_lines="1024", access_enabled="0", access_allow="", access_deny="", access_region="", wol_interface="br-lan", last_wol_host="", ddns_interval="300", https_port="443", http_port="0", proxy_https_port="10443", proxy_http_port="10080", auto_firewall="1", acme_email="", acme_directory=DIRECTORY, renew_days="30", version=""},
+    homegate = {enabled="0", log_level="info", log_max_lines="1024", access_enabled="0", access_allow="", access_deny="", access_region="", wol_interface="br-lan", last_wol_host="", ddns_interval="300", https_port="443", http_port="0", proxy_https_port="10443", proxy_http_port="10080", auto_firewall="1", acme_email="", acme_directory=DIRECTORY, renew_days="5", version=""},
     dns_account = {name=""},
     ddns_rule = {enabled="0", name="", account="", zone="", host="@", type="AAAA", source="auto", interface="", ttl="600"},
-    certificate = {enabled="0", name="", source="acme", account="", zone="", email="", renew_days="30", ca="letsencrypt", environment="production"},
+    certificate = {enabled="0", name="", source="acme", account="", zone="", email="", renew_days="5", ca="letsencrypt", environment="production"},
     web_rule = {enabled="0", domain="", https="1", certificate="", certificate_mode="auto", certificate_managed="0"},
     wol_host = {name="", mac=""}
 }
@@ -513,16 +513,16 @@ function index()
     local root = entry({"admin", "services", "homegate"},
         alias("admin", "services", "homegate", "overview"), _("HomeGate"), 56)
     root.dependent = true
-    entry({"admin", "services", "homegate", "overview"}, call("action_overview"), _("Overview"), 10).leaf = true
-    entry({"admin", "services", "homegate", "settings"}, alias("admin", "services", "homegate", "settings", "basic"), _("Settings"), 20)
-    entry({"admin", "services", "homegate", "settings", "basic"}, call("action_basic"), _("Basic Settings"), 10).leaf = true
-    entry({"admin", "services", "homegate", "settings", "public"}, call("action_public"), _("Public Services"), 20).leaf = true
-    entry({"admin", "services", "homegate", "settings", "wol"}, call("action_wol"), _("Wake-on-LAN"), 30).leaf = true
-    entry({"admin", "services", "homegate", "maintenance"}, call("action_maintenance"), _("Maintenance"), 30).leaf = true
+    entry({"admin", "services", "homegate", "overview"}, call("action_overview"), _("Service Overview"), 10).leaf = true
+    entry({"admin", "services", "homegate", "settings"}, alias("admin", "services", "homegate", "public"), nil)
+    entry({"admin", "services", "homegate", "settings", "basic"}, call("action_basic"), nil).leaf = true
+    entry({"admin", "services", "homegate", "settings", "public"}, call("action_legacy_public_redirect"), nil).leaf = true
+    entry({"admin", "services", "homegate", "settings", "wol"}, call("action_legacy_wol_redirect"), nil).leaf = true
+    entry({"admin", "services", "homegate", "maintenance"}, call("action_maintenance"), _("Plugin Maintenance"), 40).leaf = true
     -- Keep old read routes for the RPC bridge and saved bookmarks, without menu titles.
     entry({"admin", "services", "homegate", "basic"}, call("action_basic"), nil).leaf = true
-    entry({"admin", "services", "homegate", "public"}, call("action_public"), nil).leaf = true
-    entry({"admin", "services", "homegate", "wol"}, call("action_wol"), nil).leaf = true
+    entry({"admin", "services", "homegate", "public"}, call("action_public"), _("Public Services"), 20).leaf = true
+    entry({"admin", "services", "homegate", "wol"}, call("action_wol"), _("Wake-on-LAN"), 30).leaf = true
 
     entry({"admin", "services", "homegate", "basic_apply"},
         post("action_basic_apply")).leaf = true
@@ -825,6 +825,7 @@ local function csrf_token()
 end
 
 local function page_url(page, params)
+    if page == "basic" then page = "overview" end
     local base = dispatcher().build_url("admin", "services", "homegate", page)
     if not params then return base end
     local parts = {}
@@ -1286,12 +1287,14 @@ local function package_info()
     local core_version = package_field("homegate", "Version")
     -- Show the exact installed build, including the maintenance release suffix.
     local product_version = core_version
+    local report = require("luci.jsonc").parse(sys().exec("/usr/bin/homegate version 2>/dev/null") or "") or {}
     return {
         product = product_version,
         core = core_version,
         luci = package_field("luci-app-homegate", "Version"),
         i18n = package_field("luci-i18n-homegate-zh-cn", "Version"),
-        arch = package_field("homegate", "Architecture")
+        arch = trim(report.arch) ~= "" and trim(report.arch) or "-",
+        package_arch = package_field("homegate", "Architecture")
     }
 end
 
@@ -1528,7 +1531,7 @@ end
 local function certificate_choices(cur, provider_catalog)
     provider_catalog = provider_catalog or dns_provider_catalog()
     local main = cur:get_all("homegate", "main") or {}
-    local default_renew = tonumber(main.renew_days or "30") or 30
+    local default_renew = tonumber(main.renew_days or "5") or 5
     local out = {}
     cur:foreach("homegate", "certificate", function(s)
         local row = {}
@@ -1557,7 +1560,7 @@ local function public_services(cur)
     local ddns_by_domain, ddns_used, cert_by_id, rows, ddns_group_counts = {}, {}, {}, {}, {}
     local provider_catalog = dns_provider_catalog()
     local main = cur:get_all("homegate", "main") or {}
-    local default_renew = tonumber(main.renew_days or "30") or 30
+    local default_renew = tonumber(main.renew_days or "5") or 5
     local cert_use = {}
     cur:foreach("homegate", "web_rule", function(s)
         local cid = safe_id(s.certificate)
@@ -1793,21 +1796,17 @@ end
 
 function action_overview()
     local cur = uci_cursor()
-    local jsonc = require("luci.jsonc")
-    local report = jsonc.parse(sys().exec("/usr/bin/homegate status 2>/dev/null") or "") or {}
-    render("overview", { packages = package_info(), status = report,
-        public_count = #public_services(cur), wol_count = #get_sections(cur, "wol_host") })
-end
-
-function action_basic()
-    local cur = uci_cursor()
-    local main = cur:get_all("homegate", "main") or {}
-    render("basic", {
-        main = main,
+    render("overview", {
+        main = cur:get_all("homegate", "main") or {},
         packages = package_info(),
         public_count = #public_services(cur),
         wol_count = #get_sections(cur, "wol_host")
     })
+end
+
+-- Saved basic-page bookmarks converge on the combined Overview.
+function action_basic()
+    return redirect_page("overview")
 end
 
 function action_basic_apply()
@@ -1851,7 +1850,7 @@ function action_public()
         acme_ca_catalog = ca_catalog,
         access_regions = access_region_choices(),
         retired_access_region = retired_access_region and main.access_enabled == "1",
-        default_renew_days = tostring(tonumber(main.renew_days or "30") or 30),
+        default_renew_days = tostring(tonumber(main.renew_days or "5") or 5),
         acme_directory = (trim(main.acme_directory) == STAGING_DIRECTORY) and STAGING_DIRECTORY or PROD_DIRECTORY,
         resume_public = trim(http().formvalue("resume_public")),
         resume_account = safe_id(http().formvalue("resume_account"))
@@ -2095,7 +2094,7 @@ function action_public_apply()
 
     local kept_web, kept_ddns, seen_domains = {}, {}, {}
     local main = cur:get_all("homegate", "main") or {}
-    local default_renew = tonumber(main.renew_days or "30") or 30
+    local default_renew = tonumber(main.renew_days or "5") or 5
     local provider_catalog = dns_provider_catalog()
     local ca_catalog = acme_ca_catalog()
     local pending_local = {}
@@ -2562,6 +2561,10 @@ function action_public_action()
     return redirect_page("public", nil, "Unsupported action")
 end
 
+function action_legacy_wol_redirect()
+    return redirect_page("wol")
+end
+
 function action_wol()
     local cur = uci_cursor()
     local main = cur:get_all("homegate", "main") or {}
@@ -2812,13 +2815,50 @@ function action_config_export()
     http().write(body)
 end
 
+-- Validate the complete candidate before touching the cursor. Publication is
+-- performed by the existing guarded UCI commit; imports remain disabled.
+local function restore_import_configuration(cur,codec,body)
+    local proposed,err=codec.parse(body)
+    if not proposed then return nil,err end
+    local names={}
+    for _,kind in ipairs({"homegate","dns_account","ddns_rule","certificate","web_rule","wol_host"})do cur:foreach("homegate",kind,function(s) names[#names+1]=s[".name"] end)end
+    for _,name in ipairs(names)do if cur:delete("homegate",name)==false then return nil,"Unable to restore configuration" end end
+    for _,s in ipairs(proposed)do
+        if cur:section("homegate",s.kind,s.name,s.values)==false then return nil,"Unable to restore configuration" end
+    end
+    return true
+end
+local function import_confirmation(codec,payload)
+    local canonical=codec.canonical(payload)
+    if not canonical then return nil end
+    local digest=(sys().exec("sha256sum /etc/config/homegate 2>/dev/null") or ""):match("^([0-9a-f]+)%s")
+    if not digest or #digest~=64 then return nil end
+    -- Bind the exact checked public candidate and current source without
+    -- sending private configuration contents to the browser.
+    return digest .. "\n" .. canonical
+end
 function action_config_import()
-    -- The legacy POST route now validates and previews only. Neither a crafted
-    -- mode nor a browser confirmation can reach the old direct overwrite path.
-    local codec = backup_codec()
-    local result, err = codec.preview(uci_cursor(), http().formvalue("config_payload"))
+    local codec,cur=backup_codec(),uci_cursor()
+    local payload=http().formvalue("config_payload")
+    local result,err=codec.preview(cur,payload)
+    local confirmation=result and import_confirmation(codec,payload)
+    if result and not confirmation then result=nil;err="Unable to check current configuration" end
+    if result and http().formvalue("mode")=="restore" then
+        if http().formvalue("confirmation")~=confirmation then
+            result=nil;err="Configuration changed. Import the file again before restoring."
+        else
+            local restored,restore_err=restore_import_configuration(cur,codec,payload)
+            local committed,commit_err
+            if restored then committed,commit_err=commit(cur) end
+            if not restored or not committed then
+                cur:revert("homegate");result=nil;err=restore_err or commit_err or "Unable to restore configuration"
+            else result={api_version=1,ok=true,restored=true,services_enabled=false} end
+        end
+    elseif result then
+        result.can_commit=true;result.confirmation=confirmation
+    end
     http().prepare_content("application/json")
-    http().write(codec.json(result or {api_version=1,ok=false,phase="config-preview",error=err}) .. "\n")
+    http().write(codec.json(result or {api_version=1,ok=false,phase="config-import",error=_(err or "Unable to restore configuration")}) .. "\n")
 end
 
 local function reset_homegate_config(cur)
@@ -2837,7 +2877,7 @@ local function reset_homegate_config(cur)
     end
     for _, name in ipairs(names) do cur:delete("homegate", name) end
     local ok = cur:section("homegate", "homegate", "main", {
-        enabled = "1",
+        enabled = "0",
         log_level = "info",
         log_max_lines = "1024",
         access_enabled = "0",
@@ -2854,7 +2894,7 @@ local function reset_homegate_config(cur)
         auto_firewall = "1",
         acme_email = "",
         acme_directory = PROD_DIRECTORY,
-        renew_days = "30",
+        renew_days = "5",
         version = (function()
             local v = package_info().product
             return (v ~= "" and v ~= "-") and v or "dev"

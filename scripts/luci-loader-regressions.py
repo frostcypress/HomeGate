@@ -32,16 +32,16 @@ with sync_playwright() as pw:
  page.evaluate("LuCI.prototype.probeRPCBaseURL=()=>Promise.resolve('/ubus/');window.L=new LuCI({base_url:'/resources',resource_version:'test',scriptname:'/cgi-bin/luci',pathinfo:'',nodespec:{satisfied:true,readonly:false}});window._=v=>v;")
  result=page.evaluate("""async()=>{
    const names=['common','transport','overview','basic','public','wol','maintenance'];const loaded=[];
-   for(const n of names){const mod=await L.require('homegate.'+n);if(n==='transport'){if(typeof mod.load!=='function'||typeof mod.install!=='function')throw Error(n);await mod.load('basic');}else{if(typeof mod.render!=='function')throw Error(n);const html=mod.render({main:{},packages:{},services:[],hosts:[],dns_accounts:[],certificates:[],access_regions:[],wol_interfaces:[],wol_clients:[],dns_provider_catalog:[],acme_ca_catalog:[],default_renew_days:'30'});if(typeof html!=='string'||!html.length)throw Error(n);}loaded.push(n);}
+   for(const n of names){const mod=await L.require('homegate.'+n);if(n==='transport'){if(typeof mod.load!=='function'||typeof mod.install!=='function')throw Error(n);await mod.load('basic');}else{if(typeof mod.render!=='function')throw Error(n);const html=mod.render({main:{},packages:{},services:[],hosts:[],dns_accounts:[],certificates:[],access_regions:[],wol_interfaces:[],wol_clients:[],dns_provider_catalog:[],acme_ca_catalog:[],default_renew_days:'5'});if(typeof html!=='string'||!html.length)throw Error(n);}loaded.push(n);}
    let caught=false;try{await L.require('bad');}catch(e){caught=e.message.includes('factory yields invalid constructor');}if(!caught)throw Error('negative control failed');
    return loaded;
  }""")
  assert result==['common','transport','overview','basic','public','wol','maintenance'],result
  page.evaluate("async()=>{L.dom=await L.require('dom');window.E=(...args)=>L.dom.create(...args);}")
  page.add_style_tag(content=(fixtures/'bootstrap.css').read_text(encoding='utf-8'))
- assert page.evaluate("async()=>{const v=await L.require('view.homegate.overview');const node=v.render(await v.load());document.getElementById('view').replaceChildren(node);return node.querySelectorAll('form,.cbi-page-actions').length===0 && node.textContent.includes('Overview');}")
+
  theme_cases=[];action_cases=[]
- for name in ('basic','public','wol','maintenance'):
+ for name in ('overview','basic','public','wol','maintenance'):
   assert page.evaluate("async n=>{const v=await L.require('view.homegate.'+n);const data=await v.load();const node=v.render(data);const vp=document.getElementById('view');vp.replaceChildren(node);vp.appendChild(v.addFooter());return vp.querySelectorAll('.cbi-page-actions').length===1 && !!vp.querySelector('.cbi-dropdown');}",name)
   page.wait_for_timeout(100)
   for lang in ('en','zh-CN'):
@@ -57,7 +57,7 @@ with sync_playwright() as pw:
   # Real official save control invokes the async HomeGate adapter exactly once.
   page.evaluate('window.hgCalls=[]')
   page.locator('.cbi-page-actions > .cbi-button-save').click();page.wait_for_timeout(650)
-  writes=page.evaluate("hgCalls.filter(x=>x[1]==='write')");assert len(writes)==1 and writes[0][2]==name+'_apply' and writes[0][3]['mode']=='save',writes
+  writes=page.evaluate("hgCalls.filter(x=>x[1]==='write')");assert len(writes)==1 and writes[0][2]==('basic' if name=='overview' else name)+'_apply' and writes[0][3]['mode']=='save',writes
   page.evaluate('window.hgCalls=[]')
   page.locator('.cbi-dropdown > span.open').click()
   assert page.locator('.cbi-dropdown[open]').count()==1
@@ -65,14 +65,14 @@ with sync_playwright() as pw:
   assert page.evaluate("hgCalls.filter(x=>x[1]==='write').length") == 0
   page.locator('.cbi-dropdown').click(position={'x':12,'y':12});page.wait_for_timeout(650)
   writes=page.evaluate("hgCalls.filter(x=>x[1]==='write')");assert len(writes)==1 and writes[0][3]['mode']=='apply',writes
-  if name=='basic':
+  if name in ('overview','basic'):
    page.evaluate("window.hgCalls=[];document.querySelector('#homegate-basic-form input[name=ddns_interval]').value='0'")
    page.locator('.cbi-page-actions > .cbi-button-save').click();page.wait_for_timeout(100)
    assert page.evaluate("hgCalls.filter(x=>x[1]==='write').length") == 0
    page.evaluate("document.querySelector('#homegate-basic-form input[name=ddns_interval]').value='300'")
   for mode in ('0','1'):
    page.evaluate("async ([n,m])=>{window.hgCalls=[];const v=await L.require('view.homegate.'+n);await v.handleSaveApply(null,m);}",[name,mode])
-   writes=page.evaluate("hgCalls.filter(x=>x[1]==='write')");assert len(writes)==1 and writes[0][2]==name+'_apply' and writes[0][3]['mode']=='apply',writes
+   writes=page.evaluate("hgCalls.filter(x=>x[1]==='write')");assert len(writes)==1 and writes[0][2]==('basic' if name=='overview' else name)+'_apply' and writes[0][3]['mode']=='apply',writes
    assert not page.evaluate("hgCalls.some(x=>x[0]==='uci'&&x[1]==='apply')")
    action_cases.append([name,mode])
   if name=='maintenance':
@@ -84,5 +84,5 @@ with sync_playwright() as pw:
   page.evaluate('L.env.nodespec.readonly=false')
  assert not errors,errors
  browser.close()
-(out/'results.json').write_text(json.dumps({'official_ui_sources':'Pinned unmodified ui/validation/uci/fs/luci.js','theme_cases':theme_cases,'service_apply_cases':action_cases,'readonly_pages':4,'scope':'Both official apply choices use the plugin-specific HomeGate apply, without changing unrelated UCI configurations or promising network rollback'},indent=2),encoding='utf-8')
-print('PASS official LuCI loader: seven modules, overview and four editable view constructors; official catalog path')
+(out/'results.json').write_text(json.dumps({'official_ui_sources':'Pinned unmodified ui/validation/uci/fs/luci.js','theme_cases':theme_cases,'service_apply_cases':action_cases,'readonly_pages':5,'scope':'Both official apply choices use the plugin-specific HomeGate apply, without changing unrelated UCI configurations or promising network rollback'},indent=2),encoding='utf-8')
+print('PASS official LuCI loader: seven modules, combined overview and compatibility/editable view constructors; official catalog path')

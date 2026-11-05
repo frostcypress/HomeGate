@@ -46,6 +46,7 @@ codec=lua.execute((ROOT/'project/luci/lua/luasrc/model/homegate/backup.lua').rea
 cursor=lua.execute('return {foreach=function(self,pkg,kind,cb) if kind=="homegate" then cb({[".name"]="main",enabled="1",log_level="warn"}) end end}')
 backup='# homegate-backup-format: 2\n# plugin: homegate\n# schema: public-uci-v1\n# secrets: omitted\nconfig homegate main\n option log_level info\nconfig wol_host host_a\n option name \'<img onerror="window.xss=1">\'\n option mac AA:BB:CC:DD:EE:FF\n'
 report=json.loads(codec.json(codec.preview(cursor,backup)))
+report.update(can_commit=True,confirmation="fixture-source-and-candidate")
 class LiveError:
     def __enter__(self): return self
     def __exit__(self,kind,error,trace):
@@ -64,7 +65,7 @@ with sync_playwright() as pw, LiveError():
     context=browser.new_context()
     context.set_default_timeout(10000)
     requests=[]
-    response={'body':json.dumps(report)}
+    response={'body':json.dumps({'ok':True,'body':json.dumps(report)})}
     def serve(route):
         if route.request.method=='POST':
             print('Received native preview POST',flush=True)
@@ -77,7 +78,7 @@ with sync_playwright() as pw, LiveError():
     errors=[];page.on('pageerror',lambda e:errors.append(str(e)))
     for variant,markup in [('lua',legacy),('js',modern)]:
         print('Checking '+variant+' preview behavior',flush=True)
-        page.set_content('<script>window.XHR={get:function(u,f,cb){cb({status:200,responseText:""},null);}};window.homegateXHR=window.XHR;window.homegatePreviewImport=null;window.xss=0;</script>'+markup,wait_until='domcontentloaded')
+        page.set_content('<script>window.XHR={get:function(u,f,cb){cb({status:200,responseText:""},null);}};window.homegateXHR=window.XHR;window.homegatePreviewImport=null;window.homegateMaintenanceAction=null;window.xss=0;</script>'+markup,wait_until='domcontentloaded')
         theme=ROOT/'scripts/fixtures'/('legacy-bootstrap/cascade.css' if variant=='lua' else 'luci/bootstrap.css')
         page.add_style_tag(content=theme.read_text(encoding='utf-8'))
         print('Mounted '+variant+' fixture',flush=True)
@@ -87,10 +88,10 @@ with sync_playwright() as pw, LiveError():
         page.wait_for_function('document.querySelectorAll("#hg-config-preview-changes tr").length>0')
         print('Preview rendered',flush=True)
         assert len(requests)==1 and '/config_import' in requests[0]['url']
-        assert requests[0]['body'].startswith('token=fixture-csrf&config_payload=')
+        assert 'token=fixture-csrf' in requests[0]['body'] and 'config_payload=' in requests[0]['body']
         assert page.locator('#hg-config-preview-changes img').count()==0
         assert page.evaluate('window.xss')==0
-        assert 'Preview only' in page.locator('#hg-config-preview').inner_text()
+        assert 'Import check complete.' in page.locator('#hg-config-preview').inner_text()
         assert page.locator('#hg-config-import-file').input_value()==''
         assert page.locator('#hg-config-import-payload').count()==0
         for mode in ('light','dark'):
@@ -101,6 +102,47 @@ with sync_playwright() as pw, LiveError():
                 assert page.locator('#hg-config-preview-changes td').evaluate_all('cells=>cells.every(c=>c.getBoundingClientRect().width>0 && c.scrollWidth<=c.clientWidth+1)')
                 cases.append([variant,mode,width])
         page.locator('#hg-config-preview').screenshot(path=str(out/(variant+'-preview.png')))
+        # Merely selecting the file never restores. Cancel also sends nothing.
+        assert page.locator('#hg-config-restore-confirm').is_visible()
+        count=len(requests)
+        page.once('dialog',lambda dialog:dialog.dismiss())
+        page.locator('#hg-config-restore-confirm').click()
+        assert len(requests)==count
+        response['body']=json.dumps({'ok':True,'body':json.dumps({'ok':True,'restored':True})})
+        page.once('dialog',lambda dialog:dialog.accept())
+        page.locator('#hg-config-restore-confirm').click()
+        page.wait_for_function('document.getElementById("hg-maintenance-result").textContent.includes("Configuration restored.")')
+        from urllib.parse import parse_qs
+        sent=parse_qs(requests[-1]['body'])
+        assert sent['mode']==['restore'] and sent['config_payload']==[backup] and sent['confirmation']==[report['confirmation']]
+        assert page.locator('#hg-config-preview').is_hidden()
+        # Log clear and both actual Blob downloads remain on Maintenance.
+        response['body']=json.dumps({'ok':True,'redirect':'/cgi-bin/luci/admin/services/homegate/maintenance'})
+        page.once('dialog',lambda dialog:dialog.accept())
+        page.get_by_role('button',name='Clear Log',exact=True).click()
+        page.wait_for_function('document.getElementById("hg-maintenance-result").textContent==="Log cleared"')
+        for label,filename in [('Download Diagnostic','homegate-diagnostic.txt'),('Export Configuration','homegate-config-backup.conf')]:
+            response['body']=json.dumps({'ok':True,'body':'fixture contents','headers':{'Content-Disposition':'attachment; filename="'+filename+'"','Content-Type':'text/plain'}})
+            with page.expect_download() as pending_download:page.get_by_role('button',name=label,exact=True).click()
+            download=pending_download.value
+            assert download.suggested_filename==filename and Path(download.path()).read_text()=='fixture contents'
+            assert page.locator('#hg-maintenance-result').is_hidden()
+            assert page.locator('a[download]').count() == 0
+        reset = page.get_by_role('button',name='Restore Default Configuration',exact=True)
+        before = len(requests)
+        page.once('dialog', lambda dialog: dialog.dismiss())
+        reset.click()
+        assert len(requests) == before
+        response['body']=json.dumps({'ok':False,'error':'配置写入准备失败，本次配置未提交。'})
+        page.once('dialog', lambda dialog: dialog.accept())
+        reset.click()
+        page.wait_for_function('document.getElementById("hg-maintenance-result").textContent.includes("配置写入准备失败")')
+        assert requests[-1]['url'].endswith('/config_reset') and page.url.endswith('/maintenance')
+        response['body']=json.dumps({'ok':False,'error':'运行目录不可用，操作未执行。'})
+        page.get_by_role('button',name='Export Configuration',exact=True).click()
+        page.wait_for_function('document.getElementById("hg-maintenance-result").textContent.includes("运行目录不可用")')
+        assert page.url.endswith('/maintenance')
+        response['body']=json.dumps({'ok':True,'body':json.dumps(report)})
         # Real FileReader rejects oversized files before transmission.
         requests.clear()
         page.locator('#hg-config-import-file').set_input_files({'name':'large.conf','mimeType':'text/plain','buffer':b'x'*262145})
@@ -109,13 +151,13 @@ with sync_playwright() as pw, LiveError():
         # Invalid JSON and server failures clear previous rows and do not apply.
         response['body']='not JSON'
         page.locator('#hg-config-import-file').set_input_files({'name':'public.conf','mimeType':'text/plain','buffer':backup.encode()})
-        page.wait_for_function('document.getElementById("hg-config-preview-message").textContent==="Unable to preview configuration."')
+        page.wait_for_function('document.getElementById("hg-config-preview-message").textContent==="Unable to read action result"')
         print('Invalid JSON handled',flush=True)
         assert page.locator('#hg-config-preview-changes tr').count()==0
-        response['body']=json.dumps(report)
+        response['body']=json.dumps({'ok':True,'body':json.dumps(report)})
         # Independent overlapping requests: second result wins; closing also
         # invalidates an in-flight response, without modifying configuration.
-        page.evaluate('()=>{window.previewResolvers=[];window.homegatePreviewImport=()=>new Promise(r=>previewResolvers.push(r));}')
+        page.evaluate('()=>{window.previewResolvers=[];window.homegateMaintenanceAction=()=>new Promise(r=>previewResolvers.push(x=>r({ok:true,body:JSON.stringify(x)})));}')
         for _ in range(2):
             page.locator('#hg-config-import-file').set_input_files({'name':'public.conf','mimeType':'text/plain','buffer':backup.encode()})
             page.wait_for_function('previewResolvers.length>='+str(_+1))
@@ -126,12 +168,12 @@ with sync_playwright() as pw, LiveError():
         assert 'STALE_RESPONSE' not in page.locator('#hg-config-preview').inner_text()
         page.locator('#hg-config-import-file').set_input_files({'name':'public.conf','mimeType':'text/plain','buffer':backup.encode()})
         page.wait_for_function('previewResolvers.length===3')
-        page.get_by_role('button',name='Close Preview',exact=True).click()
+        page.get_by_role('button',name='Close Check',exact=True).click()
         page.evaluate('r=>previewResolvers[2](r)',report)
         assert page.locator('#hg-config-preview').is_hidden()
         assert page.locator('#hg-config-preview-changes tr').count()==0
-        # A forged commit capability is never accepted by the preview UI.
-        page.evaluate('r=>hgMaintenanceShowPreview({...r,can_commit:true})',report)
+        # An incomplete preview never enables restoration.
+        page.evaluate('r=>hgMaintenanceShowPreview({...r,confirmation:null})',report)
         assert page.locator('#hg-config-preview-changes tr').count()==0
         assert 'Unable to preview' in page.locator('#hg-config-preview-message').inner_text()
     # Exercise the actual JS transport's preview adapter and job polling/ack.
@@ -150,5 +192,5 @@ with sync_playwright() as pw, LiveError():
     assert calls[0][1]=='config_import' and calls[0][2]['config_payload']==backup
     assert not errors,errors
     browser.close()
-(out/'results.json').write_text(json.dumps({'render_parity':2,'geometry_cases':cases,'behavior':['native-post-csrf','real-file-reader','escaped-diff','large-file-before-network','invalid-json','second-preview-wins','close-invalidates-response','forged-commit-rejected','actual-js-job-poll-ack'],'scope':'Local/CI browser and read-only UCI boundary fixtures; no target LuCI, write backend or device acceptance'},indent=2),encoding='utf-8')
-print('PASS Lua/JS preview: rendering parity, 12 geometry cases and 9 behavior contracts')
+(out/'results.json').write_text(json.dumps({'render_parity':2,'geometry_cases':cases,'behavior':['native-post-csrf','real-file-reader','escaped-diff','large-file-before-network','invalid-json','second-preview-wins','close-invalidates-response','missing-confirmation-rejected','actual-js-job-poll-ack','selection-and-cancel-never-restore','confirmed-restore-exact-payload','clear-log-stays-on-page','two-Blob-downloads','Chinese-error-stays-on-page'],'scope':'Local/CI browser and controlled HTTP/UCI boundary fixtures; no target or real write backend acceptance'},indent=2),encoding='utf-8')
+print('PASS Lua/JS maintenance: rendering parity, 12 geometry cases and 14 behavior contracts')

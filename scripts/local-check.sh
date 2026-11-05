@@ -263,7 +263,7 @@ EOS
 kill -HUP "$pid"
 sleep 0.2
 kill -0 "$pid"
-grep -q 'configuration reloaded enabled=true log_level=debug log_max_lines=64 ddns_interval=600 renew_days=30 web_enabled=0' "$OUT/homegate.log"
+grep -q 'configuration reloaded enabled=true log_level=debug log_max_lines=64 ddns_interval=600 renew_days=5 web_enabled=0' "$OUT/homegate.log"
 
 kill -TERM "$pid"
 wait "$pid"

@@ -50,7 +50,7 @@ async function action(route,form) {
 function finish(result) {
  if (result.redirect) {
   const destination = routeURL(result.redirect);
-  if (!['basic','public','wol','maintenance'].includes(destination.route)) throw new Error(_('Invalid HomeGate action'));
+  if (!['overview','basic','public','wol','maintenance'].includes(destination.route)) throw new Error(_('Invalid HomeGate action'));
   location.href = result.redirect;
   return;
  }
@@ -66,6 +66,7 @@ function finish(result) {
  }
 }
 function install(root) {
+ window.homegateMaintenanceAction=action;
  window.homegatePreviewImport=async function(values) {
   const result=await action('config_import',values);
   if(!result.ok || result.redirect)throw new Error(_('Unable to preview configuration.'));

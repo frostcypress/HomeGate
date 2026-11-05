@@ -17,7 +17,7 @@ section package_architectures
 opkg print-architecture
 section dependency_packages
 opkg list-installed | awk '$1 ~ /^(kernel|libc|libgcc[^ ]*|lua|liblua[^ ]*|libopenssl[^ ]*|libpcre[^ ]*|libubox[^ ]*|libubus[^ ]*|libuci[^ ]*|luci-base|luci-lib-nixio|luci-lib-jsonc|procd|opkg|ip6tables[^ ]*|kmod-ipt[^ ]*)$/ {print}'
-for path in /bin/busybox /lib/ld-musl-aarch64.so.1 /lib/libc.so /usr/lib/libssl.so.3 /usr/lib/libcrypto.so.3 /usr/lib/libssl.so.1.1 /usr/lib/libcrypto.so.1.1 /usr/lib/libpcre2-8.so.0;do
+for path in /bin/busybox /lib/ld-musl-aarch64.so.1 /lib/libc.so /lib/libgcc_s.so.1 /usr/lib/libgcc_s.so.1 /usr/lib/libssl.so.3 /usr/lib/libcrypto.so.3 /usr/lib/libssl.so.1.1 /usr/lib/libcrypto.so.1.1 /usr/lib/libpcre2-8.so.0;do
  section "elf:$path"
  if [ ! -f "$path" ];then printf 'state=missing\n';continue;fi
  printf 'state=present\n'
@@ -29,7 +29,11 @@ for path in /bin/busybox /lib/ld-musl-aarch64.so.1 /lib/libc.so /usr/lib/libssl.
  if command -v readelf >/dev/null 2>&1;then
   readelf -h "$path" 2>/dev/null | awk '/Class:|Data:|Machine:/ {print}'
   readelf -d "$path" 2>/dev/null | awk '/\(NEEDED\)|\(SONAME\)/ {if(++n<=64)print}'
-  readelf --dyn-syms --wide "$path" 2>/dev/null | awk '/X509_check_ip|SSL_CTX_new|OPENSSL_init_ssl/ {if(++n<=24)print}'
+  # Installed firmware libraries may have no section headers. Dynamic symbol
+  # lookup must use PT_DYNAMIC; --dyn-syms alone can silently return no rows.
+  readelf --use-dynamic --symbols --wide "$path" 2>/dev/null | awk '
+   /X509_check_ip|SSL_CTX_new|OPENSSL_init_ssl/ {if(++n<=24)print}
+   {for(i=1;i<=NF;i++)if($i ~ /@/){v=$i;sub(/^.*@/,"",v);if(v ~ /^(GCC|GLIBC|OPENSSL)_[0-9A-Za-z_.]+$/ && !seen[v]++){if(++versions<=64)print "symbol_version=" v}}}'
  else printf 'dynamic_metadata=unavailable; use a trusted host tool on public ELF library copies; do not install readelf solely for this probe\n';fi
  if command -v stat >/dev/null 2>&1;then stat -Lc 'identity_after=%d:%i:%u:%a:%s' "$path" 2>/dev/null || printf 'identity_after=unknown\n';fi
 done

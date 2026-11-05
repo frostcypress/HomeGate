@@ -15,8 +15,11 @@ if fixture then
  work='/offline-memory'
 else request=lib.request(arg[2],write);work=arg[2]:match('^(.*)/[^/]+$')end
 local result={api_version=1,ok=false,headers={}};local bytes=0;local private={};local documents={};local files={};local revision
-local needs_config_write=write and not ({config_export=true,config_import=true,diagnostic_download=true,log_clear=true})[request.route]
+local needs_config_write=write and not ({config_export=true,diagnostic_download=true,log_clear=true})[request.route]
+if request.route=='config_import' and request.form.mode~='restore'then needs_config_write=false end
 local effect_started=false
+local configuration_prepare_attempted=false
+local failure_stage
 local pending_imports={}
 local stopped_for_save=false
 local function quote(s)return "'"..tostring(s):gsub("'","'\\''").."'"end
@@ -81,8 +84,15 @@ local function load_document(pkg)
   if needs_config_write then
    local factory=assert(original_io.open(base..'/factory.config','rb'));local expected=factory:read(262145);factory:close()
    if source~=expected then error('Source adoption required in configuration maintenance')end
-   local _,rc=core({'prepare'});if rc~=0 then error('Configuration initialization unavailable')end
-   documents[pkg]=nil;return load_document(pkg)
+   failure_stage='configuration-prepare'
+   if configuration_prepare_attempted then error('Prepared configuration could not be read') end
+   configuration_prepare_attempted=true
+   local _,rc=core({'prepare'})
+   if rc~=0 then error('Configuration initialization unavailable') end
+   documents[pkg]=nil
+   local prepared=load_document(pkg)
+   failure_stage=nil
+   return prepared
   end
  end
  for _,s in ipairs(documents[pkg])do
@@ -216,6 +226,10 @@ local function virtual_file(path,mode)
  return f
 end
 local function shell(command)
+ if command=='sha256sum /etc/config/homegate 2>/dev/null'then
+  if fixture then return fixture.shell(command)end
+  return capture('sha256sum /etc/config/homegate',256)
+ end
  if fixture then return fixture.shell(command)end
  local isolated=command:match('^HOMEGATE_HOME_DIR=/tmp/homegate%-local%-validate%-%d+ (.+)$')
  if isolated then
@@ -356,7 +370,15 @@ local ok,err=pcall(function()
  local handler=env[lib.routes[request.route].handler];if type(handler)~='function'then error('route handler')end;handler()
  result.ok=result.error==nil
 end)
-if not ok then result={api_version=1,ok=false,error='Native Web operation unavailable; inspect current configuration and retained tasks',error_site=tostring(err):match('%.lua:(%d+):'),uncertain=effect_started or nil}end
+if not ok then
+ local message='Native Web operation unavailable; inspect current configuration and retained tasks'
+ if failure_stage=='configuration-prepare' then
+  message='配置写入准备失败，本次配置未提交。'
+ elseif request.route=='config_reset' then
+  message=effect_started and '恢复结果待核对，请检查当前配置和任务状态。' or '恢复默认配置失败，本次配置未提交。'
+ end
+ result={api_version=1,ok=false,error=message,failure_stage=failure_stage,error_site=tostring(err):match('%.lua:(%d+):'),uncertain=effect_started or nil}
+end
 if result.body then result.body=masked(result.body)end
 if result.redirect then result.redirect=masked(result.redirect)end
 if result.headers and next(result.headers)==nil then result.headers=nil end

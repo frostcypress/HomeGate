@@ -214,17 +214,17 @@ class Preview(unittest.TestCase):
         report = json.loads(self.codec.json(self.codec.preview(self.cursor(current), backup)))
         self.assertEqual(report['changes'], [])
 
-    def test_real_import_handler_never_executes_or_writes_even_crafted_mode(self):
+    def test_real_import_check_only_reads_fixed_fingerprint_and_never_writes(self):
         cursor = self.cursor(self.sections())
         self.lua.globals().cursor = cursor
         self.lua.globals().payload = BODY
-        self.lua.execute('''captured={}; mode='apply'
+        self.lua.execute('''_=function(v)return v end; captured={}; mode='apply'
           package.preload['luci.model.uci']=function() return {cursor=function() return cursor end} end
           package.preload['luci.http']=function() return {
             formvalue=function(k) if k=='config_payload' then return payload else return mode end end,
             prepare_content=function(v) assert(v=='application/json') end,
             write=function(v) captured[#captured+1]=v end} end
-          package.preload['luci.sys']=function() error('Shell access prohibited') end
+          package.preload['luci.sys']=function() return {exec=function(cmd) assert(cmd=='sha256sum /etc/config/homegate 2>/dev/null');return string.rep('a',64)..'  /etc/config/homegate'..string.char(10) end} end
           io.open=function() error('File access prohibited') end
         ''')
         self.lua.execute('package.preload["luci.model.homegate.backup"]=function()\n'+CODEC.read_text(encoding='utf-8')+'\nend')
@@ -232,7 +232,8 @@ class Preview(unittest.TestCase):
         self.lua.globals().luci.controller.homegate.action_config_import()
         report = json.loads(''.join(self.lua.globals().captured.values()))
         self.assertTrue(report['ok'])
-        self.assertFalse(report['can_commit'])
+        self.assertTrue(report['can_commit'])
+        self.assertIn('confirmation',report)
         self.lua.globals().captured = self.lua.table()
         self.lua.globals().payload = BODY + "option secret 'SECRET_SENTINEL'\n"
         self.lua.globals().luci.controller.homegate.action_config_import()

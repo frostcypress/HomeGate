@@ -94,7 +94,7 @@ html += pcdata(_("Save & Apply"));
 html += "\" />\n  <input class=\"cbi-button cbi-button-save\" type=\"submit\" form=\"homegate-basic-form\" onclick=\"this.form.elements['mode'].value='save'\" value=\"";
 html += pcdata(_("Save"));
 html += "\" />\n  <input class=\"cbi-button cbi-button-reset\" type=\"button\" onclick=\"location.href='";
-html += String(url("admin/services/homegate/basic"));
+html += String(url("admin/services/homegate/overview"));
 html += "'\" value=\"";
 html += pcdata(_("Reset"));
 html += "\" />\n</div>\n\n\n<script type=\"text/javascript\">\nvar HGXHR = window.homegateXHR;\n(function(){\n  var tStopped='";

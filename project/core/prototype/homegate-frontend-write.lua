@@ -59,7 +59,7 @@ http.redirect = function(value)
     if type(value) ~= "string" or #value > 4096 or value:find("[\r\n%z]") or
         not value:match("^/cgi%-bin/luci/admin/services/homegate/[%w_]+[?]?") then error("redirect") end
     local page,query=value:match("^/cgi%-bin/luci/admin/services/homegate/([%w_]+)(.*)$")
-    if not ({basic=true,public=true,wol=true,maintenance=true})[page] or
+    if not ({overview=true,basic=true,public=true,wol=true,maintenance=true})[page] or
         (query ~= "" and query:sub(1,1) ~= "?") then error("redirect") end
     redirect=value
 end

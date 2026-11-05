@@ -71,7 +71,7 @@ local function dispatch(route)
         not result.redirect:match("^/cgi%-bin/luci/admin/services/homegate/") or
         result.redirect:find("[\r\n%z]") then return refused() end
     local page, query = result.redirect:match("^/cgi%-bin/luci/admin/services/homegate/([%w_]+)(.*)$")
-    if not ({basic=true,public=true,wol=true,maintenance=true})[page] or
+    if not ({overview=true,basic=true,public=true,wol=true,maintenance=true})[page] or
         (query ~= "" and query:sub(1,1) ~= "?") then return refused() end
     return require("luci.http").redirect(result.redirect)
 end

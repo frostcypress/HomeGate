@@ -65,7 +65,7 @@ class Transport(unittest.TestCase):
         def decode(value): return self.lua.table_from(json.loads(value),recursive=True)
         self.lua.globals().encode=encode; self.lua.globals().decode=decode
         self.lua.execute('''
-captured={}; form={mode='save',secret='SECRET_SENTINEL'}; result='{"ok":true,"dispatched":true,"redirect":"/cgi-bin/luci/admin/services/homegate/basic?notice=Saved"}'
+captured={}; form={mode='save',secret='SECRET_SENTINEL'}; result='{"ok":true,"dispatched":true,"redirect":"/cgi-bin/luci/admin/services/homegate/overview?notice=Saved"}'
 package.preload['luci.http']=function() return {
  formvalue=function() return form end, status=function(code)captured.status=code end,
  prepare_content=function() end,write=function(body)captured.body=body end,
@@ -96,7 +96,7 @@ io.open=function(path,mode) assert(path=='/proc/sys/kernel/random/uuid' and mode
         self.assertIn('SECRET_SENTINEL',c.private_body); self.assertNotIn('SECRET_SENTINEL',c.command)
         self.assertEqual(c.command,"/usr/libexec/homegate/frontend-write '/tmp/homegate-luci-12345678123412341234123456789abc/request' 2>/dev/null")
         self.assertEqual(c.unlinked,c.path); self.assertEqual(c.removed,c.dir); self.assertEqual(c.closed,1)
-        self.assertIn('notice=Saved',c.redirect)
+        self.assertEqual(c.redirect,'/cgi-bin/luci/admin/services/homegate/overview?notice=Saved')
 
     def test_exception_closes_and_cleans_without_echo(self):
         self.lua.globals().fail_write=True; self.execute(); c=self.lua.globals().captured
@@ -207,7 +207,7 @@ dofile('''+quote(RUNNER)+''')
 
     def test_basic_save_real_controller_under_whole_request_lock(self):
         report=self.run_request(self.request()); self.assertTrue(report['ok'])
-        self.assertIn('notice=Saved',report['redirect'])
+        self.assertEqual(report['redirect'],'/cgi-bin/luci/admin/services/homegate/overview?notice=Saved')
         self.assertEqual(json.loads(self.config.read_text())['https_port'],'443')
         events=self.trace.read_text().splitlines(); self.assertEqual(events[:2],['dispatch','cursor']); self.assertIn('commit',events)
 

@@ -1222,9 +1222,10 @@ class Deployment(unittest.TestCase):
                 dependencies=('homegate-core (= '+version+')' if part=='web' else
                               'homegate-core (= '+version+'), luci-app-homegate (= '+version+')' if part=='translation' else 'busybox')
                 control=[('control',('Package: '+name+'\nVersion: '+version+'\nArchitecture: all\nDepends: '+dependencies+'\n').encode(),0o644)]
-                if part=='core':
-                    for hook in ['preinst','prerm','postinst','postrm']:
-                        raw=(make.split('define Package/homegate-core/'+hook+'\n')[1].split('\nendef')[0].replace('$$','$').strip()+'\n').encode();control.append((hook,raw,0o755))
+                hooks={'core':('preinst','prerm','postinst','postrm'),'web':('postinst',)}
+                for hook in hooks.get(part,()):
+                    definition=make.split(f'define Package/{name}/{hook}\n',1)[1].split('\nendef',1)[0]
+                    control.append((hook,(definition.replace('$$','$').strip()+'\n').encode(),0o755))
                 container=archive([('debian-binary',b'2.0\n',0o644),('control.tar.gz',archive(control),0o644),('data.tar.gz',archive(body),0o644)])
                 (packages/(name+'.ipk')).write_bytes(container)
             result=prepare_kit(ROOT,packages,root/'kit');self.assertEqual(len(result['sha256']),6);self.assertEqual((root/'kit').stat().st_mode&0o777,0o700)

@@ -71,7 +71,7 @@ func TestSelfTest(t *testing.T) {
 }
 
 func TestPagesAndReadACL(t *testing.T) {
-	for _, name := range []string{"basic", "public", "wol", "maintenance"} {
+	for _, name := range []string{"overview", "public", "wol", "maintenance"} {
 		t.Run(name, func(t *testing.T) {
 			h := fixtureHost()
 			r := (Engine{Host: h}).Run(context.Background(), Request{Route: name})
@@ -83,6 +83,16 @@ func TestPagesAndReadACL(t *testing.T) {
 			}
 		})
 	}
+	t.Run("basic redirects to overview", func(t *testing.T) {
+		h := fixtureHost()
+		r := (Engine{Host: h}).Run(context.Background(), Request{Route: "basic"})
+		if !r.OK || r.Redirect != "/cgi-bin/luci/admin/services/homegate/overview" || r.Template != "" {
+			t.Fatalf("%+v", r)
+		}
+		if h.begins != 0 || h.commits != 0 {
+			t.Fatal("redirect mutated state")
+		}
+	})
 	for name, route := range Routes() {
 		if route.Write {
 			h := fixtureHost()

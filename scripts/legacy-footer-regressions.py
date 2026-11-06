@@ -55,7 +55,8 @@ with sync_playwright() as pw:
    page.locator('[name=ddns_interval]').fill('300');page.locator('[name=ddns_interval]').press('Enter')
    assert page.evaluate('captured.at(-1).mode')=='apply'
   page.evaluate('captured=[]');page.locator('.cbi-page-actions > .cbi-button-reset').click()
-  assert page.url.endswith('/'+name)
+  destination='overview' if name=='basic' else name
+  page.wait_for_url('http://homegate.test/cgi-bin/luci/admin/services/homegate/'+destination)
   page.close()
  browser.close()
 (OUT/'results.json').write_text(json.dumps({'official_legacy_theme_parity':results,'real_form_submissions':submissions,'invalid_number_blocked':True,'enter_default_apply':True,'reset_navigation':True,'fixture_commit':origin['commit'],'scope':'Official upstream CSS and input-selector stress; actual QWRT stylesheet/device acceptance pending'},indent=2))

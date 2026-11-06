@@ -19,6 +19,12 @@ ACTION_GROUPS=('cli_actions','web_access_actions','web_maintenance_actions')
 
 def setup_state(s):
     web.setup_state(s)
+    # The guest's /bin points at the private /usr/bin. Expose the same pinned
+    # BusyBox ash there for the native session launcher's fixed /bin/ash path.
+    ash=s/'usr-bin/ash'
+    if ash.is_symlink():
+        ash.unlink()
+    ash.symlink_to('/usr/sbin/ash')
     curl=s/'curl-fixture';raw=curl.read_text();anchor="p=Path(sys.argv[sys.argv.index('--config')+1]);raw=p.read_text()"
     injected="""if '--config' not in sys.argv:
  u=sys.argv[-1];assert u in ['https://acme-v02.api.letsencrypt.org/directory','https://acme-staging-v02.api.letsencrypt.org/directory']
@@ -705,7 +711,7 @@ assert(original(arg[0]))()
         self.verify_wake_capture({'raw_sent':9,'udp_sent':6,'device_wake_verified':False})
         self.action_result('wol-cli-and-route',saved_host=True,all_fail_refused=True,injection_refused=True,device_wake_verified=False);self.verify_unchanged()
     def test_web_access_actions(self):
-        s=self.configured();base={'mode':'save','public_service_count':'0','access_enabled':'0','access_allow':'192.0.2.1','access_deny':'198.51.100.2','access_region':''}
+        self.configured();base={'mode':'save','public_service_count':'0','access_enabled':'0','access_allow':'192.0.2.1','access_deny':'198.51.100.2','access_region':''}
         self.assertTrue(self.web_wait(self.web_request('basic_apply',{'mode':'save'},True)['job'])['ok'])
         self.assertTrue(self.web_wait(self.web_request('public_apply',base,True)['job'])['ok'])
         for route,form in [('access_clear_entry',{'ip':'192.0.2.1','host':'example.test'}),('access_clear_denied',{}),('access_clear_all',{}),('access_delete_entry',{'ip':'192.0.2.1','host':'example.test'})]:
@@ -713,7 +719,7 @@ assert(original(arg[0]))()
             self.action_result(route,completed=True)
         main=self.web_request('public')['data']['main'];self.assertNotIn('192.0.2.1',main['access_allow']);self.assertIn('198.51.100.2',main['access_deny'])
         # Data rule_token and transport CSRF token must remain independent.
-        sid,token=s;fields={'kind':'deny','rule_token':'198.51.100.2'}
+        sid,token=self.login();fields={'kind':'deny','rule_token':'198.51.100.2'}
         code,_,_=self.cgi(BASE+'/access_delete_rule',cookie=sid,verb='POST',fields={**fields,'token':'bad'});self.assertNotEqual(code,200)
         self.assertIn('198.51.100.2',self.web_request('public')['data']['main']['access_deny'])
         code,_,raw=self.exchange(path=BASE+'/access_delete_rule',verb='POST',headers={'Cookie':'sysauth='+sid,'Content-Type':'application/x-www-form-urlencoded','Accept':'application/json'},raw=urlencode({**fields,'token':token}).encode())
@@ -969,7 +975,11 @@ else:
         s=self.configured();sid,token=s
         for route in ['overview','public','wol','maintenance']:
             code,_,body=self.cgi(BASE+'/'+route,cookie=sid);self.assertEqual(code,200,(route,body[:300]));self.assertNotIn(b'SECRET_SENTINEL',body)
-            self.assertIn(b'<form' if route!='overview' else b'Overview',body,(route,body[:200]));self.assertNotIn(b'Internal Server Error',body)
+            self.assertIn(b'<form',body,(route,body[:200]))
+            if route=='overview':
+                self.assertIn(b'id="homegate-basic-form"',body)
+                self.assertIn(b'id="hg_service"',body)
+            self.assertNotIn(b'Internal Server Error',body)
             import re
             scripts=[v.decode().replace(token,'0'*32) for v in re.findall(rb'<script\b[^>]*>(.*?)</script>',body,re.S)]
             print('NATIVE_WEB_SCRIPTS:'+json.dumps({'route':route,'scripts':scripts}),flush=True)
@@ -1057,7 +1067,7 @@ else:
             d=self.web_request('basic_apply',{'mode':'save','https_port':'446'},True);job=d['job'];time.sleep(.2)
             self.assertTrue(self.cli('web-job-status',job)['pending']);self.cli('config-preview',ok=False)
             self.api('configuration_api','preview_account',s,{'id':'dns_b','provider':'cloudflare','name':'Blocked'},expected=503)
-            self.assertTrue(self.web_request('basic')['ok']);self.assertEqual(Path('/etc/config/homegate').read_bytes(),before)
+            self.assertTrue(self.web_request('overview')['ok']);self.assertEqual(Path('/etc/config/homegate').read_bytes(),before)
             self.assertTrue(self.cli('web-job',job)['pending'])
             fcntl.flock(lease,fcntl.LOCK_UN)
         self.assertTrue(self.web_wait(job)['ok']);self.assertIn("option https_port '446'",Path('/etc/config/homegate').read_text())
@@ -1075,7 +1085,7 @@ else:
             job=re.search(rb"var id='([0-9a-f]{32})'",body).group(1).decode()
             result=self.web_wait(job,seconds=25);self.assertTrue(result['ok'],result);self.assertTrue(result['runtime_applied'])
             status=self.cli('status');self.assertTrue(status['service']['healthy']);self.assertTrue(status['service']['running'])
-            self.assertEqual(self.web_request('basic')['data']['main']['https_port'],port)
+            self.assertEqual(self.web_request('overview')['data']['main']['https_port'],port)
         self.assertFalse(Path('/etc/homegate/transactions/ddns-authority').exists())
         result=self.web_wait(self.web_request('basic_apply',{'mode':'apply'},True)['job'],seconds=25);self.assertTrue(result['ok'],result)
         self.assertFalse(self.cli('status')['service']['running']);self.cli('service-quiescent');self.verify_unchanged()
@@ -1083,7 +1093,7 @@ else:
         self.configured()
         for port in ['447','448']:
             result=self.web_wait(self.web_request('basic_apply',{'enabled':'1','mode':'apply','https_port':port},True)['job'],seconds=30);self.assertTrue(result['ok'],result);self.assertTrue(result['runtime_applied'])
-            self.assertEqual(self.web_request('basic')['data']['main']['https_port'],port)
+            self.assertEqual(self.web_request('overview')['data']['main']['https_port'],port)
         self.assertTrue(result['runtime_stopped_for_save'])
         result=self.web_wait(self.web_request('maintenance_apply',{'mode':'save','log_max_lines':'2048'},True)['job']);self.assertTrue(result['ok'],result);self.assertTrue(result['runtime_stopped_for_save'])
         from urllib.parse import unquote
@@ -1167,7 +1177,7 @@ else:
         tool.write_text('''#!/usr/sbin/ash
 parent=$(tr '\\000' ' ' < /proc/$PPID/cmdline)
 case "$1:${2:-}:$parent" in
- '-n:9:ash /usr/libexec/homegate/native-web.sh owner '*)
+ '-n:9:/bin/ash /usr/libexec/homegate/native-web.sh owner '*)
   if mkdir /teststate/owner-probe-once 2>/dev/null;then
    path=$(readlink /proc/$$/fd/9)
    (exec 9>&-;exec 3>>"$path";/usr/sbin/busybox flock 3 || exit 1;touch /teststate/owner-probe-ready;sleep .12) </dev/null >/dev/null 2>&1 &

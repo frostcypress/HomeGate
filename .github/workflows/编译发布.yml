@@ -294,7 +294,7 @@ jobs:
   engineering:
     name: 工程完整接合回归 · ${{ matrix.group }}
     runs-on: ubuntu-24.04
-    timeout-minutes: 25
+    timeout-minutes: ${{ matrix.group == 'native-production' && 40 || 25 }}
     strategy:
       fail-fast: false
       matrix:

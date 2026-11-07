@@ -50,14 +50,9 @@ class Static(unittest.TestCase):
         self.assertEqual(body.count(b'configuration_validation_enabled=false'), 1)
         for forbidden in [b'curl ', b'setsid ', b'kill ', b'mktemp', b'--confirm']:
             self.assertNotIn(forbidden, body)
-        main = (ROOT / 'project/core/src/cmd/homegate/main.go').read_text()
-        branch = main.split('case "check":', 1)[1].split('\n\tcase ', 1)[0]
-        self.assertIn('a.Check(ctx)', branch)
-        self.assertIn('if checkErr != nil', branch)
-        app = (ROOT / 'project/core/src/internal/app/app.go').read_text()
-        self.assertIn('r := a.Status(ctx)', app.split('func (a App) Check', 1)[1])
+        exits = json.loads((ROOT / 'docs/核心CLI合同.json').read_text(encoding='utf-8'))['diagnostic_exit_codes']['check']
+        self.assertEqual(exits, {'healthy': 0, 'unhealthy': 1})
         self.assertNotIn('homegate-configuration-read', (PROTO / 'homegate-cli.sh').read_text())
-        self.assertNotIn('prototype/', (PROTO.parent / 'Makefile').read_text())
 
     def test_private_switches_survive_without_changing_exports_or_ddns_contract(self):
         lua, codec, model, ip = models()

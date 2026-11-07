@@ -12,7 +12,6 @@ class Static(unittest.TestCase):
     def test_closed_entry_worker_and_shared_watchdog(self):
         for name,gate in [('homegate-aliyun-read.sh','aliyun_entry_enabled'),('homegate-aliyun-worker.sh','aliyun_read_enabled'),('homegate-cloudflare-read.sh','aliyun_read_enabled'),('homegate-service-observer-watchdog.sh','aliyun_read_enabled')]:
             body=(PROTO/name).read_text(encoding='utf-8');self.assertEqual(body.count(gate+'=false'),1);self.assertNotIn(gate+'=true',body)
-        self.assertNotIn('prototype/',(ROOT/'project/core/Makefile').read_text())
 
     def test_lua_and_ash_syntax(self):
         from lupa.lua51 import LuaRuntime

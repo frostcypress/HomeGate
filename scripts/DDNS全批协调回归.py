@@ -72,7 +72,6 @@ class Static(BaseStatic):
             body=(PROTO/name).read_bytes();self.assertEqual(body.count(b'ddns_batch_enabled=false'),1);self.assertFalse(parser.parse(body).root_node.has_error,name);self.assertNotIn(b'\r',body)
         for name in ['ddns-batch.lua','homegate-ddns-batch.lua']:self.lua.compile((PROTO/name).read_bytes())
         for name in ['homegate-ddns-state.sh','homegate-ddns-read.sh']:self.assertIn('= 0:600:0 ]',(PROTO/name).read_text())
-        self.assertNotIn('prototype/',(PROTO.parent/'Makefile').read_text())
 
 class BatchMixin:
     def setUp(self):

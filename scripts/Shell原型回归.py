@@ -41,16 +41,13 @@ class Static(unittest.TestCase):
                     self.assertNotIn('$', command, 'Dynamic executable name in isolated prototype')
             stack.extend(node.named_children)
 
-    def test_prototype_excluded_from_production_install(self):
-        recipe = (ROOT / 'project/core/Makefile').read_text(encoding='utf-8')
-        self.assertNotIn('prototype/', recipe)
+    def test_prototype_migration_gate_remains_closed(self):
         project = json.loads((ROOT / 'project.json').read_text(encoding='utf-8'))
         self.assertFalse(project['core']['migration_complete'])
 
     def test_event_contract_covers_original_scheduler(self):
-        body = (ROOT / 'project/core/src/internal/scheduler/queue.go').read_text(encoding='utf-8')
-        import re
-        self.assertEqual(set(re.findall(r'Kind = "([^"]+)"', body)), set(EVENTS))
+        contract = json.loads((ROOT / 'docs/核心CLI合同.json').read_text(encoding='utf-8'))
+        self.assertCountEqual(contract['scheduler_events'], EVENTS)
 
 
 class Runtime(unittest.TestCase):

@@ -27,7 +27,6 @@ class Static(PrivateCodec):
             b=(PROTO/n).read_bytes();self.assertNotIn(b'\r',b);self.assertFalse(parser.parse(b).root_node.has_error,n)
             self.assertEqual(len(re.findall(rb'^dns_records_enabled=false$',b,re.M)),1)
             self.assertNotRegex(b,rb'(?m)^dns_records_enabled=true$')
-        self.assertNotIn('prototype/',(ROOT/'project/core/Makefile').read_text())
     def test_real_generation_resource_and_domain_binding(self):
         c=self.bind(self.ddns());self.assertEqual((c[b'type'],c[b'fqdn'],c[b'ttl']),(b'AAAA',b'www.example.test',600))
         for q,a,r in [(self.ddns(),b'other',b'3'),(self.ddns(),b'dns_a',b'2'),(self.ddns(resource=b'missing'),b'dns_a',b'3'),(self.ddns(endpoint=b'https://bad.invalid'),b'dns_a',b'3')]:

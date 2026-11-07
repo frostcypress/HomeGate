@@ -61,7 +61,8 @@ fi
 if [ "${1:-}" = --ddns-plan ]; then
     [ "$ddns_plan_enabled" = true ] || exit 2;shift
     [ "$#" -eq 4 ] || exit 2
-    action=ddns-plan;budget=5;ddns_revision=$2;ddns_job=$3;ddns_rule=$4
+    # The authorized snapshot can still be producing input after the worker starts.
+    action=ddns-plan;budget=15;ddns_revision=$2;ddns_job=$3;ddns_rule=$4
     case "$ddns_revision:$ddns_job" in *[!0-9:]*) exit 2;; esac
     [ "$ddns_revision" -ge 1 ] && [ "$ddns_revision" -le 32 ] && [ "${#ddns_job}" -le 9 ] && [ "$ddns_job" -ge 2 ] || exit 2
     case "$ddns_rule" in *[!a-zA-Z0-9_-]*) exit 2;; esac
@@ -133,13 +134,20 @@ process="$dir/worker-process.lua"
 info=$(lua "$process" info "$$" "$1" 2>/dev/null) || exit 1
 old_ifs=$IFS; IFS=:; set -- $info; IFS=$old_ifs
 [ "$#" -eq 6 ] && [ "$3" = "$$" ] && [ "$4" = "$$" ] && [ "$6" = 1 ] || exit 1
-sleep 0.001 >/dev/null 2>&1 || exit 1
+poll_delay=0.05
+if ! sleep 0.001 >/dev/null 2>&1; then
+    # Some firmware builds support only integer sleep arguments.
+    sleep 0 >/dev/null 2>&1 || exit 1
+    poll_delay=1
+fi
 kill -0 "$$" >/dev/null 2>&1 || exit 1
 # Missing executables/modules are unknown, never "disabled" or "stopped".
 [ "$(id -u)" = 0 ] || exit 1
 if [ "$action" != cloudflare-check ] && [ "$action" != ddns-plan ] && [ "$action" != network-resolve ] && [ "$action" != health-status ] && [ "$action" != recovery-status ] && [ "$action" != certificate-validate ]; then
+    ubus=/sbin/ubus
+    if [ ! -e "$ubus" ] && [ ! -L "$ubus" ]; then ubus=/bin/ubus; fi
     [ -f /etc/init.d/homegate ] && [ ! -L /etc/init.d/homegate ] && [ -x /etc/init.d/homegate ] &&
-        [ -x /etc/rc.common ] && [ -x /sbin/ubus ] || exit 1
+        [ -x /etc/rc.common ] && [ -f "$ubus" ] && [ ! -L "$ubus" ] && [ -x "$ubus" ] || exit 1
 fi
 stop_requested=false
 trap 'stop_requested=true' TERM INT
@@ -201,13 +209,13 @@ while :; do
     [ "$stop_requested" = false ] || stop_family
     now=$(lua "$process" now 2>/dev/null) || stop_family
     [ "$now" -lt "$deadline" ] || stop_family
-    sleep 0.05 2>/dev/null || stop_family
+    sleep "$poll_delay" 2>/dev/null || stop_family
 done
 [ "$stop_requested" = false ] || stop_family
 result=0; wait "$worker" || result=$?
 members=$(lua "$process" group "$$" "$$" 2>/dev/null) || stop_family
 [ "$members" = 0 ] || stop_family
-sleep 0.05 2>/dev/null || stop_family
+sleep "$poll_delay" 2>/dev/null || stop_family
 members=$(lua "$process" group "$$" "$$" 2>/dev/null) || stop_family
 [ "$members" = 0 ] || stop_family
 exit "$result"

@@ -15,7 +15,6 @@ class Static(unittest.TestCase):
         self.assertEqual(body.count('dns_migrated_read_enabled=false'),1)
         self.assertIn('--migrated)',body)
         self.assertNotIn('dns_migrated_read_enabled=true',body)
-        self.assertNotIn('prototype/',(ROOT/'project/core/Makefile').read_text())
 
     def test_bound_check_precedes_snapshot_and_http_worker(self):
         body=(PROTO/'homegate-cloudflare-read.sh').read_text(encoding='utf-8')

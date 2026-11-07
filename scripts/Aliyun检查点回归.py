@@ -11,7 +11,7 @@ class Static(TerminalStatic):
         for name in ['homegate-aliyun-read.sh','homegate-cloudflare-read.sh','homegate-dns-checkpoint-repair.sh']:
             body=(PROTO/name).read_bytes();self.assertNotIn(b'\r',body);self.assertFalse(parser.parse(body).root_node.has_error,name)
             self.assertEqual(body.count(b'aliyun_checkpoint_repair_enabled=false'),1)
-        self.lua.compile((PROTO/'aliyun-checkpoint.lua').read_bytes());self.assertNotIn('prototype/',(PROTO.parent/'Makefile').read_text())
+        self.lua.compile((PROTO/'aliyun-checkpoint.lua').read_bytes())
     def test_fixed_alias_has_no_remote_call_deletion_or_volatile_inference(self):
         body=(PROTO/'homegate-dns-checkpoint-repair.sh').read_text()
         for forbidden in ['curl','rm ','rmdir','work/context','work/zones','eval ']:self.assertNotIn(forbidden,body)

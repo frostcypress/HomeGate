@@ -4,11 +4,11 @@
 
 目标候选为 Zyxel Armor G5 (NBG7815) / QWRT R26.3.8 / aarch64_cortex-a53 / IPK / Lua LuCI。候选 SDK 不代表已经兼容，见 [目标兼容性说明](docs/目标兼容性报告.md)。
 
-r160 的原生生产路径候选沿用五个 `web-*` 命令、42 条既有路由及原 Lua 页面，使用同一配置事务和业务模块。旧页面保存会暂停运行任务；保存并应用按启用范围授权、重启并核验真实组件回执。旧本地或 ACME 证书可经原校验器明确采用，归属清理中断后可明确续完。公共 CLI 保留原参数数量，并对照冻结 Go 报告补齐状态查询的模块字段、空列表、版本及退出语义：失败报告保留 `ok=false`，查询退出码与 `check`/动作失败码分开。代理监听须核对原生 nginx 的进程归属及实际 socket，不能由 PID 或端口配置推断；网页读取使用同一兼容报告。DDNS `results` 仍是当前观测，无法证明的事件时间明确标记未知；DDNS 动作/事件、daemon 及部分排队错误语义仍待最终对照，不能视为完整 39 命令或 42 路由业务验收。原私有凭据、锁、POST/CSRF 和未知任务不重放门禁保留。当前证据限隔离环境源码候选，不代表真实安装或目标验收；最近实际工程包仍 r141。三包仅实机前或必要构建验证时按需生成。
+当前核心由 Shell、Lua 和独立的 NGINX/WOL 组件组成。CLI 与 Web 兼容合同独立保存在 [核心接口基线](docs/核心接口与迁移验收.md)。源码、原生三包和目标设备验收分别核对。
 
 ## 源码结构
 
-- `project/core/`：新核心原型、配方及迁移对照；`src/` 中的 Go 实现用于保留业务合同和对照测试，不作为最终核心。
+- `project/core/`：Shell/Lua 核心模块及隔离运行入口。原生 SDK 配方位于 `packaging/production/`。
 - `project/luci/`：Lua、JS 前端与公共中文语言源；沿用原生 LuCI 和 Bootstrap。
 - `scripts/`、`packaging/`：必要的构建、校验、打包与回归工具及夹具。
 - `.github/workflows/`：活动工作流，默认仅检查源码；目标构建和发布受门禁控制。
@@ -26,7 +26,7 @@ python3 scripts/导航安全回归.py
 python3 scripts/frontend-source-regressions.py
 ```
 
-只编辑 `VERSION`、`RELEASE`，随后运行 `python3 scripts/project.py --sync`。修改 Lua Controller/HTM 后运行 `scripts/sync-frontend.py` 和 `scripts/build-js-views.py`，由 CI 检查生成副本。
+只编辑 `VERSION`、`RELEASE`，随后运行 `python3 scripts/project.py --sync`。修改前端模板后运行 `make frontend`，由 CI 核对生成副本。
 
 配置备份只导出允许的公共字段，排除凭据、私钥和带认证地址；恢复后总开关关闭。生产配置迁移与完整生命周期仍需完成，见 [重构设计](docs/重构设计.md)。
 
@@ -38,7 +38,7 @@ python3 scripts/frontend-source-regressions.py
 
 ## 构建与分发
 
-工作流从同一提交检查源码；只有目标 SDK、ABI、核心和包名迁移满足门禁时才允许构建 Core、LuCI、中文语言三包。Lua/JS 与 IPK/APK 分开按目标选择。历史 Go 打包工具仅用于显式启用的对照验证，不能作为新三包交付。
+活动源码、构建和 CI 已移除 Go。当前原生候选以 Lua LuCI 和 IPK 为构建组合，入口为 `scripts/native-sdk-build.py`。正式目标构建仍须核实目标 SDK、ABI 和核心迁移，LuCI 类型与包格式分别核实。
 
 公开仓库与源码产物只包含 `公开文件清单.json` 列出的必要文件。新增文件须审查用途和内容后更新该清单；CI 核对 Git 跟踪文件与清单完全一致。
 
@@ -50,4 +50,4 @@ python3 scripts/生成接续包.py --target pending --stage 源码检查 --publi
 
 ## 已构建的独立工程三包
 
-[r137工程验证三包](docs/工程验证三包.md)已通过真实SDK构建、三包元数据及实际包内只读入口验收。配方位于packaging/engineering，使用homegate-engineering独立包名/路径，提供目录及完整配置只读校验。原完整产品构建/发布门禁、目标verified=false及Go对照生产配方保持；不自动安装或运行路由器服务。
+[r137工程验证三包](docs/工程验证三包.md)已通过真实SDK构建、三包元数据及实际包内只读入口验收。配方位于packaging/engineering，使用homegate-engineering独立包名/路径，提供目录及完整配置只读校验。工程包使用独立门禁，目标构建及发布按设备证据核对。

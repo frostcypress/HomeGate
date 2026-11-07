@@ -19,7 +19,6 @@ class Static(unittest.TestCase):
         for n in ['homegate-aliyun-read.sh','homegate-aliyun-worker.sh','homegate-cloudflare-read.sh','homegate-service-observer-watchdog.sh']:
             b=(PROTO/n).read_bytes();self.assertNotIn(b'\r',b);self.assertFalse(parser.parse(b).root_node.has_error,n)
             self.assertEqual(b.count(b'aliyun_records_enabled=false'),1);self.assertNotIn(b'aliyun_records_enabled=true',b)
-        self.assertNotIn('prototype/',(ROOT/'project/core/Makefile').read_text())
 
     def test_lua_syntax_pure_operation_and_existing_snapshot_binding(self):
         from lupa.lua51 import LuaRuntime
@@ -107,7 +106,13 @@ class Runtime(ReadRuntime):
         self.records(expected=4);self.aliyun(expected=4);self.writer()
 
     def test_aaaa_create_readback_then_unchanged(self):
+        def uppercase_status(action, q):
+            if action=='DescribeDomainRecordInfo':
+                return 200,{'RequestId':'fixture',**self.db[q['RecordId'][0]],'Status':'ENABLE'}
+        self.hook=uppercase_status
         out=self.records();self.assertEqual((out['result'],out['effect'],out['affected']),('created','confirmed',1))
+        self.hook=None
+        for row in self.db.values():row['Status']='ENABLE'
         self.assertEqual(self.records()['result'],'unchanged');self.assertEqual(len(self.mutations()),1);self.clean()
 
     def test_update_preserves_custom_line_and_unrelated_records(self):
@@ -147,13 +152,13 @@ class Runtime(ReadRuntime):
         self.hook=hook;out=self.records(expected=1);self.assertEqual((out['effect'],out['retryable']),('none',True));self.assertEqual(self.mutations(),[]);self.clean()
 
     def test_duplicate_identity_or_wrong_scope_and_invalid_aaaa_rejected(self):
-        for items in [[record(1),record(1)],[record(1,rr='other')],[record(1,value='not-ipv6')],[record('../bad')]]:
+        for items in [[record(1),record(1)],[record(1,rr='other')],[record(1,value='not-ipv6')],[record('../bad')],[record(1,Status='UNKNOWN')]]:
             self.hook=lambda action,q:(200,{'RequestId':'fixture','PageNumber':1,'PageSize':100,'TotalCount':len(items),'DomainRecords':{'Record':items}}) if action=='DescribeSubDomainRecords' else None
             self.records(expected=1);self.assertEqual(self.mutations(),[]);self.clean()
 
     def test_update_race_locked_and_disabled_records_never_write(self):
         self.add(record(1))
-        for changes in [{'Value':'2001:db8::9'},{'Line':'cn_mobile'},{'Locked':True},{'Status':'Disable'}]:
+        for changes in [{'Value':'2001:db8::9'},{'Line':'cn_mobile'},{'Locked':True},{'Status':'Disable'},{'Status':'DISABLE'}]:
             self.hook=lambda action,q:(200,{'RequestId':'fixture',**record(1,**changes)}) if action=='DescribeDomainRecordInfo' else None
             self.records(expected=1);self.assertEqual(self.mutations(),[]);self.clean()
 

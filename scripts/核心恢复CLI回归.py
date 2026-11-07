@@ -49,7 +49,7 @@ class Static(unittest.TestCase):
         return self.model.record(json.dumps(doc), self.lua.table_from(doc, recursive=True),
                                  self.lua.table_from({'modules': 'array'}), '1.3.0-r127', '1', self.binding, self.health.timestamp)
 
-    def test_grammar_closed_gates_actual_legacy_missing_semantics_and_exit_zero(self):
+    def test_grammar_closed_gates_and_diagnostic_exit_contract(self):
         import tree_sitter, tree_sitter_bash
         parser = tree_sitter.Parser(tree_sitter.Language(tree_sitter_bash.language()))
         for name in ['homegate-cli.sh', 'homegate-recovery-read.sh', 'homegate-recovery-worker.sh', 'homegate-service-observer-watchdog.sh']:
@@ -59,15 +59,11 @@ class Static(unittest.TestCase):
         self.lua.compile((PROTO / 'homegate-recovery.lua').read_bytes())
         for name in ['homegate-recovery-read.sh', 'homegate-recovery-worker.sh', 'homegate-service-observer-watchdog.sh']:
             self.assertEqual((PROTO / name).read_text().count('recovery_status_enabled=false'), 1)
-        main = (ROOT / 'project/core/src/cmd/homegate/main.go').read_text()
-        branch = main.split('case "recovery-status":', 1)[1].split('\n\tcase ', 1)[0]
-        self.assertNotIn('if !', branch)
-        old = (ROOT / 'project/core/src/internal/recovery/status.go').read_text()
-        self.assertIn('return Empty(version)', old.split('func (s Store) Read', 1)[1])
+        exits = json.loads((ROOT / 'docs/核心CLI合同.json').read_text(encoding='utf-8'))['diagnostic_exit_codes']
+        self.assertEqual(exits['recovery-status'], {'readable': 0, 'unavailable': 0})
         wrapper = (PROTO / 'homegate-recovery-read.sh').read_text()
         for forbidden in ['recover-application', 'recover-fence', 'archive-recover', '--confirm', 'curl ', 'eval ']:
             self.assertNotIn(forbidden, wrapper)
-        self.assertNotIn('prototype/', (PROTO.parent / 'Makefile').read_text())
 
     def test_binding_unknown_and_safe_modules_do_not_claim_recovered(self):
         good = self.parse(self.record())

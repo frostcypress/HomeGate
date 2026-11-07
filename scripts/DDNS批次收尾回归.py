@@ -42,7 +42,7 @@ class Static(BaseStatic):
             body=(PROTO/name).read_bytes();self.assertEqual(body.count(b'ddns_batch_closeout_enabled=false'),1);self.assertFalse(parser.parse(body).root_node.has_error);self.assertNotIn(b'\r',body)
         for name in ['ddns-batch-results.lua','homegate-ddns-batch-results.lua']:self.lua.compile((PROTO/name).read_bytes())
         body=(PROTO/'homegate-config-prototype.sh').read_text();self.assertIn('check-recovery',body);self.assertIn('check-writer',body);self.assertIn('dns-batch-results',body)
-        helper=(PROTO/'homegate-ddns-batch-results.sh').read_text();self.assertNotIn('curl',helper);self.assertNotIn('rm -r',helper);self.assertNotIn('prototype/',(PROTO.parent/'Makefile').read_text())
+        helper=(PROTO/'homegate-ddns-batch-results.sh').read_text();self.assertNotIn('curl',helper);self.assertNotIn('rm -r',helper)
 
 class ResultsMixin:
     def setUp(self):

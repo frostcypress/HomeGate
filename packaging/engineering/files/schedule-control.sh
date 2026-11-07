@@ -26,15 +26,17 @@ exec 5>>"$lock" || fail
 flock -n 5 && [ "$(stat -Lc '%d:%i' /proc/self/fd/5)" = "$(stat -c '%d:%i' "$lock")" ] || fail 4
 [ ! -e "$run/ddns-schedule" ] && [ ! -L "$run/ddns-schedule" ] || fail 4
 ash "$base/homegate-ddns-schedule.sh" quiescent >/dev/null || fail 4
+poll_delay=0.1;attempt_limit=70
+if ! sleep 0.001 >/dev/null 2>&1;then sleep 0 >/dev/null 2>&1 || fail;poll_delay=1;attempt_limit=7;fi
 # Child performs the original authorization/generation/lock binding and owns
 # the retained lease. Its stdout is disconnected from HTTP before admission.
 setsid ash "$base/homegate-ddns-schedule.sh" "$mode" --confirm 5>&- </dev/null >/dev/null 2>&1 &
 attempt=0
-while [ "$attempt" -lt 70 ];do
+while [ "$attempt" -lt "$attempt_limit" ];do
     if [ -f "$run/ddns-schedule/report" ];then
         result=$(ash "$base/homegate-ddns-schedule.sh" status) || fail
         printf '%s\n' "$result";exit 0
     fi
-    attempt=$((attempt+1));sleep 0.1 || fail
+    attempt=$((attempt+1));sleep "$poll_delay" || fail
 done
 fail

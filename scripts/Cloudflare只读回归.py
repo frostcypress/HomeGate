@@ -15,7 +15,6 @@ class Static(PrivateCodec):
             body=(PROTO/name).read_bytes();self.assertNotIn(b'\r',body)
             self.assertFalse(parser.parse(body).root_node.has_error,name)
             self.assertEqual(body.count(b'dns_read_enabled=false'),1);self.assertNotIn(b'dns_read_enabled=true',body)
-        self.assertNotIn('prototype/',(ROOT/'project/core/Makefile').read_text())
 
     def test_fixed_tls_curl_and_no_arbitrary_command(self):
         body=(PROTO/'homegate-cloudflare-worker.sh').read_text()
@@ -118,7 +117,8 @@ class Runtime(BootstrapRuntime):
             elif name=='homegate-cloudflare-worker.sh':body=body.replace('--max-time 10','--max-time 0.5')
             elif name=='homegate-service-observer-watchdog.sh':
                 body=body.replace('action=cloudflare-check; budget=30','action=cloudflare-check; budget=2')
-                needle='sleep 0.001 >/dev/null 2>&1 || exit 1'
+                needle='if ! sleep 0.001 >/dev/null 2>&1; then'
+                self.assertEqual(body.count(needle),1)
                 body=body.replace(needle,'printf "%s\\n" "$$" > '+str(self.watchdog_pid)+'\n'+needle)
             # Copied fixture sources only: numeric/module diagnostics, never data.
             if name=='cloudflare-codec.lua':

@@ -25,7 +25,6 @@ class Static(unittest.TestCase):
         compile_lua((PROTO/'worker-process.lua').read_text())
         engine=(PROTO/'homegate-config-prototype.sh').read_text()
         self.assertEqual(engine.count('orphan_recovery_enabled=false'),1)
-        self.assertNotIn('prototype/',(ROOT/'project/core/Makefile').read_text())
 
     def test_anchor_precedes_active_fence_and_binding_preserves_boot(self):
         body=(PROTO/'homegate-config-prototype.sh').read_text()

@@ -30,7 +30,6 @@ class Static(unittest.TestCase):
         self.assertNotIn('os.getenv',lua)
         self.assertIn("require('luci.jsonc')",lua)
         self.assertNotIn('pidof',lua)
-        self.assertNotIn('prototype/',(ROOT/'project/core/Makefile').read_text())
 
     def test_lua51_source_compiles(self):
         from lupa.lua51 import LuaRuntime
@@ -84,7 +83,8 @@ class Runtime(unittest.TestCase):
         for name in ['homegate-service-observer.lua','homegate-service-observer-watchdog.sh']:
             file=fixture/name; body=file.read_text()
             for before,after in [('/etc/init.d/homegate',str(self.init)),('/etc/rc.common',str(self.common)),
-                                 ('/sbin/ubus',str(self.ubus)),('/usr/bin/homegate',str(self.executable))]:
+                                 ('/sbin/ubus',str(self.ubus)),('/bin/ubus',str(self.base/'bin-ubus')),
+                                 ('/usr/bin/homegate',str(self.executable))]:
                 self.assertIn(before,body) if before in ['/etc/init.d/homegate'] else None
                 body=body.replace(before,after)
             if name.endswith('.sh'):
@@ -116,7 +116,7 @@ class Runtime(unittest.TestCase):
 
     def query(self,doc,status=0,code=''):
         body=doc if isinstance(doc,str) else json.dumps(doc)
-        expected=['-t','2','-S','call','service','list','{"name":"homegate","verbose":true}']
+        expected=['-t','2','-S','call','service','list','{"name":"homegate"}']
         self.ubus.write_text('#!'+sys.executable+'\nimport os,sys,time,signal,json\nassert sys.argv[1:]=='+repr(expected)+'\n'+code+
                              '\nsys.stdout.write('+repr(body)+'); sys.stdout.flush(); sys.exit('+str(status)+')\n')
         self.ubus.chmod(0o700)

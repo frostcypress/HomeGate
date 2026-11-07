@@ -17,7 +17,6 @@ class Static(unittest.TestCase):
         self.assertIn('store=/etc/homegate/transactions',body)
         self.assertIn('HGSTORE1',body); self.assertIn('HGWRITEFENCE1',body)
         self.assertIn('Persistent bootstrap requires lifecycle migration',body)
-        self.assertNotIn('prototype/',(ROOT/'project/core/Makefile').read_text())
 
     def test_shell_syntax_and_guard_before_controller(self):
         import tree_sitter,tree_sitter_bash

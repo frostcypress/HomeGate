@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
-"""Read-only catalog CLI compatibility with an audited, pinned Go reference."""
+"""Read-only catalog CLI compatibility with independently frozen report samples."""
 import argparse
-import hashlib
 import json
 import os
 from pathlib import Path
@@ -18,13 +17,13 @@ COMMANDS = ('dns-provider-catalog', 'acme-ca-catalog')
 
 
 class Static(unittest.TestCase):
-    def test_reference_snapshot_is_bound_to_current_go_sources(self):
-        reference = json.loads(GOLDEN.read_text())
-        for name, expected in reference['reference_source_sha256'].items():
-            self.assertEqual(hashlib.sha256((ROOT / name).read_bytes()).hexdigest(), expected,
-                             'Review catalog fixture against changed Go reference: ' + name)
-        contract = json.loads((ROOT / 'docs/核心CLI合同.json').read_text())
+    def test_catalog_snapshot_covers_both_read_only_commands(self):
+        reference = json.loads(GOLDEN.read_text(encoding='utf-8'))
+        contract = json.loads((ROOT / 'docs/核心CLI合同.json').read_text(encoding='utf-8'))
+        self.assertEqual(reference['schema'], 1)
+        self.assertEqual(set(reference['catalogs']), set(COMMANDS))
         self.assertTrue(set(COMMANDS) <= set(contract['cli_commands']))
+        self.assertTrue(all(contract['argument_counts'][command] == [0] for command in COMMANDS))
 
     def test_catalog_grammar_and_no_business_execution(self):
         from lupa.lua51 import LuaRuntime
@@ -38,7 +37,6 @@ class Static(unittest.TestCase):
         self.assertEqual(cli.count('native_cli_enabled=false'), 1)
         self.assertLess(cli.index('exec 3>&-'), cli.index('catalog=$(lua'))
         self.assertLess(cli.index('[ "$(id -u)" = 0 ]'), cli.index('catalog=$(lua'))
-        self.assertNotIn('prototype/', (ROOT / 'project/core/Makefile').read_text())
 
     def test_existing_ci_entry_includes_both_catalog_partitions(self):
         body = (ROOT / 'scripts/DDNS生命周期CLI回归.py').read_text()

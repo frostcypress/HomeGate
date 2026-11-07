@@ -34,7 +34,7 @@ class Static(unittest.TestCase):
         b=(PROTO/'homegate-cli.sh').read_text();self.assertEqual(b.count('native_cli_enabled=false'),1)
         for text in ['eval ','kill ','curl ','daemon)','--confirm-closeouts']:self.assertNotIn(text,b)
         self.assertIn('exec 3>&- 4>&- 5>&- 6>&- 7>&- 8>&- 9>&-',b)
-        self.assertIn('[ "$(id -u)" = 0 ]',b);self.assertNotIn('prototype/',(PROTO.parent/'Makefile').read_text())
+        self.assertIn('[ "$(id -u)" = 0 ]',b)
     def test_lifecycle_holds_admission_lock_before_business_and_bootstrap(self):
         b=(PROTO/'homegate-lifecycle-prepare.sh').read_text()
         self.assertLess(b.index('schedule_file ||'),b.index('exec 9>>'))

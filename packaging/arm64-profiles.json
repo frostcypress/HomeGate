@@ -1,5 +1,0 @@
-{
-  "goarch": "arm64",
-  "goarm64": "v8.0",
-  "package_architectures": ["aarch64", "aarch64_generic", "aarch64_cortex-a53", "aarch64_cortex-a72"]
-}

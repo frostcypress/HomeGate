@@ -37,14 +37,9 @@ class Static(unittest.TestCase):
         body = (PROTO / 'homegate-health.lua').read_text()
         for word in ['io.popen', 'os.execute', 'kill ', '/sbin/ubus', 'curl ']:
             self.assertNotIn(word, body)
-        main = (ROOT / 'project/core/src/cmd/homegate/main.go').read_text()
-        check = main.split('case "check":', 1)[1].split('\n\tcase ', 1)[0]
-        self.assertIn('if checkErr != nil', check)
-        status = main.split('case "status":', 1)[1].split('\n\tcase ', 1)[0]
-        self.assertNotIn('if !', status)
-        report = (ROOT / 'project/core/src/internal/status/status.go').read_text()
-        self.assertIn('report.Service.Enabled == report.Service.Running', report)
-        self.assertNotIn('prototype/', (PROTO.parent / 'Makefile').read_text())
+        exits = json.loads((ROOT / 'docs/核心CLI合同.json').read_text(encoding='utf-8'))['diagnostic_exit_codes']
+        self.assertEqual(exits['status'], {'healthy': 0, 'unhealthy': 0})
+        self.assertEqual(exits['check'], {'healthy': 0, 'unhealthy': 1})
 
     def test_health_truth_table_and_configuration_error_precedence(self):
         lua, codec, model = models()

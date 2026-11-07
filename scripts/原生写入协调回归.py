@@ -45,7 +45,6 @@ class Static(unittest.TestCase):
         self.assertNotIn('handler',lua.globals().captured.body)
         body=SHELL.read_text(); self.assertEqual(body.count('native_dispatch_enabled=false'),1)
         self.assertNotIn('os.getenv',MODEL.read_text())
-        self.assertNotIn('prototype/',(ROOT/'project/core/Makefile').read_text())
 
     def test_lua_and_shell_syntax_and_fixed_dispatch(self):
         import tree_sitter,tree_sitter_bash

@@ -11,7 +11,6 @@ class Static(RecoveryStatic):
         for name in ['homegate-dns-checkpoint-repair.sh','homegate-cloudflare-read.sh']:
             body=(PROTO/name).read_bytes();self.assertNotIn(b'\r',body);self.assertFalse(parser.parse(body).root_node.has_error)
             self.assertEqual(body.count(b'dns_checkpoint_repair_enabled=false'),1)
-        self.assertNotIn('prototype/',(PROTO.parent/'Makefile').read_text())
         self.lua.compile((PROTO/'cloudflare-records.lua').read_bytes())
     def test_no_network_deletion_or_volatile_inference(self):
         body=(PROTO/'homegate-dns-checkpoint-repair.sh').read_text()

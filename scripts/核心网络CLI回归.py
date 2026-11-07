@@ -37,7 +37,6 @@ class Static(unittest.TestCase):
         self.assertIn('sys_root=/sys/class/net', worker)
         self.assertIn('"$count" -le 1024', worker)
         self.assertNotIn('eval ', worker)
-        self.assertNotIn('prototype/', (PROTO.parent / 'Makefile').read_text())
 
     def test_pure_ipv6_compression_and_lan_frame_against_independent_ipaddress(self):
         from lupa.lua51 import LuaRuntime
@@ -56,13 +55,10 @@ class Static(unittest.TestCase):
             self.assertIsNone(model.lan(invalid, 'br-lan', wan))
 
     def test_reference_report_and_legacy_diagnostic_exit_semantics(self):
-        report = (ROOT / 'project/core/src/internal/network/report.go').read_text()
-        self.assertEqual(set(re.findall(r'json:"([^",]+)', report)),
+        contract = json.loads((ROOT / 'docs/核心CLI合同.json').read_text(encoding='utf-8'))
+        self.assertEqual(set(contract['report_fields']['network-resolve']),
                          {'api_version', 'ok', 'version', 'phase', 'network', 'error'})
-        main = (ROOT / 'project/core/src/cmd/homegate/main.go').read_text()
-        branch = main.split('case "network-resolve":', 1)[1].split('\n\tcase ', 1)[0]
-        self.assertIn('api.WriteJSON(os.Stdout, a.NetworkStatus(ctx))', branch)
-        self.assertNotIn('if !report.OK', branch)
+        self.assertEqual(contract['diagnostic_exit_codes']['network-resolve'], {'available': 0, 'unavailable': 0})
         from DDNS生命周期CLI回归 import build_suite
         self.assertEqual([test.id() for test in build_suite(False) if isinstance(test, Static)],
                          [test.id() for test in suite(False)])

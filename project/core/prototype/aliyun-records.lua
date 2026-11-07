@@ -7,14 +7,16 @@ M.codes={invalid_operation=true,generation_mismatch=true,resource_missing=true,a
 M.codes.invalid_context=true
 local function integer(n,a,b)return type(n)=='number' and n==math.floor(n) and n>=a and n<=b end
 local function id(s)return type(s)=='string' and #s>=1 and #s<=64 and not s:find('[^0-9]') end
+local record_status={Enable='Enable',ENABLE='Enable',Disable='Disable',DISABLE='Disable'}
 function M.record(c,r,plan)
+    local status=type(r)=='table' and type(r.Status)=='string' and record_status[r.Status]
     if type(r)~='table' or not id(r.RecordId) or type(r.DomainName)~='string' or r.DomainName:lower():gsub('%.$','')~=c.zone or
         type(r.RR)~='string' or r.RR:lower()~=c.rr or r.Type~=c.type or type(r.Value)~='string' or #r.Value>4096 or r.Value:find('[%z\1-\31\127]') or
         not integer(r.TTL,1,86400) or type(r.Line)~='string' or #r.Line<1 or #r.Line>128 or r.Line:find('[^A-Za-z0-9_-]') or
-        type(r.Locked)~='boolean' or (r.Status~='Enable' and r.Status~='Disable') then return nil end
+        type(r.Locked)~='boolean' or not status then return nil end
     local key=r.Value;if c.type=='AAAA' then key=plan.ipv6(r.Value) end
     if not key then return nil end
-    return {id=r.RecordId,key=key,value=r.Value,rr=r.RR,line=r.Line,ttl=r.TTL,locked=r.Locked,status=r.Status,
+    return {id=r.RecordId,key=key,value=r.Value,rr=r.RR,line=r.Line,ttl=r.TTL,locked=r.Locked,status=status,
         match=c.delete_all or key==(c.value_key or c.value)}
 end
 function M.report(account,revision,kind,retry,code,result,effect,affected)

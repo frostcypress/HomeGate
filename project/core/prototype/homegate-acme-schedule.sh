@@ -100,6 +100,8 @@ info=$(lua "$HG_DIR/worker-process.lua" info "$$" "$token") || fail
 old_ifs=$IFS;IFS=:;set -- $info;IFS=$old_ifs
 [ "$#" -eq 6 ] && [ "$3" = "$$" ] && [ "$4" = "$$" ] && [ "$6" = 1 ] || fail
 checks=0;next_check=0;current=;last_now=0;interrupted=false
+poll_delay=0.25
+if ! sleep 0.001 >/dev/null 2>&1;then sleep 0 >/dev/null 2>&1 || fail;poll_delay=1;fi
 trap 'interrupted=true' TERM INT
 finish() { unlock;next_check=0;emit "$1" || fail;exit "$2"; }
 while :;do
@@ -122,7 +124,7 @@ while :;do
    raw=$(ash "$HG_DIR/homegate-acme-job.sh" status "$current" 9>&-) || finish failed 7
    # Terminal validation accepts only this certificate's complete success or
    # no-op. Interruption/unknown ends this session without a new order.
-   if printf '%s\n' "$raw" | lua "$HG_DIR/homegate-acme.lua" session-pending >/dev/null;then sleep 0.25 || :;continue;fi
+   if printf '%s\n' "$raw" | lua "$HG_DIR/homegate-acme.lua" session-pending >/dev/null;then sleep "$poll_delay" || :;continue;fi
    if stopping || [ "$interrupted" = true ];then finish stopped 0;fi
    printf '%s\n' "$raw" | lua "$HG_DIR/homegate-acme.lua" session-result || finish failed 4
    break

@@ -19,7 +19,6 @@ class Static(unittest.TestCase):
         lua=LuaRuntime();lua.compile((PROTO/'dnspod-reader.lua').read_bytes());parser=tree_sitter.Parser(tree_sitter.Language(tree_sitter_bash.language()))
         for name,gate in [('homegate-dnspod-read.sh','dnspod_entry_enabled'),('homegate-dnspod-worker.sh','dnspod_read_enabled'),('homegate-cloudflare-read.sh','dnspod_read_enabled'),('homegate-service-observer-watchdog.sh','dnspod_read_enabled')]:
             body=(PROTO/name).read_bytes();self.assertNotIn(b'\r',body);self.assertFalse(parser.parse(body).root_node.has_error,name);self.assertEqual(body.count((gate+'=false').encode()),1)
-        self.assertNotIn('prototype/',(PROTO.parent/'Makefile').read_text())
     def test_tc3_digest_injection_matches_independent_hmac(self):
         from lupa.lua51 import LuaRuntime
         lua=LuaRuntime(encoding=None);lua.globals().ali_body=(PROTO/'aliyun-reader.lua').read_bytes()

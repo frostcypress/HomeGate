@@ -13,7 +13,6 @@ class Static(TerminalStatic):
         for name in ['homegate-dnspod-read.sh','homegate-cloudflare-read.sh']:
             for gate in GATES:self.assertEqual((PROTO/name).read_text().count(gate+'=false'),1)
         for name in ['dnspod-checkpoint.lua','dnspod-reconcile-plan.lua']:self.lua.compile((PROTO/name).read_bytes())
-        self.assertNotIn('prototype/',(PROTO.parent/'Makefile').read_text())
     def test_orphan_requires_exact_frozen_request_verified_stage_and_id(self):
         c=self.context();w=self.context();w[b'stage']=b'verify-CreateRecord';w[b'last_id']=b'5000'
         self.assertTrue(self.recovery.orphan(c,w,c[b'request'],self.codec.json))

@@ -4,7 +4,6 @@ import argparse
 import json
 import math
 import os
-import re
 import subprocess
 import unittest
 from urllib.parse import parse_qs, urlsplit
@@ -34,9 +33,8 @@ class Static(unittest.TestCase):
         self.assertNotIn('io.popen', body)
 
     def test_old_zone_report_fields_and_existing_ci_entry(self):
-        text = (ROOT / 'project/core/src/internal/app/app.go').read_text()
-        fields = text.split('type DNSZonesReport struct {', 1)[1].split('\n}', 1)[0]
-        self.assertEqual(set(re.findall(r'json:"([^",]+)', fields)),
+        report = json.loads((ROOT / 'docs/核心CLI合同.json').read_text(encoding='utf-8'))['report_fields']['dns-zones']
+        self.assertEqual(set(report),
                          {'api_version', 'ok', 'version', 'phase', 'account', 'provider', 'capabilities',
                           'zones', 'error', 'error_kind', 'retryable', 'provider_code'})
         from DDNS生命周期CLI回归 import build_suite

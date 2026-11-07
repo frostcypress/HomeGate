@@ -41,7 +41,6 @@ class Static(PlanStatic):
         for name in ['aliyun-reconcile-plan.lua','aliyun-checkpoint.lua']:self.lua.compile((PROTO/name).read_bytes())
         body=(PROTO/'homegate-dns-receipt.sh').read_text();self.assertIn('HGALIJOURNAL1',body)
         self.assertLess(body.index('fsync "$stage/context"'),body.index('mv "$stage" "$inactive"'))
-        self.assertNotIn('prototype/',(ROOT/'project/core/Makefile').read_text())
 
 class Runtime(RecordRuntime):
     def contents(self):
@@ -96,7 +95,11 @@ class Runtime(RecordRuntime):
         self.hook=lambda action,q:seen.append(self.active()[0]['stage']) if action=='AddDomainRecord' else None
         self.records();self.assertEqual(seen,['AddDomainRecord']);self.active();self.blocked()
     def test_applied_create_observed_without_acknowledgement(self):
-        self.pending();self.assertEqual(self.reconcile()['observation'],'desired-present');self.assertEqual(self.reconcile(durable=True)['observation'],'desired-present');self.blocked()
+        self.pending()
+        for row in self.db.values():row['Status']='ENABLE'
+        self.assertEqual(self.reconcile()['observation'],'desired-present')
+        self.assertEqual(self.reconcile(durable=True)['observation'],'desired-present')
+        self.blocked()
     def test_unapplied_create_is_absent_without_retry(self):
         self.pending(apply=False);self.assertEqual(self.reconcile(durable=True)['observation'],'desired-absent');self.assertEqual(self.db,{})
     def test_txt_observation_preserves_other_challenges(self):

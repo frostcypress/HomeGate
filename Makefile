@@ -1,18 +1,16 @@
-.PHONY: check frontend reference-check draft
+.PHONY: check frontend draft
+
+PYTHON ?= python3
 
 check:
-	python3 scripts/project.py --check
-	python3 scripts/native-target-audit-regressions.py
-	python3 scripts/重构回归.py
-	python3 scripts/导航安全回归.py
-	python3 scripts/frontend-source-regressions.py
+	$(PYTHON) scripts/project.py --check
+	$(PYTHON) scripts/native-target-audit-regressions.py
+	$(PYTHON) scripts/重构回归.py
+	$(PYTHON) scripts/导航安全回归.py
+	$(PYTHON) scripts/frontend-source-regressions.py
 
 frontend:
-	python3 scripts/sync-frontend.py
-	python3 scripts/build-js-views.py
-
-reference-check:
-	cd project/core/src && go test -mod=vendor ./... && go vet -mod=vendor ./...
+	$(PYTHON) scripts/build-js-views.py
 
 draft:
-	python3 scripts/生成接续包.py --target pending --stage 规范迁移 --draft
+	$(PYTHON) scripts/生成接续包.py --target pending --stage 规范迁移 --draft

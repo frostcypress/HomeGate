@@ -28,7 +28,6 @@ class Static(unittest.TestCase):
         LuaRuntime().compile((PROTO/'huaweicloud-reader.lua').read_bytes());parser=tree_sitter.Parser(tree_sitter.Language(tree_sitter_bash.language()))
         for name,gate in [('homegate-huaweicloud-read.sh','huaweicloud_entry_enabled'),('homegate-huaweicloud-worker.sh','huaweicloud_read_enabled'),('homegate-cloudflare-read.sh','huaweicloud_read_enabled'),('homegate-service-observer-watchdog.sh','huaweicloud_read_enabled')]:
             body=(PROTO/name).read_bytes();self.assertNotIn(b'\r',body);self.assertFalse(parser.parse(body).root_node.has_error,name);self.assertEqual(body.count((gate+'=false').encode()),1)
-        self.assertNotIn('prototype/',(PROTO.parent/'Makefile').read_text())
     def test_signature_against_independent_hashlib_and_long_keys(self):
         _,m=self.library()
         for key in [b'k',b'x'*64,b'x'*80,b'x'*4096]:

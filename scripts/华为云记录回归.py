@@ -16,7 +16,6 @@ class Static(unittest.TestCase):
         for n in ['homegate-huaweicloud-read.sh','homegate-huaweicloud-worker.sh','homegate-cloudflare-read.sh','homegate-service-observer-watchdog.sh']:
             b=(PROTO/n).read_bytes();self.assertNotIn(b'\r',b);self.assertFalse(parser.parse(b).root_node.has_error,n);self.assertEqual(b.count(b'huaweicloud_records_enabled=false'),1)
         for n in ['huaweicloud-reader.lua','huaweicloud-records.lua','cloudflare-codec.lua']:lua.compile((PROTO/n).read_bytes())
-        self.assertNotIn('prototype/',(PROTO.parent/'Makefile').read_text())
     def test_txt_quoted_segments_round_trip_and_refuse_ambiguous_escapes(self):
         from lupa.lua51 import LuaRuntime
         m=LuaRuntime().execute((PROTO/'huaweicloud-records.lua').read_text())

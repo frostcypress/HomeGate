@@ -39,7 +39,6 @@ class Static(unittest.TestCase):
         self.assertNotIn('$run/recovery.json', helper)
         self.assertNotIn('curl ', helper)
         self.assertEqual((PROTO / 'homegate-ddns-state.sh').read_text().count('publish_recovery || fail'), 3)
-        self.assertNotIn('prototype/', (PROTO.parent / 'Makefile').read_text())
 
     def test_real_cache_states_project_without_fabricated_attempts_or_retry_queue(self):
         c = self.lua.table_from(dict(rule='rule', provider='cloudflare', revision=1, identity='a'*64,

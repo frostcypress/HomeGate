@@ -40,7 +40,6 @@ class Static(BaseStatic):
         self.assertIn(b'HGDDNSAUTH1',body);self.assertIn(b'HGDDNSAUTH2',body)
         self.assertIn('snapshot-rule "$rule"',(PROTO/'homegate-ddns-read.sh').read_text())
         for name in ['ddns-authority.lua','homegate-ddns-authority.lua']:self.lua.compile((PROTO/name).read_bytes())
-        self.assertNotIn('prototype/',(PROTO.parent/'Makefile').read_text())
 
 class Runtime(BaseRuntime):
     def setUp(self):

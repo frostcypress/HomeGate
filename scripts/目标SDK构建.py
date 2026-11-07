@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build with a verified SDK; refuse the transitional Go implementation."""
+"""Build the native packages after target and migration acceptance."""
 import argparse
 import hashlib
 import importlib.util
@@ -12,6 +12,7 @@ import tarfile
 import tempfile
 import urllib.request
 from project import ROOT, identity
+from production_runtime import stage_sdk
 
 
 def load_script(name):
@@ -24,6 +25,8 @@ def load_script(name):
 def build(target_file, frontend, fmt):
     target = json.loads(target_file.read_text(encoding='utf-8'))
     actual = load_script('检查发布条件').validate(target, frontend, fmt)
+    if (frontend, actual) != ('lua', 'ipk'):
+        raise ValueError('当前原生配方只接通 Lua LuCI 与 IPK，所选组合尚未完成构建接合')
     item = identity()
     destination = ROOT / 'dist/target'
     if destination.exists():
@@ -36,24 +39,30 @@ def build(target_file, frontend, fmt):
             raise ValueError('SDK SHA-256 mismatch')
         extracted = work / 'sdk'
         extracted.mkdir()
+        with archive.open('rb') as stream:
+            compressed_with_zstd = stream.read(4) == b'\x28\xb5\x2f\xfd'
+        if compressed_with_zstd:
+            tar_path = work / 'sdk-uncompressed.tar'
+            with tar_path.open('xb') as stream:
+                subprocess.run(['zstd', '-d', '-c', str(archive)], stdout=stream, check=True, timeout=120)
+            archive = tar_path
         with tarfile.open(archive) as bundle:
             bundle.extractall(extracted, filter='data')
         roots = [p.parent for p in extracted.glob('*/rules.mk')]
         if len(roots) != 1:
             raise ValueError('SDK root is ambiguous')
         sdk = roots[0]
-        packages = sdk / 'package'
-        shutil.copytree(ROOT / 'project/core', packages / (item['slug'] + '-core'))
-        shutil.copytree(ROOT / 'project/luci', packages / ('luci-app-' + item['slug']))
-        shutil.copy2(ROOT / 'homegate-version.mk', sdk)
-        shutil.copy2(ROOT / 'LICENSE', sdk)
-        environment = dict(os.environ, HOMEGATE_LUCI_VARIANT=frontend)
-        for command in (['./scripts/feeds', 'update', '-a'], ['./scripts/feeds', 'install', '-a'],
-                        ['make', 'defconfig'], ['make', f"package/{item['slug']}-core/compile", 'V=s', '-j2'],
-                        ['make', f"package/luci-app-{item['slug']}/compile", 'V=s', '-j2']):
-            subprocess.run(command, cwd=sdk, env=environment, check=True)
-        found = []
+        stage_sdk(ROOT, sdk)
         names = (item['slug'] + '-core', 'luci-app-' + item['slug'], 'luci-i18n-' + item['slug'] + '-zh-cn')
+        components = ('homegate-nginx', 'homegate-wol')
+        with (sdk / '.config').open('a', encoding='utf-8') as config:
+            config.write('\n' + ''.join(f'CONFIG_PACKAGE_{name}=y\n' for name in (*names, *components)))
+        for command in (['./scripts/feeds', 'update', '-a'], ['./scripts/feeds', 'install', '-a'],
+                        ['make', 'defconfig'],
+                        *(['make', f'package/{package}/compile', 'V=s', '-j2']
+                          for package in (*components, 'homegate-native-candidate'))):
+            subprocess.run(command, cwd=sdk, check=True)
+        found = []
         for file in (sdk / 'bin').rglob('*.' + actual):
             if any(file.name.startswith(name + ('_' if actual == 'ipk' else '-')) for name in names):
                 found.append(file)
@@ -64,7 +73,7 @@ def build(target_file, frontend, fmt):
         for file in found:
             shutil.copy2(file, staged)
         _, report = load_script('检查三包').inspect(staged, item['slug'], item['normalized'], actual,
-                                                  target['architecture'], os.environ.get('HOMEGATE_APK_TOOL', 'apk'))
+                                                  'all')
         destination.mkdir(parents=True)
         for file in staged.iterdir():
             shutil.copy2(file, destination)

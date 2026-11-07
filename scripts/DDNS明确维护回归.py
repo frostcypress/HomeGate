@@ -19,7 +19,6 @@ class Static(unittest.TestCase):
   import tree_sitter,tree_sitter_bash
   parser=tree_sitter.Parser(tree_sitter.Language(tree_sitter_bash.language()));self.assertFalse(parser.parse((PROTO/'homegate-ddns-job.sh').read_bytes()).root_node.has_error)
   for n in ['homegate-ddns-job.lua','ddns-job.lua','ddns-ui-policy.lua']:LuaRuntime().compile((PROTO/n).read_bytes())
-  for n in ['core','luci']:self.assertNotIn('prototype/',(ROOT/'project'/n/'Makefile').read_text())
 class MaintainMixin:
  def setUp(self):
   super().setUp();self.job_helper.write_text(self.job_helper.read_text().replace('ddns_ui_maintenance_enabled=false','ddns_ui_maintenance_enabled=true'))

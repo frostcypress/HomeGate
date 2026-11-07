@@ -1060,9 +1060,21 @@ service_preflight() {
     production_source_lock
     projection_file_state
     [ ! -e /tmp/.homegate-package-upgrade-state ] && [ ! -L /tmp/.homegate-package-upgrade-state ] || fail 'Package lifecycle is active' 4
-    for file in /etc/init.d/homegate /etc/rc.common /sbin/ubus /sbin/uci /usr/bin/homegate; do
+    local ubus=/sbin/ubus
+    if [ ! -e "$ubus" ] && [ ! -L "$ubus" ]; then ubus=/bin/ubus; fi
+    for file in /etc/init.d/homegate /etc/rc.common "$ubus" /sbin/uci /usr/bin/homegate; do
         [ -f "$file" ] && [ ! -L "$file" ] && [ -x "$file" ] || fail 'Service dependency is unavailable' 7
-        case "$(stat -c '%u:%a:%h' "$file")" in "$owner:700:1"|"$owner:755:1") ;; *) fail 'Unsafe service dependency' 7;; esac
+        case "$(stat -c '%u:%g:%a:%h' "$file")" in
+            "$owner":*:700:1|"$owner":*:755:1) ;;
+            0:0:775:1)
+                # QWRT ships this fixed init helper group-writable by root.
+                # Local accounts without UID 0 must not have that group.
+                [ "$file" = /etc/rc.common ] && awk -F: '
+                    FILENAME == ARGV[1] && $3 == 0 && $4 != "" && $4 != "root" { exit 1 }
+                    FILENAME == ARGV[2] && $4 == 0 && $3 != 0 { exit 1 }
+                ' /etc/group /etc/passwd || fail 'Unsafe service dependency' 7;;
+            *) fail 'Unsafe service dependency' 7;;
+        esac
     done
     service_action precheck
     projection_file_state

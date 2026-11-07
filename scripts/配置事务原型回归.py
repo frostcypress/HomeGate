@@ -41,7 +41,6 @@ class Static(unittest.TestCase):
                     self.assertNotIn(command, {'eval', '.', 'source', 'uci', 'curl', 'wget',
                         'service', 'nft', 'ip6tables', 'reboot', 'logger', 'go', 'python3'})
             nodes.extend(node.named_children)
-        self.assertNotIn('prototype/', (ROOT / 'project/core/Makefile').read_text())
 
 
 class Runtime(unittest.TestCase):

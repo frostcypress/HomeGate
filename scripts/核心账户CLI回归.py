@@ -30,7 +30,6 @@ class Static(unittest.TestCase):
         LuaRuntime().compile((PROTO / 'homegate-dns-status.lua').read_bytes())
         self.assertEqual((PROTO / 'homegate-dns-status.sh').read_text().count('dns_status_cli_enabled=false'), 1)
         self.assertEqual((PROTO / 'homegate-cloudflare-read.sh').read_text().count('dns_status_read_enabled=false'), 1)
-        self.assertNotIn('prototype/', (PROTO.parent / 'Makefile').read_text())
 
     def test_original_transport_crypto_and_supervision_are_reused(self):
         body = (PROTO / 'homegate-dns-status.sh').read_text()
@@ -43,12 +42,10 @@ class Static(unittest.TestCase):
         self.assertIn('[ "$(select_provider)" = "$provider" ] || fail', body)
 
     def test_public_result_contract_still_has_original_required_fields(self):
-        source = (ROOT / 'project/core/src/internal/app/app.go').read_text()
-        fields = source.split('type DNSProviderReport struct {', 1)[1].split('\n}', 1)[0]
-        expected = {'api_version', 'ok', 'version', 'phase', 'account', 'provider', 'capabilities',
-                    'credentials_valid', 'error', 'error_kind', 'retryable', 'provider_code'}
-        self.assertEqual(set(re.findall(r'json:"([^",]+)', fields)), expected)
-        cli = (ROOT / 'scripts/DDNS生命周期CLI回归.py').read_text()
+        report = json.loads((ROOT / 'docs/核心CLI合同.json').read_text(encoding='utf-8'))['report_fields']['dns-provider-status']
+        self.assertEqual(set(report), {'api_version', 'ok', 'version', 'phase', 'account', 'provider',
+                                      'capabilities', 'credentials_valid', 'error', 'error_kind',
+                                      'retryable', 'provider_code'})
         from DDNS生命周期CLI回归 import build_suite
         self.assertEqual([test.id() for test in build_suite(False) if isinstance(test, Static)],
                          [test.id() for test in suite(False)])

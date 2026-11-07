@@ -38,7 +38,7 @@ python3 scripts/native-target-audit.py --target targets/qwrt-r26.3.8-ipq807x.jso
 | JS 候选页面 | 本地页面与边界夹具 | 实际 ucode 模块导入、rpcd 加载、会话 ACL 与拒绝路径 |
 | 生产与三包 | 发布条件检查会拒绝当前草稿 | Shell/C 完整迁移、Core 包名/升级契约、生产配置及生命周期接管，再从同提交构建 Core/LuCI/中文三包 |
 
-`project/core/Makefile` 仍构建 Go 对照核心并声明旧 Core 包名，生产 LuCI 配方不安装 `project/luci/prototype`；不能仅填 SDK URL、安装候选文件或打开门禁就绕过这些条件。
+原生三包及组件通过 `packaging/production` 和 `packaging/components` 接入 SDK。当前已接通 Lua LuCI 与 IPK，其他组合需独立验收。完整迁移和目标门禁由 `scripts/检查发布条件.py` 执行。
 
 ## 目标设备上的只读核实
 

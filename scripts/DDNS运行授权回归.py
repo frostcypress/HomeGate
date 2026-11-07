@@ -61,7 +61,6 @@ class Static(PlanStatic):
                 if name:self.assertNotIn(name.text.strip(),[b'source',b'.'])
             for child in node.named_children:check_commands(child)
         check_commands(parser.parse(s.encode()).root_node)
-        self.assertNotIn('prototype/',(PROTO.parent/'Makefile').read_text())
 
 class Runtime(ServiceRuntime):
     def setUp(self):

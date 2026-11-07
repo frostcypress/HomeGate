@@ -57,6 +57,8 @@ if [ "$action" = work ] || [ "$action" = work-cleanup ];then
  mode=$(cat "$HG_PATH/mode");case "$mode" in issue) ;;renew)
   due=$(ash "$HG_DIR/homegate-certificate.sh" acme-status-internal "$certificate" "$HG_JOB" --confirm | lua "$HG_DIR/homegate-acme.lua" renew-due "$HG_JOB") || fail
   if [ "$due" = skip ];then publish_result skipped false;exit 0;fi;;*) fail;;esac
+ poll_delay=0.05
+ if ! sleep 0.001 >/dev/null 2>&1;then sleep 0 >/dev/null 2>&1 || fail;poll_delay=1;fi
  ash "$HG_DIR/homegate-acme-client.sh" "$HG_JOB" > "$HG_PATH/client.output" 2>&1 & child=$!
  while :;do
   info=$(lua "$HG_DIR/worker-process.lua" info "$child" none) || stopping=true
@@ -66,7 +68,7 @@ if [ "$action" = work ] || [ "$action" = work-cleanup ];then
    # Unknown work is kept. Do not publish a certificate or retry the order.
    kill -TERM -- "-$$" 2>/dev/null || :;sleep 1;kill -KILL -- "-$$" 2>/dev/null;exit 1
   fi
-  sleep 0.05 || stopping=true
+  sleep "$poll_delay" || stopping=true
  done
  rc=0;wait "$child" || rc=$?
  members=$(lua "$HG_DIR/worker-process.lua" group "$$" "$$") || fail

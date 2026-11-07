@@ -11,7 +11,6 @@ class Static(RecordStatic):
         for name in ['homegate-dns-recovery.sh','homegate-cloudflare-read.sh']:
             body=(PROTO/name).read_bytes();self.assertNotIn(b'\r',body);self.assertFalse(parser.parse(body).root_node.has_error)
             self.assertEqual(body.count(b'dns_terminal_repair_enabled=false'),1)
-        self.assertNotIn('prototype/',(PROTO.parent/'Makefile').read_text())
     def test_repair_is_fixed_pair_publication_without_remote_calls_or_deletion(self):
         body=(PROTO/'homegate-dns-recovery.sh').read_text().split('    repair-terminal)\n',1)[1].split('    retire-check)\n',1)[0]
         for forbidden in ['rm ','curl','work/zones','mkdir ','eval ']:self.assertNotIn(forbidden,body)

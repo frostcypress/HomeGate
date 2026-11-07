@@ -39,7 +39,6 @@ class Static(unittest.TestCase):
         body=(PROTO/'homegate-lifecycle-prepare.sh').read_text()
         self.assertIn('lifecycle_intent_check_enabled=false',body)
         for forbidden in ['projection-publish','migration-source-commit','service restart','kill ']:self.assertNotIn(forbidden,body)
-        self.assertNotIn('prototype/',(PROTO.parent/'Makefile').read_text())
 
 class Request:
     def setUp(self):

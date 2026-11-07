@@ -15,7 +15,6 @@ class Static(unittest.TestCase):
         self.assertIn('store=/etc/homegate/transactions',body)
         self.assertIn('stage=/etc/homegate/.transactions-bootstrap',body)
         self.assertIn('unset IPKG_INSTROOT INIT_TRACE LUA_INIT LUA_PATH LUA_CPATH HOMEGATE_CONFIG_PROTO_STORE',body)
-        self.assertNotIn('prototype/',(ROOT/'project/core/Makefile').read_text())
 
     def test_shell_grammar_and_no_business_or_recursive_removal(self):
         import tree_sitter,tree_sitter_bash

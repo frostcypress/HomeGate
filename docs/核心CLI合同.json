@@ -1,8 +1,8 @@
 {
   "schema": 1,
-  "status": "reference-inventory-not-migration-acceptance",
-  "source": "project/core/src/cmd/homegate/main.go",
-  "source_sha256": "87dab27b7257f46e4b23c830cc357044c290efa88cc11ee49d0b24375bcea083",
+  "status": "frozen-interface-contract-not-migration-acceptance",
+  "source": "HomeGate r180 CI85 interface baseline (2a8fb00ec3b2c5929307a91a0ef77c20d87c8294)",
+  "source_sha256": "45547065bc7e8ff552e1184cf5576b117ac330184c182d7c642cb8aac3829b3c",
   "api_version": 1,
   "cli_commands": [
     "access-clear-all",
@@ -238,5 +238,370 @@
     "M20": "not-run",
     "M21": "not-run",
     "M22": "not-run"
-  }
+  },
+  "argument_counts": {
+    "access-clear-all": [
+      0
+    ],
+    "access-clear-denied": [
+      0
+    ],
+    "access-clear-entry": [
+      2
+    ],
+    "access-recent": [
+      0
+    ],
+    "access-refresh": [
+      1
+    ],
+    "access-status": [
+      0
+    ],
+    "access-update": [
+      1
+    ],
+    "access-validate-file": [
+      1
+    ],
+    "acme-ca-catalog": [
+      0
+    ],
+    "acme-ca-status": [
+      1,
+      2
+    ],
+    "cert-import": [
+      3
+    ],
+    "cert-renew": [
+      0,
+      1
+    ],
+    "cert-status": [
+      0
+    ],
+    "check": [
+      0
+    ],
+    "daemon": [
+      0
+    ],
+    "ddns-delete": [
+      1
+    ],
+    "ddns-status": [
+      0
+    ],
+    "ddns-sync": [
+      0,
+      1
+    ],
+    "dns-check-private": [
+      1
+    ],
+    "dns-provider-catalog": [
+      0
+    ],
+    "dns-provider-status": [
+      1
+    ],
+    "dns-zones": [
+      1
+    ],
+    "firewall-apply": [
+      0
+    ],
+    "firewall-cleanup": [
+      0
+    ],
+    "firewall-status": [
+      0
+    ],
+    "log-events": [
+      0,
+      1
+    ],
+    "network-resolve": [
+      0
+    ],
+    "proxy-status": [
+      0
+    ],
+    "recovery-status": [
+      0
+    ],
+    "selftest": [
+      0
+    ],
+    "status": [
+      0
+    ],
+    "version": [
+      0
+    ],
+    "web-job": [
+      1
+    ],
+    "web-job-ack": [
+      1
+    ],
+    "web-job-status": [
+      1
+    ],
+    "web-read": [
+      1
+    ],
+    "web-submit": [
+      1
+    ],
+    "wol": [
+      1,
+      2
+    ],
+    "wol-status": [
+      0
+    ]
+  },
+  "report_fields": {
+    "selftest": {
+      "api_version": "integer",
+      "version": "string",
+      "ok": "boolean",
+      "duration_ms": "integer",
+      "cases": "array"
+    },
+    "status": {
+      "api_version": "integer",
+      "ok": "boolean",
+      "version": "string",
+      "phase": "string",
+      "service": "service-state",
+      "runtime": "any?",
+      "error": "string?"
+    },
+    "service-state": {
+      "configured": "boolean",
+      "enabled": "boolean",
+      "running": "boolean",
+      "healthy": "boolean"
+    },
+    "recovery-status": {
+      "api_version": "integer",
+      "ok": "boolean",
+      "version": "string",
+      "phase": "string",
+      "degraded": "boolean",
+      "modules": "array"
+    },
+    "network-resolve": {
+      "api_version": "integer",
+      "ok": "boolean",
+      "version": "string",
+      "phase": "string",
+      "network": "any",
+      "error": "string?"
+    },
+    "dns-provider-catalog": {
+      "api_version": "integer",
+      "ok": "boolean",
+      "version": "string",
+      "phase": "string",
+      "providers": "array"
+    },
+    "acme-ca-catalog": {
+      "api_version": "integer",
+      "ok": "boolean",
+      "version": "string",
+      "phase": "string",
+      "cas": "array"
+    },
+    "dns-provider-status": {
+      "api_version": "integer",
+      "ok": "boolean",
+      "version": "string",
+      "phase": "string",
+      "account": "string",
+      "provider": "string?",
+      "capabilities": "array",
+      "credentials_valid": "boolean",
+      "error": "string?",
+      "error_kind": "string?",
+      "retryable": "boolean?",
+      "provider_code": "string?"
+    },
+    "dns-zones": {
+      "api_version": "integer",
+      "ok": "boolean",
+      "version": "string",
+      "phase": "string",
+      "account": "string",
+      "provider": "string?",
+      "capabilities": "array?",
+      "zones": "array",
+      "error": "string?",
+      "error_kind": "string?",
+      "retryable": "boolean?",
+      "provider_code": "string?"
+    },
+    "ddns-status": {
+      "api_version": "integer",
+      "ok": "boolean",
+      "version": "string",
+      "phase": "string",
+      "updated_at": "string?",
+      "interval_seconds": "integer",
+      "results": "array",
+      "error": "string?"
+    },
+    "ddns-result": {
+      "rule": "string",
+      "name": "string",
+      "domain": "string",
+      "ip": "string?",
+      "status": "string",
+      "message": "string?",
+      "error_kind": "string?",
+      "retryable": "boolean?",
+      "provider_code": "string?",
+      "at": "string"
+    },
+    "cert-status": {
+      "api_version": "integer",
+      "ok": "boolean",
+      "version": "string",
+      "phase": "string",
+      "certificates": "array",
+      "error": "string?"
+    },
+    "certificate-status-entry": {
+      "id": "string",
+      "name": "string?",
+      "source": "string",
+      "ca": "string?",
+      "environment": "string",
+      "domains": "array",
+      "enabled": "boolean",
+      "exists": "boolean",
+      "expires": "string?",
+      "days": "integer",
+      "renew": "boolean",
+      "renew_state": "string?",
+      "renew_error": "string?",
+      "last_renew_at": "string?",
+      "identity_valid": "any?",
+      "identity_error": "string?"
+    },
+    "proxy-status": {
+      "api_version": "integer",
+      "ok": "boolean",
+      "version": "string",
+      "phase": "string",
+      "configured": "integer",
+      "enabled": "integer",
+      "https_listening": "boolean",
+      "http_listening": "boolean",
+      "https_port": "integer?",
+      "http_port": "integer?",
+      "domains": "array",
+      "access_enabled": "boolean",
+      "access_region": "string?",
+      "error": "string?"
+    },
+    "access-status": {
+      "api_version": "integer",
+      "ok": "boolean",
+      "phase": "string",
+      "enabled": "boolean",
+      "mode": "string",
+      "manual_prefixes": "integer",
+      "deny_prefixes": "integer",
+      "region": "string?",
+      "retired_region": "string?",
+      "region_label": "string?",
+      "region_prefixes": "integer?",
+      "cache_valid": "boolean",
+      "cache_updated": "string?",
+      "cache_stale": "boolean",
+      "cache_ipv4": "integer?",
+      "cache_ipv6": "integer?",
+      "error": "string?"
+    },
+    "access-recent": {
+      "api_version": "integer",
+      "ok": "boolean",
+      "phase": "string",
+      "entries": "array",
+      "error": "string?"
+    },
+    "firewall-status": {
+      "api_version": "integer",
+      "ok": "boolean",
+      "version": "string",
+      "phase": "string",
+      "active": "boolean",
+      "managed": "boolean",
+      "wan_device": "string?",
+      "wan_source": "string?",
+      "https": "string?",
+      "http": "string?",
+      "error": "string?"
+    },
+    "wol-status": {
+      "api_version": "integer",
+      "ok": "boolean",
+      "version": "string",
+      "phase": "string",
+      "interface": "string",
+      "selected_host": "string?",
+      "hosts": "array",
+      "error": "string?"
+    },
+    "log-events": {
+      "api_version": "integer",
+      "ok": "boolean",
+      "version": "string",
+      "phase": "string",
+      "count": "integer",
+      "events": "array"
+    },
+    "web-job-status": {
+      "ok": "boolean",
+      "job": "string?",
+      "pending": "boolean?",
+      "result": "any?",
+      "error": "string?"
+    }
+  },
+  "diagnostic_exit_codes": {
+    "status": {
+      "healthy": 0,
+      "unhealthy": 0
+    },
+    "check": {
+      "healthy": 0,
+      "unhealthy": 1
+    },
+    "network-resolve": {
+      "available": 0,
+      "unavailable": 0
+    },
+    "recovery-status": {
+      "readable": 0,
+      "unavailable": 0
+    }
+  },
+  "scheduler_events": [
+    "startup",
+    "config_changed",
+    "wan_changed",
+    "ddns_timer",
+    "acme_timer",
+    "access_timer",
+    "firewall_retry",
+    "proxy_retry",
+    "ddns_retry",
+    "acme_retry",
+    "access_retry"
+  ]
 }

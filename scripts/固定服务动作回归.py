@@ -17,7 +17,6 @@ class Static(unittest.TestCase):
             self.assertFalse(parser.parse(body).root_node.has_error,name)
             self.assertEqual(body.count(b'service_actions_enabled=false'),1)
             self.assertNotIn(b'service_actions_enabled=true',body)
-        self.assertNotIn('prototype/',(ROOT/'project/core/Makefile').read_text())
 
     def test_fixed_actions_and_lock_inheritance(self):
         s=(PROTO/'homegate-service-observer-watchdog.sh').read_text()
@@ -49,6 +48,7 @@ class Runtime(BootstrapRuntime):
         self.pidfile=self.base/'daemon.pid'; self.enabled=self.base/'enabled'; self.enabled.write_text('1')
         self.marker=self.base/'package-state'
         self.init=self.base/'init'; self.common=self.base/'rc.common'; self.ubus=self.base/'ubus'; self.uci=self.base/'uci'
+        self.bin_ubus=self.base/'bin-ubus'
         self.executable=self.base/'homegate'; shutil.copy2(self.daemon,self.executable); self.executable.chmod(0o700)
         self.common.write_text('#!/bin/sh\nexit 0\n'); self.common.chmod(0o700)
         initcode="""import json,os,signal,subprocess,sys,time
@@ -79,7 +79,7 @@ sys.exit(flags.get(action+'_exit',0))
         querycode="""import json,sys
 from pathlib import Path
 base=Path(BASE)
-assert sys.argv[1:]==['-t','2','-S','call','service','list','{"name":"homegate","verbose":true}']
+assert sys.argv[1:]==['-t','2','-S','call','service','list','{"name":"homegate"}']
 doc={}
 if (base/'daemon.pid').exists():
  pid=int((base/'daemon.pid').read_text())
@@ -99,7 +99,7 @@ if flags.get('precheck_fail') or flags.get('precheck_fail_after',999)<n: sys.exi
 os.execv(UCI,[UCI,'-c',str(base/'etc/config'),'-P',str(base/'uci-save'),'-q','show','homegate'])
 """.replace('BASE',repr(str(self.base))).replace('UCI',repr(str(ROOT/'build/uci-parser/uci')))
         self.uci.write_text('#!'+sys.executable+'\n'+ucicode); self.uci.chmod(0o700)
-        mapping={'/etc/init.d/homegate':str(self.init),'/etc/rc.common':str(self.common),'/sbin/ubus':str(self.ubus),
+        mapping={'/etc/init.d/homegate':str(self.init),'/etc/rc.common':str(self.common),'/sbin/ubus':str(self.ubus),'/bin/ubus':str(self.bin_ubus),
                  '/sbin/uci':str(self.uci),'/usr/bin/homegate':str(self.executable),'/tmp/.homegate-package-upgrade-state':str(self.marker)}
         for name in ['homegate-config-prototype.sh','homegate-service-observer-watchdog.sh','homegate-service-observer.lua']:
             file=self.engine.parent/name; body=file.read_text()
@@ -213,6 +213,19 @@ os.execv(UCI,[UCI,'-c',str(base/'etc/config'),'-P',str(base/'uci-save'),'-q','sh
     def test_missing_or_unsafe_dependency_preserves_service_and_configuration(self):
         self.begin(running=1);self.executable.chmod(0o777);self.apply(7);self.assertEqual(self.log(),[]);self.assertEqual(self.source.read_bytes(),self.original)
         self.executable.chmod(0o700);self.common.unlink();self.apply(7);self.assertEqual(self.log(),[])
+
+    def test_bin_ubus_fallback_preserves_dependency_checks(self):
+        self.ubus.rename(self.bin_ubus)
+        self.begin(running=1)
+        self.bin_ubus.chmod(0o775)
+        self.apply(7)
+        self.assertEqual(self.log(),[])
+        self.assertTrue(self.running())
+        self.assertEqual(self.source.read_bytes(),self.original)
+        self.bin_ubus.chmod(0o700)
+        self.recover()
+        self.closed(2)
+        self.assertTrue(self.running())
 
     def test_active_package_marker_cannot_start_or_stop(self):
         self.begin(running=1);self.marker.write_text('was_running=0\n');self.apply(4);self.assertEqual(self.log(),[]);self.assertTrue(self.running());self.assertTrue(self.marker.exists())

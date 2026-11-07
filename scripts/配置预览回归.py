@@ -241,14 +241,13 @@ class Preview(unittest.TestCase):
         self.assertFalse(json.loads(raw)['ok'])
         self.assertNotIn('SECRET_SENTINEL', raw)
 
-    def test_embedded_reference_uses_byte_identical_codec_and_post_route(self):
-        bundle=(ROOT/'project/core/src/internal/frontend/controller.lua').read_text(encoding='utf-8')
-        expected='package.preload["luci.model.homegate.backup"] = function()\n'+CODEC.read_text(encoding='utf-8')+'\nend\n'+CONTROLLER.read_text(encoding='utf-8')
-        self.assertEqual(bundle, expected)
-        routes=json.loads((ROOT/'project/core/src/internal/frontend/routes.json').read_text(encoding='utf-8'))
+    def test_production_uses_byte_identical_codec_and_post_route(self):
+        from production_runtime import payload
+        prefix='usr/libexec/homegate/'
+        files=payload(ROOT)
+        self.assertEqual(files[prefix+'project/luci/lua/luasrc/model/homegate/backup.lua'], CODEC.read_bytes())
+        routes=json.loads(files[prefix+'legacy-routes.json'])
         self.assertEqual(routes['config_import'], {'handler':'action_config_import','write':True})
-        recipe=(ROOT/'project/luci/Makefile').read_text(encoding='utf-8')
-        self.assertIn('$(INSTALL_DATA) ./lua/luasrc/model/homegate/backup.lua $(1)/usr/lib/lua/luci/model/homegate/backup.lua',recipe)
         self.assertNotIn('cp ', CONTROLLER.read_text(encoding='utf-8').split('function action_config_import()')[1].split('local function reset_homegate_config')[0])
 
 

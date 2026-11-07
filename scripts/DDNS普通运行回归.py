@@ -16,7 +16,7 @@ class Static(unittest.TestCase):
         for name in ['homegate-ddns-read.sh','homegate-ddns-work.sh','homegate-cloudflare-read.sh','homegate-dns-receipt.sh']:
             b=(PROTO/name).read_bytes();self.assertEqual(b.count(b'ddns_runtime_enabled=false'),1);self.assertFalse(parser.parse(b).root_node.has_error);self.assertNotIn(b'\r',b)
         for name in ['homegate-config-prototype.sh','homegate-ddns-authority.sh','homegate-dns-receipt.sh']:self.assertFalse(parser.parse((PROTO/name).read_bytes()).root_node.has_error)
-        LuaRuntime().compile((PROTO/'homegate-ddns-sync.lua').read_bytes());self.assertNotIn('prototype/',(PROTO.parent/'Makefile').read_text())
+        LuaRuntime().compile((PROTO/'homegate-ddns-sync.lua').read_bytes())
     def test_recovery_source_is_read_only_and_limited_to_dns_fences(self):
         s=(PROTO/'homegate-config-prototype.sh').read_text();self.assertEqual(s.count('migration-source-recovery-snapshot-read|runtime-ddns-recovery-snapshot-read)'),4)  # Includes the independent batch-results recovery guard.
         required={'runtime-ddns-snapshot-read','runtime-ddns-recovery-snapshot-read'}

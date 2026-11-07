@@ -25,7 +25,7 @@ class Static(RecordStatic):
         s=(PROTO/'homegate-dns-receipt.sh').read_text();self.assertLess(s.index('fsync "$stage/context"'),s.index('mv "$stage" "$inactive"'))
         self.assertLess(s.index('fsync "$journal/.next"'),s.index('mv -f "$journal/.next" "$journal/current"'))
         w=(PROTO/'homegate-cloudflare-worker.sh').read_text();loop=w.split('while [ "$step"',1)[1];self.assertLess(loop.index('homegate-dns-receipt.sh'),loop.index('ready=$(fetch'))
-        self.assertIn('9>&- 6>&- 7>&-',w);self.assertNotIn('prototype/',(PROTO.parent/'Makefile').read_text())
+        self.assertIn('9>&- 6>&- 7>&-',w)
     def test_presence_fences_writers_independent_of_recovery_gate(self):
         s=(PROTO/'homegate-config-prototype.sh').read_text();barrier=s.split('Presence alone fences',1)[1].split('    if [ "$persistent_mode"',1)[0]
         self.assertNotIn('enabled',barrier);self.assertIn('DNS operation requires explicit durable recovery',barrier)

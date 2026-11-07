@@ -51,15 +51,13 @@ jobs:
           python3 scripts/engineering-ci-regressions.py
       - name: 检查 Shell 语法
         run: |
-          find scripts project/core/files project/core/prototype -type f -name '*.sh' -print0 | xargs -0 -r -n1 sh -n
-          sh -n project/core/files/etc/init.d/homegate
-          sh -n project/core/files/etc/hotplug.d/iface/95-homegate
-          sh -n project/core/files/usr/sbin/homegate-purge
+          find scripts project/core/prototype packaging -type f -name '*.sh' -print0 | xargs -0 -r -n1 sh -n
+          sh -n packaging/production/homegate.init
+          sh -n packaging/production/95-homegate
       - name: 生成前端并核实没有过期副本
         run: |
-          python3 scripts/sync-frontend.py
           python3 scripts/build-js-views.py
-          git diff --exit-code -- project/core/src/internal/frontend project/luci/js/htdocs
+          git diff --exit-code -- project/luci/js/htdocs
           python3 scripts/frontend-source-regressions.py
       - name: 安装 BusyBox、语法解析与页面回归依赖
         run: |
@@ -183,11 +181,10 @@ jobs:
         run: |
           build/verify-venv/bin/python scripts/持久事务屏障回归.py
           build/verify-venv/bin/python scripts/持久事务屏障回归.py --runtime
-      - name: 验证原生写入协调和对照桥接
+      - name: 验证原生写入协调
         run: |
           build/verify-venv/bin/python scripts/原生写入协调回归.py
           build/verify-venv/bin/python scripts/原生写入协调回归.py --runtime
-          (cd project/core/src && go test ./internal/frontend)
       - name: 定位固定服务四状态采样
         run: build/verify-venv/bin/python scripts/服务采样回归.py --runtime --case test_four_independent_states_sample_real_processes_and_bind_journal
       - name: 验证源配置发布与恢复

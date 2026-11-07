@@ -48,7 +48,7 @@ class Static(unittest.TestCase):
   acl=json.loads((ROOT/'project/luci/prototype/js/ddns-acl.json').read_text())['luci-app-homegate-ddns'];self.assertEqual(set(acl['read']['ubus']['homegate_ddns']),{'status','jobs'});self.assertEqual(set(acl['write']['ubus']['homegate_ddns']),{'preview','commit','revoke','submit','maintain_preview','maintain_commit'})
  def test_quiescence_is_gate_independent_and_lifecycle_holds_business_lock(self):
   s=(PROTO/'homegate-lifecycle-prepare.sh').read_text();self.assertLess(s.index('flock -n 6'),s.index('homegate-ddns-job.sh'));self.assertLess(s.index('homegate-ddns-job.sh'),s.index('ash "$dir/homegate-store-bootstrap'))
-  self.assertIn('check-quiescent',(PROTO/'homegate-ddns-schedule.sh').read_text());self.assertNotIn('prototype/',(ROOT/'project/core/Makefile').read_text())
+  self.assertIn('check-quiescent',(PROTO/'homegate-ddns-schedule.sh').read_text())
 
 class JobMixin:
  def setUp(self):

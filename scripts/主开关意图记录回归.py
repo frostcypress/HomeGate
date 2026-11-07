@@ -21,7 +21,6 @@ class Static(unittest.TestCase):
             self.assertFalse(parser.parse((PROTO/name).read_bytes()).root_node.has_error,name)
         LuaRuntime().compile((PROTO/'homegate-startup.lua').read_bytes())
         self.assertEqual((PROTO/'homegate-lifecycle-prepare.sh').read_text().count('lifecycle_intent_record_enabled=false'),1)
-        self.assertNotIn('prototype/',(PROTO.parent/'Makefile').read_text())
     def test_candidate_private_pipe_requires_producer_success_and_record_has_no_raw_candidate(self):
         body=(PROTO/'homegate-lifecycle-prepare.sh').read_text();binding=(PROTO/'startup-record.sh').read_text()
         self.assertIn('HGSTARTUPCANDIDATESTATUS:%s',binding)

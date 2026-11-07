@@ -7,7 +7,7 @@ acceptance or a release path. Never install into the host or replace old SDKs.
 import argparse,hashlib,importlib.util,json,os,re,shutil,subprocess,tarfile,time
 from pathlib import Path
 from project import ROOT,identity,verify_generated
-from production_runtime import stage_package
+from production_runtime import stage_sdk
 from native_transition import prepare_kit
 from native_opkg import export_runtime_closure
 
@@ -62,9 +62,7 @@ def build(target_file,archive,feed_cache,work,output):
         source=children[0]/'package' if name=='base' else children[0]
         config.append('src-link '+name+' '+str(source))
     (sdk/'feeds.conf').write_text('\n'.join(config)+'\n')
-    stage_package(ROOT,sdk/'package/homegate-native-candidate')
-    for name in ['homegate-nginx','homegate-wol']:shutil.copytree(ROOT/'packaging/components'/name,sdk/'package'/name)
-    shutil.copyfile(ROOT/'homegate-version.mk',sdk/'homegate-version.mk')
+    stage_sdk(ROOT,sdk)
     run('feed-index',['./scripts/feeds','update','-a'],sdk)
     run('feed-install',['./scripts/feeds','install','-a'],sdk)
     settings=(sdk/'.config').read_text() if (sdk/'.config').exists() else ''

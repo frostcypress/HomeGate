@@ -72,14 +72,18 @@ case "$action" in
   for name in request result zones state sign-input sign-output;do (set -C;: > "$work/$name") || fail;done
   rc=0
   lua "$base/native-adapters.lua" private-frame "$1" "$provider" |
-   setsid ash "$dir/homegate-service-observer-watchdog.sh" --"$provider"-check "$ticket" offline_probe 1 "$job" zones 3>"$work/result" >/dev/null || rc=$?
+   lua "$base/native-web-session.lua" observe-dns "$ticket" 1 "$job" --"$provider"-check offline_probe zones 3>"$work/result" >/dev/null || rc=$?
+  cleanup_dns_check() {
+   for name in request result zones state sign-input sign-output;do rm "$work/$name" || fail;done
+   rmdir "$work" || fail
+  }
+  if [ "$rc" = 126 ];then cleanup_dns_check;fail;fi
   case "$rc" in 0|1) ;;*) fail;;esac
   if [ "$provider" = cloudflare ];then lua "$dir/cloudflare-zones.lua" result offline_probe 1 "$rc" < "$work/result" > "$work/zones" || fail
   else lua "$dir/$provider-reader.lua" result offline_probe 1 "$rc" zones < "$work/result" > "$work/zones" || fail;fi
   reply=$(lua "$base/native-adapters.lua" private-result < "$work/zones");code=$?
   case "$code" in 0|1) ;;*) fail;;esac
-  for name in request result zones state sign-input sign-output;do rm "$work/$name" || fail;done
-  rmdir "$work" || fail;printf '%s\n' "$reply";exit "$code";;
+  cleanup_dns_check;printf '%s\n' "$reply";exit "$code";;
  acme-ca-status)
   [ "$#" = 1 ] || [ "$#" = 2 ] || fail 2
   selection=$(lua "$base/native-public.lua" ca-selection "$1" "${2:-production}") || fail 1

@@ -97,7 +97,7 @@ os.execv('/usr/sbin/ash',['ash','/teststate/project/core/prototype/homegate-ddns
     init.write_text('#!/bin/sh\nprintf "%s\\n" "$1" >> /teststate/service-calls\n[ "$#" = 1 ] && [ "$1" = enabled ] || exit 99\nexit 1\n');init.chmod(0o755)
     (state / 'etc/rc.common').write_text('#!/bin/sh\nexit 99\n');(state / 'etc/rc.common').chmod(0o755)
     ubus = tools / 'ubus'
-    ubus.write_text("#!/bin/sh\n[ \"$*\" = '-t 2 -S call service list {\"name\":\"homegate\",\"verbose\":true}' ] || exit 99\nprintf '{}\\n'\n");ubus.chmod(0o755)
+    ubus.write_text("#!/bin/sh\n[ \"$*\" = '-t 2 -S call service list {\"name\":\"homegate\"}' ] || exit 99\nprintf '{}\\n'\n");ubus.chmod(0o755)
     for name in ('curl', 'wget'):
         tool = tools / name
         tool.write_text('#!/bin/sh\nprintf "unexpected-network-tool\\n" >> /teststate/network-calls\nexit 99\n');tool.chmod(0o755)

@@ -50,7 +50,6 @@ class Static(unittest.TestCase):
                             call=body[node.start_byte:node.end_byte]
                             if b'"-$$"' not in call: self.assertEqual(call,b'kill -0 "$$"')
                 nodes.extend(node.named_children)
-        self.assertNotIn('prototype/',(ROOT/'project/core/Makefile').read_text())
 
 class Runtime(unittest.TestCase):
     @classmethod

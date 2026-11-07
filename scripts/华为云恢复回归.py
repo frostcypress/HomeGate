@@ -32,7 +32,7 @@ class Static(PlanStatic):
         for n in ['homegate-huaweicloud-read.sh','homegate-huaweicloud-worker.sh','homegate-cloudflare-read.sh','homegate-service-observer-watchdog.sh','homegate-dns-receipt.sh']:
             b=(PROTO/n).read_bytes();self.assertFalse(parser.parse(b).root_node.has_error,n);self.assertNotIn(b'\r',b);self.assertEqual(b.count(b'huaweicloud_receipt_enabled=false'),1)
         for n in ['huaweicloud-reconcile-plan.lua','huaweicloud-checkpoint.lua','huaweicloud-reader.lua']:self.lua.compile((PROTO/n).read_bytes())
-        b=(PROTO/'homegate-dns-receipt.sh').read_text();self.assertIn('HGHWJOURNAL1',b);self.assertLess(b.index('fsync "$stage/context"'),b.index('mv "$stage" "$inactive"'));self.assertNotIn('prototype/',(PROTO.parent/'Makefile').read_text())
+        b=(PROTO/'homegate-dns-receipt.sh').read_text();self.assertIn('HGHWJOURNAL1',b);self.assertLess(b.index('fsync "$stage/context"'),b.index('mv "$stage" "$inactive"'))
 
 class Runtime(RecordRuntime):
     def contents(self):return {k:v for k,v in super().contents().items() if k!='dns-operation' and not k.startswith('dns-operation/')}

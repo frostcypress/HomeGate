@@ -1,11 +1,6 @@
 {
   "schema": 1,
-  "origin": "manually audited current Go reference catalog literals and JSON tags; not execution evidence",
-  "reference_source_sha256": {
-    "project/core/src/internal/dnsprovider/catalog.go": "c3683ba6b5424f73e422c0b082aa0d7a9ecace16df85574ad288d35968d8c0c5",
-    "project/core/src/internal/dnsprovider/provider.go": "4d90c53673e9b73193428487f47af932e1bff6d801e2ffecd68e2f1ea3614627",
-    "project/core/src/internal/acmeca/preset.go": "8aae6b2adb688d3e17324112e6d39cd48a33f41d5bb75434b1a00ccb3bfc6773"
-  },
+  "origin": "Audited catalog literals and JSON fields from the r180 interface baseline (CI85 commit 2a8fb00ec3b2c5929307a91a0ef77c20d87c8294).",
   "catalogs": {
     "dns-provider-catalog": {
       "phase": "dns-provider",

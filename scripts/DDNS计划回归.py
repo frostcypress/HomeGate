@@ -130,7 +130,6 @@ class Static(Codec):
         for n in ['wan6-plan.lua','ddns-plan.lua','homegate-ddns-plan.lua']:self.lua.compile((PROTO/n).read_bytes())
         s=(PROTO/'homegate-ddns-plan.lua').read_text();self.assertIn('/sbin/ip -6 -o addr show scope global',s);self.assertIn('/bin/ubus call network.interface.wan6 status',s)
         for word in ['curl','wget','os.getenv','--records']:self.assertNotIn(word,s)
-        self.assertNotIn('prototype/',(PROTO.parent/'Makefile').read_text())
 
 class Runtime(LifecycleRuntime):
     def setUp(self):

@@ -45,7 +45,6 @@ class Static(unittest.TestCase):
         self.assertIn('lifecycle_startup_enabled=false',body)
         pure=(PROTO/'startup-intent.lua').read_text()
         for forbidden in ['io.','os.','loadfile','require(']:self.assertNotIn(forbidden,pure)
-        self.assertNotIn('prototype/',(PROTO.parent/'Makefile').read_text())
 
 class Request:
     def intent(self,*args,expected=0,env=None):

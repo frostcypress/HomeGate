@@ -55,8 +55,7 @@ class Migration(unittest.TestCase):
         verify_generated()
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            (root / 'scripts').mkdir()
-            for name in ('VERSION', 'RELEASE', 'PROJECT_ID', 'scripts/install.sh', 'scripts/offline-verify.sh'):
+            for name in ('VERSION', 'RELEASE', 'PROJECT_ID'):
                 (root / name).write_bytes((ROOT / name).read_bytes())
             (root / 'homegate-version.mk').write_text(generated_version(root), encoding='utf-8')
             (root / 'RELEASE').write_text(str(int(identity(root)['release']) + 1) + '\n', newline='\n')
@@ -112,19 +111,18 @@ class Migration(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, 'Core'):
                 checker.inspect(root, 'homegate', '1.3.0-r11', 'ipk', 'test_arch')
 
-    def test_pending_target_and_go_cannot_release(self):
+    def test_pending_target_and_incomplete_migration_cannot_release(self):
         target = json.loads((ROOT / 'targets/pending.json').read_text(encoding='utf-8'))
         for frontend in ('lua', 'js'):
-            with self.assertRaisesRegex(ValueError, 'Go'):
+            with self.assertRaisesRegex(ValueError, '完整迁移验收'):
                 gate.validate(target, frontend, 'auto', True)
 
     def test_frontend_and_format_independence(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            (root / 'scripts').mkdir()
             (root / 'targets').mkdir()
             (root / 'targets/sdk-selection-policy.json').write_bytes((ROOT / 'targets/sdk-selection-policy.json').read_bytes())
-            for name in ('VERSION', 'RELEASE', 'PROJECT_ID', 'homegate-version.mk', 'scripts/install.sh', 'scripts/offline-verify.sh'):
+            for name in ('VERSION', 'RELEASE', 'PROJECT_ID', 'homegate-version.mk'):
                 (root / name).write_bytes((ROOT / name).read_bytes())
             (root / 'project.json').write_text(json.dumps({'core': {'implementation': 'c', 'migration_complete': True, 'package': 'homegate-core'}, 'release_ready': False}))
             target = {key: 'verified-test-fixture' for key in ('distribution', 'version', 'device', 'target', 'subtarget', 'architecture', 'abi', 'evidence')}
@@ -160,7 +158,7 @@ class Migration(unittest.TestCase):
                 self.assertIsNone(archive.testzip())
                 names = archive.namelist()
                 for name in ('源码/.github/workflows/编译发布.yml', '源码/LICENSE', '源码/THIRD_PARTY_NOTICES',
-                             '源码/project/core/src/go.mod', '源码/project/luci/lua/luasrc/controller/homegate.lua',
+                             '源码/packaging/production/native-cli.sh', '源码/project/luci/lua/luasrc/controller/homegate.lua',
                              '源码/project/luci/js/htdocs/luci-static/resources/view/homegate/overview.js', *snapshot.DOCS):
                     self.assertIn(name, names)
                 self.assertFalse(any(name.endswith(('.ipk', '.apk', '.exe')) for name in names))
@@ -224,6 +222,19 @@ class Migration(unittest.TestCase):
             self.copy_public_sources(root)
             manifest = root / snapshot.PUBLIC_MANIFEST
             original = json.loads(manifest.read_text(encoding='utf-8'))
+            archive = root / 'docs/验证/archive/retired.go'
+            archive.parent.mkdir(parents=True)
+            archive.write_text('Historical source fixture\n', encoding='utf-8')
+            self.assertNotIn(archive, list(snapshot.source_files(root)))
+            for retired in ('project/core/retired.go', 'project/core/go.mod'):
+                (root / retired).write_text('Retired source fixture\n', encoding='utf-8')
+                with self.subTest(retired=retired), self.assertRaisesRegex(ValueError, 'Retired source'):
+                    list(snapshot.source_files(root))
+                changed = dict(original, files=sorted(original['files'] + [retired]))
+                manifest.write_text(json.dumps(changed, ensure_ascii=False), encoding='utf-8')
+                with self.subTest(retired=retired), self.assertRaisesRegex(ValueError, 'Forbidden public source'):
+                    snapshot.public_files(root)
+                (root / retired).unlink()
             for name in ('接续.md', 'docs/验证/private.json', 'targets/evidence/report.txt',
                          '.github/reference/import.yml', 'scripts/.env', 'scripts/private.key',
                          '../escape', '/absolute', 'scripts/../escape', 'scripts\\escape', 'scripts/missing.py'):

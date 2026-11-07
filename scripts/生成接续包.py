@@ -20,6 +20,8 @@ EXCLUDED = {'.git', '__pycache__', 'build', 'dist', 'node_modules', '.venv', '.a
 PUBLIC_MANIFEST = '公开文件清单.json'
 PRIVATE_PREFIXES = ('docs/验证/', 'targets/evidence/', '.github/reference/')
 FORBIDDEN_SUFFIXES = ('.ipk', '.apk', '.exe', '.o', '.pyc', '.zip', '.pem', '.key', '.log', '.png')
+RETIRED_SOURCE_SUFFIXES = ('.go',)
+RETIRED_SOURCE_NAMES = {'go.mod', 'go.sum', 'go.work', 'go.work.sum'}
 
 
 def public_files(root):
@@ -41,6 +43,8 @@ def public_files(root):
                 or name in DOCS or name.startswith(PRIVATE_PREFIXES)
                 or set(relative.parts) & EXCLUDED
                 or relative.name in ('.gitkeep', '.env')
+                or relative.name in RETIRED_SOURCE_NAMES
+                or relative.suffix.lower() in RETIRED_SOURCE_SUFFIXES
                 or relative.suffix.lower() in FORBIDDEN_SUFFIXES
                 or (relative.parts[0] not in SOURCE_DIRS and name not in SOURCE_FILES)):
             raise ValueError('Forbidden public source: ' + name)
@@ -101,6 +105,10 @@ def source_files(root):
                 raise ValueError('Symlink not allowed in source snapshot: ' + str(file))
             if not file.is_file() or set(file.relative_to(root).parts) & EXCLUDED:
                 continue
+            if file.name in RETIRED_SOURCE_NAMES or file.suffix.lower() in RETIRED_SOURCE_SUFFIXES:
+                if file.relative_to(root).parts[:2] == ('docs', '验证'):
+                    continue
+                raise ValueError('Retired source cannot be included: ' + str(file))
             if file.suffix.lower() in ('.ipk', '.apk', '.exe', '.o', '.pyc', '.zip', '.pem', '.key'):
                 raise ValueError('Unexpected binary/secret/archive in source: ' + str(file))
             yield file

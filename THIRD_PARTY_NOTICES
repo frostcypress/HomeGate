@@ -14,11 +14,7 @@ HomeGate 0.5.0-12 can optionally download a selected China/province IPv4+IPv6 CI
 
 These geographic CIDR lists are **not bundled or redistributed** in the HomeGate source/IPK artifacts. The upstream project states that its generated lists aggregate several geolocation sources (including ip2region, qqwry, GeoLite2, Huawei regional data, and Meituan arbitration data). Use of downloaded data is subject to the upstream project and underlying data-source terms. HomeGate treats the data only as an approximate access-control signal; it is not an authentication mechanism.
 
-GopherLua v1.1.1 (github.com/yuin/gopher-lua), MIT License.
-The Go Core embeds a bounded Lua 5.1 configuration-rule VM; native LuCI renders JavaScript only.
-Copyright and license: core/vendor/github.com/yuin/gopher-lua/LICENSE; installed /usr/share/licenses/homegate/gopher-lua-MIT.txt.
-
-LuCI frontend and the embedded configuration controller retain the luci-app-homegate Apache-2.0 license. Core combines MIT code with that controller (MIT AND Apache-2.0). License text: legal/Apache-2.0.txt; installed /usr/share/licenses/homegate/Apache-2.0.txt.
+LuCI frontend and the shared configuration controller retain the luci-app-homegate Apache-2.0 license. Core combines MIT code with that controller (MIT AND Apache-2.0). License text: legal/Apache-2.0.txt.
 
 APNIC RIR allocation statistics (downloaded at runtime)
 Primary: https://ftp.apnic.net/stats/apnic/delegated-apnic-latest

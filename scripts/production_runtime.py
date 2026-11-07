@@ -55,12 +55,12 @@ def payload(root):
  case "$action" in config-status|config-export|*-status|*-quiescent|*-stop|*-reap|acme-job|acme-stop|acme-cleanup|firewall-cleanup) ;;*) fail 4;;esac
 fi
 ''')
-    # Local configuration preparation needs no detached worker. Publication
-    # retains the service observer's session and deadline through nixio.
+    # Operations whose supervised launches use nixio can run without the
+    # optional applet. Keep the applet gate on the remaining legacy paths.
     tools = b'for tool in ash lua stat sha256sum flock fsync setsid head;do'
     assert files[control].count(tools) == 1
     files[control] = files[control].replace(tools, b'''session_tool=setsid
-case "$action" in prepare|prepare-resume|config-status|config-export|config-commit) session_tool=;;esac
+case "$action" in prepare|prepare-resume|config-status|config-export|config-commit|dns-provider-status|dns-zones|ddns-delete|ddns-status|ddns-sync|ddns-reset|ddns-reconcile|ddns-collect-receipt|ddns-collect-orphan|ddns-collect-work|ddns-retire-archive|grant-preview|grant-commit|grant-cancel|grant-revoke) session_tool=;;esac
 for tool in ash lua stat sha256sum flock fsync head $session_tool;do''')
     config_engine = BASE+'project/core/prototype/homegate-config-prototype.sh'
     observer = b'setsid ash "$(dirname "$0")/homegate-service-observer-watchdog.sh" "$confirmation" 3>'
@@ -72,6 +72,45 @@ for tool in ash lua stat sha256sum flock fsync head $session_tool;do''')
     assert files[health_read].count(observer) == 1
     files[health_read] = files[health_read].replace(
         observer, b'lua /usr/libexec/homegate/native-web-session.lua observe-config-health "$ticket" "$revision" "$job"')
+    network_read = BASE+'project/core/prototype/homegate-network-read.sh'
+    observer = b'setsid ash "$dir/homegate-service-observer-watchdog.sh" --network-resolve "$ticket" "$revision" "$job" "$bridge"'
+    assert files[network_read].count(observer) == 1
+    files[network_read] = files[network_read].replace(
+        observer, b'lua /usr/libexec/homegate/native-web-session.lua observe-network "$ticket" "$revision" "$job" "$bridge"')
+    dns_read = BASE+'project/core/prototype/homegate-cloudflare-read.sh'
+    observer = b'setsid ash "$dir/homegate-service-observer-watchdog.sh" "$watchdog_mode" "$ticket" "$account" "$revision" "$job" "$mode"'
+    assert files[dns_read].count(observer) == 1
+    anchor = b'result=0\n# Only the private frame'
+    assert files[dns_read].count(anchor) == 1
+    files[dns_read] = files[dns_read].replace(observer, b'observe_dns').replace(anchor, b'''result=0
+observe_dns() {
+    case "$mode" in
+        check|zones) exec lua /usr/libexec/homegate/native-web-session.lua observe-dns "$ticket" "$revision" "$job" "$watchdog_mode" "$account" "$mode";;
+        records|reconcile) exec lua /usr/libexec/homegate/native-web-session.lua dns-records "$ticket" "$revision" "$job" "$watchdog_mode" "$account" "$mode";;
+        *) exit 2;;
+    esac
+}
+# Only the private frame''')
+    # Preserve each caller's pipe, FD and background redirections. The fixed
+    # launcher replaces itself in the new session before the worker checks it.
+    launch = 'lua /usr/libexec/homegate/native-web-session.lua '
+    job_launches = (
+        ('homegate-ddns-read.sh', 'setsid ash "$dir/homegate-service-observer-watchdog.sh" --ddns-plan "$ticket" "$revision" "$job" "$rule"', 'ddns-plan "$ticket" "$revision" "$job" "$rule"'),
+        ('homegate-ddns-batch.sh', 'setsid ash "$dir/homegate-service-observer-watchdog.sh" --ddns-plan "$ticket" "$revision" "$job" \'\'', 'ddns-plan "$ticket" "$revision" "$job" \'\''),
+        ('homegate-ddns-job.sh', 'setsid ash "$dir/homegate-ddns-job.sh" work "$job"', 'ddns-work "$job"'),
+        ('homegate-acme-job.sh', 'setsid ash "$HG_DIR/homegate-acme-job.sh" work "$HG_JOB"', 'acme-work "$HG_JOB"'),
+        ('homegate-acme-job.sh', 'setsid ash "$HG_DIR/homegate-acme-job.sh" work-cleanup "$HG_JOB"', 'acme-cleanup "$HG_JOB"'),
+        ('homegate-acme-schedule.sh', 'setsid ash "$HG_DIR/homegate-acme-schedule.sh" serve "$certificate" "$token"', 'acme-schedule "$token" "$certificate"'),
+        ('homegate-certificate.sh', 'setsid ash "$dir/homegate-service-observer-watchdog.sh" --certificate-validate "$token" "$id"', 'certificate-validate "$token" "$id"'),
+    )
+    for name,old,new in job_launches:
+        key=BASE+'project/core/prototype/'+name
+        assert files[key].count(old.encode()) == 1,(name,old)
+        files[key]=files[key].replace(old.encode(),(launch+new).encode())
+    key=BASE+'schedule-control.sh'
+    old=b'setsid ash "$base/homegate-ddns-schedule.sh" "$mode" --confirm'
+    assert files[key].count(old) == 1
+    files[key]=files[key].replace(old,(launch+'ddns-schedule "$mode"').encode())
     ui=BASE+'project/core/prototype/homegate-ddns-ui.sh'
     anchor=b'action=${parsed%%:*};payload=${parsed#*:};rc=0\n'
     assert anchor in files[ui]
@@ -128,8 +167,8 @@ fi
  service_plan_set) ddns=${payload%%:*};rest=${payload#*:};certs=${rest%%:*};rest=${rest#*:};web=${rest%%:*};policy=${rest#*:};raw=$(/usr/bin/homegate service-plan-set "$ddns" "$certs" "$web" "$policy" --confirm) || rc=$?;;
 ''')
     change(js,"write=action!=='backup_export'","write=action!=='service_status'&&action!=='backup_export'")
-    change(js,'}());',(root/'packaging/production/service.js').read_text()+'\n}());')
-    change(view,'  <div class="cbi-section"><h3>配置备份与恢复</h3>',(root/'packaging/production/service.htm').read_text()+'\n  <div class="cbi-section"><h3>配置备份与恢复</h3>')
+    change(js,'}());',(root/'packaging/production/service.js').read_text(encoding='utf-8')+'\n}());')
+    change(view,'  <div class="cbi-section"><h3>配置备份与恢复</h3>',(root/'packaging/production/service.htm').read_text(encoding='utf-8')+'\n  <div class="cbi-section"><h3>配置备份与恢复</h3>')
     change(view,'此候选入口不启动旧服务或新服务。','迁移操作不会自动启动服务；确认任务后使用“启动服务”。')
     web_runtime(root,files)
     return files
@@ -145,16 +184,16 @@ def web_runtime(root,files):
     files[key]=files[key].replace(b'native_certificate_maintenance_enabled=false\n',b'native_certificate_maintenance_enabled=true\n')
     for name in ['native-web.sh','native-web-session.lua','native-web.lua','native-web-store.lua','native-selftest.lua']:
         files[BASE+name]=(root/'packaging/production'/name).read_bytes()
-    parser=(root/'project/core/prototype/cloudflare-codec.lua').read_text()
+    parser=(root/'project/core/prototype/cloudflare-codec.lua').read_text(encoding='utf-8')
     parser=parser[parser.index('local function parse(body)'):parser.index('local function envelope(')]
     files[BASE+'strict-web-json.lua']=("local json=require('luci.jsonc')\n"+parser.replace('#body>65536','#body>2097152')+'return parse\n').encode()
-    contract=json.loads((root/'docs/核心CLI合同.json').read_text())
+    contract=json.loads((root/'docs/核心CLI合同.json').read_text(encoding='utf-8'))
     routes=contract['routes'] if 'routes' in contract else contract['web_routes']
     files[BASE+'legacy-routes.json']=(json.dumps(routes,ensure_ascii=False,separators=(',',':'))+'\n').encode()
     files[BASE+'legacy-controller.lua']=(root/'project/luci/lua/luasrc/controller/homegate.lua').read_bytes()
     # Private preview reuses the production PEM/key/date/SAN validator verbatim.
     # Its generated variant has a fixed per-job scratch root and cannot publish.
-    cert=(root/'project/core/prototype/homegate-certificate.lua').read_text()
+    cert=(root/'project/core/prototype/homegate-certificate.lua').read_text(encoding='utf-8')
     old="local root='/etc/homegate/certs/'..selected"
     assert cert.count(old)==1
     cert=cert.replace(old,"""local job=arg[3];if not job or #job~=32 or not job:match('^[0-9a-f]+$') or selected~='check' or not ({receive=true,material=true,validated=true})[mode] then fail()end
@@ -172,7 +211,7 @@ end"""+cert[b:]
  os.exit(1)
 end""",1)
     files[BASE+'project/core/prototype/native-web-certificate.lua']=cert.encode()
-    worker=(root/'project/core/prototype/homegate-certificate-worker.sh').read_text()
+    worker=(root/'project/core/prototype/homegate-certificate-worker.sh').read_text(encoding='utf-8')
     worker=worker.replace('id=$1;', 'job=$1;[ "${#job}" = 32 ] || exit 2;case "$job" in *[!0-9a-f]*) exit 2;;esac;id=check;')
     worker=worker.replace('base=/etc/homegate/certs/$id/.pending','base=/tmp/homegate-frontend-jobs/$job/certificate-check/.pending')
     worker=worker.replace('homegate-certificate.lua" material "$id"','native-web-certificate.lua" material "$id" "$job"').replace('homegate-certificate.lua" validated "$id"','native-web-certificate.lua" validated "$id" "$job"')
@@ -183,7 +222,7 @@ end""",1)
         lines.append(line)
     worker='\n'.join(lines)+'\n'
     files[BASE+'project/core/prototype/native-web-certificate-worker.sh']=worker.encode()
-    watchdog=(root/'project/core/prototype/homegate-service-observer-watchdog.sh').read_text()
+    watchdog=(root/'project/core/prototype/homegate-service-observer-watchdog.sh').read_text(encoding='utf-8')
     watchdog=watchdog.replace('#!/bin/sh\n','#!/bin/sh\n[ "${1:-}" = --certificate-validate ] || exit 2\n',1)
     watchdog=watchdog.replace('certificate_validation_enabled=false\n','certificate_validation_enabled=true\n',1)
     watchdog=watchdog.replace('homegate-certificate-worker.sh','native-web-certificate-worker.sh')
@@ -223,7 +262,7 @@ fi
     files[cli]=(root/'packaging/production/native-public.sh').read_bytes()
     for path in (root/'project/luci/lua/luasrc/view/homegate').glob('*.htm'):
         if path.stem in ['overview','basic','public','wol','maintenance','common']:
-            raw=path.read_text().replace('homegate/common','homegate_legacy/common')
+            raw=path.read_text(encoding='utf-8').replace('homegate/common','homegate_legacy/common')
             files['usr/lib/lua/luci/view/homegate_legacy/'+path.name]=raw.encode()
     for name,dest in [('native-web-http.lua','usr/lib/lua/luci/model/homegate/legacy.lua'),('native-web-pending.htm','usr/lib/lua/luci/view/homegate_legacy/pending.htm')]:
         files[dest]=(root/'packaging/production'/name).read_bytes()
@@ -247,6 +286,16 @@ fi
     end=files[controller].index(b'\nend\n',files[controller].index(marker))
     files[controller]=files[controller][:end]+('\n    '+'\n    '.join(entries)).encode()+files[controller][end:]+''.join(addition).encode()
 
+def stage_sdk(root, sdk):
+    """Stage the native package and component recipes into an existing SDK."""
+    import shutil
+    package = sdk / 'package'
+    stage_package(root, package / 'homegate-native-candidate')
+    for component in ('homegate-nginx', 'homegate-wol'):
+        shutil.copytree(root / 'packaging/components' / component, package / component)
+    shutil.copyfile(root / 'homegate-version.mk', sdk / 'homegate-version.mk')
+
+
 def stage_package(root,destination):
     """Source-only SDK feed input. Does not compile, install, enable or publish."""
     if destination.exists() and (destination.is_symlink() or any(destination.iterdir())):
@@ -262,10 +311,10 @@ def stage_package(root,destination):
     license=destination/'payload/core/usr/share/licenses/homegate-core';license.mkdir(parents=True)
     shutil.copyfile(root/'LICENSE',license/'LICENSE');shutil.copyfile(root/'third_party/acme.sh-3.1.6/LICENSE.md',license/'acme.sh.LICENSE.md')
     for path in license.iterdir():path.chmod(0o644)
-    hook=(root/'packaging/production/native-package.sh').read_text()
+    hook=(root/'packaging/production/native-package.sh').read_text(encoding='utf-8')
     preinst=hook+'\n'  # action is a literal SDK hook argument, not caller text.
     preinst=preinst.replace('action=${1:-};shift || exit 2','action=preinst')
-    make=(root/'packaging/production/Makefile').read_text().replace('@HOMEGATE_PREINST@',preinst.replace('$','$$').rstrip()).replace('@HOMEGATE_POSTRM@',(root/'packaging/production/postrm.sh').read_text().replace('$','$$').rstrip())
+    make=(root/'packaging/production/Makefile').read_text(encoding='utf-8').replace('@HOMEGATE_PREINST@',preinst.replace('$','$$').rstrip()).replace('@HOMEGATE_POSTRM@',(root/'packaging/production/postrm.sh').read_text(encoding='utf-8').replace('$','$$').rstrip())
     assert '@HOMEGATE_' not in make
     (destination/'Makefile').write_text(make,encoding='utf-8')
     (destination/'tools').mkdir();shutil.copyfile(root/'project/luci/common/tools/po2lmo.py',destination/'tools/po2lmo.py')

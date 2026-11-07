@@ -12,7 +12,7 @@ class Static(RecoveryStatic):
         for name in ['homegate-cloudflare-read.sh','homegate-dns-recovery.sh','homegate-dns-orphan.sh']:
             body=(PROTO/name).read_bytes();self.assertNotIn(b'\r',body);self.assertFalse(parser.parse(body).root_node.has_error)
             self.assertEqual(body.count(b'dns_orphan_collection_enabled=false'),1)
-        self.assertNotIn('prototype/',(PROTO.parent/'Makefile').read_text());self.lua.compile((PROTO/'cloudflare-records.lua').read_bytes())
+        self.lua.compile((PROTO/'cloudflare-records.lua').read_bytes())
     def test_no_recursive_delete_remote_request_or_old_pid_signal(self):
         body=(PROTO/'homegate-dns-orphan.sh').read_text()
         for forbidden in ['rm -r','curl','kill ','eval ','rm -f "$journal','rm -f "$store']:self.assertNotIn(forbidden,body)

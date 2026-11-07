@@ -47,30 +47,9 @@ def generated_version(root=ROOT):
             f"HOMEGATE_VERSION:={item['version']}\nHOMEGATE_RELEASE:={item['release']}\n")
 
 
-def generated_helpers(root=ROOT):
-    """Standalone reference helpers also carry generated defaults, never editable identity."""
-    version = identity(root)['legacy']
-    rules = {
-        'scripts/install.sh': (r'^VERSION=[^\n]*$', 'VERSION=' + version),
-        'scripts/offline-verify.sh': (r'^EXPECTED_VERSION=\$\{HOMEGATE_VERIFY_EXPECTED_VERSION:-[^\n]*$',
-                                    'EXPECTED_VERSION=${HOMEGATE_VERIFY_EXPECTED_VERSION:-' + version + '}'),
-    }
-    output = {}
-    for name, (pattern, replacement) in rules.items():
-        body = (root / name).read_text(encoding='utf-8')
-        changed, count = re.subn(pattern, lambda _: replacement, body, flags=re.MULTILINE)
-        if count != 1:
-            raise ValueError('Missing unique generated version default: ' + name)
-        output[name] = changed
-    return output
-
-
 def verify_generated(root=ROOT):
     if (root / 'homegate-version.mk').read_text(encoding='utf-8') != generated_version(root):
         raise ValueError('Generated version drift: run python3 scripts/project.py --sync')
-    for name, expected in generated_helpers(root).items():
-        if (root / name).read_text(encoding='utf-8') != expected:
-            raise ValueError('Generated helper version drift: ' + name)
 
 
 if __name__ == '__main__':
@@ -80,8 +59,6 @@ if __name__ == '__main__':
     args = parser.parse_args()
     if args.sync:
         (ROOT / 'homegate-version.mk').write_text(generated_version(), encoding='utf-8', newline='\n')
-        for name, body in generated_helpers().items():
-            (ROOT / name).write_text(body, encoding='utf-8', newline='\n')
     if args.check:
         verify_generated()
     print(json.dumps(identity(), ensure_ascii=False))

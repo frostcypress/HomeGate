@@ -247,6 +247,8 @@ emit() {
     destination=$report;publish
 }
 finish() { business_unlock;emit "$1" finished "$2" || fail;printf '%s\n' "$payload";exit "$3"; }
+poll_delay=0.05
+if ! sleep 0.001 >/dev/null 2>&1;then sleep 0 >/dev/null 2>&1 || finish false failed 7;poll_delay=1;fi
 emit true running '' || fail
 last_now=$started
 while :; do
@@ -256,7 +258,7 @@ while :; do
     [ "$mode" = serve ] || [ "$moment" -lt "$deadline" ] || finish true budget 0
     if [ "$mode" = serve ];then [ "$ticks" -lt 2147483647 ] || finish true ticks 0
     else [ "$ticks" -lt 8 ] || finish true ticks 0;fi
-    if [ "$control_busy" = true ];then sleep 0.05 || finish false failed 7;continue;fi
+    if [ "$control_busy" = true ];then sleep "$poll_delay" || finish false failed 7;continue;fi
     business_lock || finish false blocked 4
     binding && [ "$binding_seen" = "$bound" ] || finish false changed 4
     states=
@@ -290,7 +292,7 @@ while :; do
     [ "$mode" = serve ] || [ "$moment" -lt "$deadline" ] || finish true budget 0
     stop_read || finish false failed 7
     if [ "$stopping" = true ] || [ "$interrupted" = true ]; then finish true stopped 0;fi
-    if [ "$control_busy" = true ];then business_unlock;sleep 0.05 || finish false failed 7;continue;fi
+    if [ "$control_busy" = true ];then business_unlock;sleep "$poll_delay" || finish false failed 7;continue;fi
     ticks=$((ticks+1));emit true running '' || fail
     ash "$dir/homegate-ddns-batch.sh" sync --confirm 4>&- 9>&- > "$work/batch" 2>/dev/null & child=$!
     child_info=$(lua "$dir/worker-process.lua" info "$child" none 2>/dev/null) || fail
@@ -304,7 +306,7 @@ while :; do
         [ -n "$info" ] && [ -n "$child_birth" ] || break
         old_ifs=$IFS;IFS=:;set -- $info;IFS=$old_ifs
         [ "$5" = "$child_birth" ] || break;case "$1" in Z|X) break;; esac
-        sleep 0.05 || :
+        sleep "$poll_delay" || :
     done
     private_file "$work/batch" && [ "$(stat -c %s "$work/batch")" -le 65536 ] || fail
     selection=;for item in $names; do selection=${selection:+$selection,}$item;done

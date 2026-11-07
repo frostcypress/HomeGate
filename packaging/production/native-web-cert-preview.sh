@@ -29,7 +29,7 @@ for pair in '6:/var/run/homegate/frontend.lock' '7:/etc/homegate/transactions/.s
  flock -n "$fd" || exit 4
 done
 lua "$base/native-web-certificate.lua" receive check "$job" || exit 1
-setsid ash "$base/native-web-certificate-watchdog.sh" --certificate-validate "$job" "$job" 3>&1 >/dev/null
+lua /usr/libexec/homegate/native-web-session.lua certificate-preview "$job" 3>&1 >/dev/null
 code=$?
 if [ "$code" != 0 ];then
  stage=0;if [ -f "$pending/phase" ] && [ ! -L "$pending/phase" ];then stage=$(cat "$pending/phase");fi

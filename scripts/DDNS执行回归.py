@@ -84,7 +84,6 @@ class Static(PlanStatic):
         for n in ['homegate-ddns-read.sh','homegate-cloudflare-read.sh']:
             b=(PROTO/n).read_bytes();self.assertEqual(b.count(b'ddns_sync_enabled=false'),1);self.assertFalse(p.parse(b).root_node.has_error);self.assertNotIn(b'\r',b)
         for n in ['ddns-sync.lua','homegate-ddns-sync.lua']:self.lua.compile((PROTO/n).read_bytes());self.assertNotIn(b'os.execute',(PROTO/n).read_bytes())
-        self.assertNotIn('prototype/',(PROTO.parent/'Makefile').read_text())
 
 class SyncMixin:
     run_prepare=LifecycleRuntime.run_prepare

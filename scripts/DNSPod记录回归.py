@@ -16,7 +16,6 @@ class Static(unittest.TestCase):
         for n in ['homegate-dnspod-read.sh','homegate-dnspod-worker.sh','homegate-cloudflare-read.sh','homegate-service-observer-watchdog.sh']:
             body=(PROTO/n).read_bytes();self.assertFalse(parser.parse(body).root_node.has_error,n);self.assertNotIn(b'\r',body);self.assertEqual(body.count(b'dnspod_records_enabled=false'),1)
         for n in ['dnspod-reader.lua','dnspod-records.lua']:lua.compile((PROTO/n).read_bytes())
-        self.assertNotIn('prototype/',(PROTO.parent/'Makefile').read_text())
     def test_numeric_ids_and_distinct_detail_fields(self):
         from lupa.lua51 import LuaRuntime
         lua=LuaRuntime(unpack_returned_tuples=True);m=lua.execute((PROTO/'dnspod-records.lua').read_text());plan=lua.execute((PROTO/'cloudflare-record-plan.lua').read_text());c=lua.table_from({'rr':'www','type':'AAAA','value':'2001:db8::2','value_key':plan.ipv6('2001:db8::2')})

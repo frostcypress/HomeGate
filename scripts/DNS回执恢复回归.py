@@ -29,7 +29,7 @@ class Static(RecordStatic):
         s=(PROTO/'homegate-dns-recovery.sh').read_text();collect=s.split('    collect)\n',1)[1]
         self.assertLess(collect.index('ledger_write collecting'),collect.index('mv "$journal" "$archive"'))
         self.assertLess(collect.index('mv "$journal" "$archive"'),collect.index('ledger_write settled'))
-        self.assertNotIn('rm ',s);self.assertNotIn('curl',s);self.assertNotIn('prototype/',(PROTO.parent/'Makefile').read_text())
+        self.assertNotIn('rm ',s);self.assertNotIn('curl',s)
         self.lua.compile((PROTO/'cloudflare-records.lua').read_bytes())
 
 class Runtime(ReceiptRuntime):

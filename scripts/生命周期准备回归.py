@@ -16,7 +16,6 @@ class Static(unittest.TestCase):
         self.assertNotIn('runtime_prepare_enabled=true',body)
         self.assertIn('prepare) bootstrap_action=bootstrap',body)
         self.assertIn('resume) bootstrap_action=resume',body)
-        self.assertNotIn('prototype/',(ROOT/'project/core/Makefile').read_text())
         self.assertLess(body.index("fail 'Lifecycle preparation is not ready'"),body.index('owner=$(id -u)'))
 
     def test_no_destructive_cleanup_or_business(self):

@@ -29,7 +29,6 @@ class Static(unittest.TestCase):
         self.assertNotIn(b'production_writes_enabled=true',body)
         self.assertIn(b'/etc/config/homegate',body)
         self.assertIn(b'/var/run/homegate/frontend.lock',body)
-        self.assertNotIn('prototype/',(ROOT/'project/core/Makefile').read_text())
 
     def test_lua51_compiles_without_credential_output(self):
         from lupa.lua51 import LuaRuntime

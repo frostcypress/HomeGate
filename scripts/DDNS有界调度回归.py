@@ -64,7 +64,6 @@ class Static(BaseStatic):
         for forbidden in [b'kill ',b'killpg',b'--confirm-closeouts',b'collect-receipt',b'retire-archive',b'rm -r',b'eval ',b'curl']:self.assertNotIn(forbidden,body)
         self.assertIn(b'[ "$owner" = 0 ]',body)
         for name in ['ddns-schedule.lua','homegate-ddns-schedule.lua']:self.lua.compile((PROTO/name).read_bytes())
-        self.assertNotIn('prototype/',(PROTO.parent/'Makefile').read_text())
 
     def test_continuous_records_cannot_weaken_finite_records(self):
         d={**self.specimen(),'continuous':True,'deadline':0};self.assertTrue(self.policy.lease(self.table(d)))

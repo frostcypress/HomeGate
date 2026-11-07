@@ -18,7 +18,6 @@ class Static(unittest.TestCase):
             body=(PROTO/name).read_bytes();self.assertEqual(body.count(b'ddns_closeout_enabled=false'),1)
             self.assertNotIn(b'\r',body);self.assertFalse(parser.parse(body).root_node.has_error,name)
         LuaRuntime().compile((PROTO/'homegate-ddns-sync.lua').read_bytes())
-        self.assertNotIn('prototype/',(PROTO.parent/'Makefile').read_text())
     def test_runtime_aliases_have_fixed_actions_and_original_confirmation(self):
         body=(PROTO/'homegate-cloudflare-read.sh').read_text()
         for action in ['collect-orphan','collect-receipt','retire-archive']:

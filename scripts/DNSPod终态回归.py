@@ -26,7 +26,6 @@ class Static(RecoveryStatic):
         for name in ['dnspod-checkpoint.lua','dnspod-reconcile-plan.lua']:self.lua.compile((PROTO/name).read_bytes())
         body=(PROTO/'homegate-dns-recovery.sh').read_text();self.assertIn('HGDNPTerminal1',body);self.assertIn('HGDNPCollection1',body)
         collect=body.split('    collect)\n',1)[1];self.assertLess(collect.index('ledger_write collecting'),collect.index('mv "$journal" "$archive"'));self.assertLess(collect.index('mv "$journal" "$archive"'),collect.index('ledger_write settled'))
-        self.assertNotIn('prototype/',(PROTO.parent/'Makefile').read_text())
 
 class Runtime(RecoveryRuntime):
     def contents(self):

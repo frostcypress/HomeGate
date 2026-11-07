@@ -14,7 +14,6 @@ class Static(unittest.TestCase):
   parser=tree_sitter.Parser(tree_sitter.Language(tree_sitter_bash.language()));body=(PROTO/'homegate-ddns-ui.sh').read_bytes();self.assertFalse(parser.parse(body).root_node.has_error)
   for p in [PROTO/'ddns-ui-policy.lua',PROTO/'homegate-ddns-ui.lua',UI/'lua/model/ddns.lua',UI/'lua/controller/ddns.lua']:LuaRuntime().compile(p.read_bytes())
   self.assertIn(b'ddns_ui_enabled=false',body);self.assertNotIn(b'ddns-sync',body);self.assertNotIn(b'schedule-run',body);self.assertNotIn(b'--confirm-closeouts',body)
-  for p in [ROOT/'project/core/Makefile',ROOT/'project/luci/Makefile']:self.assertNotIn('prototype/',p.read_text())
  def test_lua_post_and_rpc_acl_are_separate_from_read(self):
   acl=json.loads((UI/'js/ddns-acl.json').read_text());v=acl['luci-app-homegate-ddns'];self.assertEqual(v['read']['ubus'],{'homegate_ddns':['status','jobs']});self.assertEqual(set(v['write']['ubus']['homegate_ddns']),{'preview','commit','revoke','submit','maintain_preview','maintain_commit'})
   c=(UI/'lua/controller/ddns.lua').read_text();self.assertIn('native_ddns_page_enabled=false',c)

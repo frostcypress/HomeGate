@@ -29,7 +29,7 @@ class Static(PlanStatic):
         for n in ['homegate-dnspod-read.sh','homegate-dnspod-worker.sh','homegate-cloudflare-read.sh','homegate-service-observer-watchdog.sh','homegate-dns-receipt.sh']:
             b=(PROTO/n).read_bytes();self.assertFalse(parser.parse(b).root_node.has_error,n);self.assertNotIn(b'\r',b);self.assertEqual(b.count(b'dnspod_receipt_enabled=false'),1)
         for n in ['dnspod-reconcile-plan.lua','dnspod-checkpoint.lua','dnspod-reader.lua']:self.lua.compile((PROTO/n).read_bytes())
-        b=(PROTO/'homegate-dns-receipt.sh').read_text();self.assertIn('HGDNPJOURNAL1',b);self.assertLess(b.index('fsync "$stage/context"'),b.index('mv "$stage" "$inactive"'));self.assertNotIn('prototype/',(PROTO.parent/'Makefile').read_text())
+        b=(PROTO/'homegate-dns-receipt.sh').read_text();self.assertIn('HGDNPJOURNAL1',b);self.assertLess(b.index('fsync "$stage/context"'),b.index('mv "$stage" "$inactive"'))
 
 class Runtime(RecordRuntime):
     def contents(self):return {k:v for k,v in super().contents().items() if k!='dns-operation' and not k.startswith('dns-operation/')}

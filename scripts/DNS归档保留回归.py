@@ -20,7 +20,6 @@ class Static(RecordStatic):
             node=nodes.pop()
             if node.type=='command_name':self.assertNotIn(node.text,(b'source',b'.'))
             nodes.extend(node.children)
-        self.assertNotIn('prototype/',(PROTO.parent/'Makefile').read_text())
     def test_retirement_guard_remains_outside_production_feature_switch(self):
         body=(PROTO/'homegate-config-prototype.sh').read_text();guard=body.split('[ -e "$store/dns-retirement" ]',1)[1].split('    if [ "$persistent_mode"',1)[0]
         self.assertNotIn('enabled',guard);self.assertIn('homegate-dns-retention.sh" check',guard)

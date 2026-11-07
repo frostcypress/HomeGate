@@ -14,7 +14,6 @@ class Static(unittest.TestCase):
             b=(PROTO/n).read_bytes();self.assertEqual(b.count(b'ddns_work_enabled=false'),1);self.assertNotIn(b'\r',b);self.assertFalse(p.parse(b).root_node.has_error,n)
         from lupa.lua51 import LuaRuntime
         LuaRuntime().compile((PROTO/'homegate-ddns-sync.lua').read_bytes())
-        self.assertNotIn('prototype/',(PROTO.parent/'Makefile').read_text())
     def test_full_validation_precedes_fixed_member_removal(self):
         s=(PROTO/'homegate-ddns-work.sh').read_text()
         self.assertLess(s.index('preflight remaining && quiet'),s.index('rm -f "$work/$name"'));self.assertIn('source_check && terminal_check',s)

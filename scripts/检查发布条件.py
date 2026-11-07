@@ -37,7 +37,7 @@ def validate(target, frontend, fmt, release=False, root=ROOT):
             errors.append(f'资源预算尚未核实：{key}')
     core = project.get('core', {})
     if core.get('implementation') not in ('shell', 'c') or core.get('migration_complete') is not True:
-        errors.append('核心仍为 Go 对照实现，Shell/C 完整迁移尚未完成')
+        errors.append('原生核心的完整迁移验收尚未完成')
     if core.get('package') != identity(root)['slug'] + '-core':
         errors.append('Core 包名迁移及旧包升级方案尚未完成')
     if release and project.get('release_ready') is not True:

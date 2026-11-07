@@ -52,7 +52,6 @@ class Static(PlanStatic):
         b=(PROTO/'homegate-ddns-state.sh').read_bytes();self.assertEqual(b.count(b'ddns_state_enabled=false'),1);self.assertFalse(parser.parse(b).root_node.has_error);self.assertNotIn(b'\r',b)
         for name in ['homegate-ddns-state.lua','ddns-state.lua']:self.lua.compile((PROTO/name).read_bytes())
         for word in ['rm -r','curl','wget','eval ','kill ','/etc/init.d']:self.assertNotIn(word,b.decode())
-        self.assertNotIn('prototype/',(PROTO.parent/'Makefile').read_text())
 
 class StateMixin:
     def setUp(self):

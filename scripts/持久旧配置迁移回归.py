@@ -15,7 +15,6 @@ class Static(unittest.TestCase):
         self.assertNotIn('lifecycle_migration_enabled=true',body)
         self.assertIn('migration-source-preview)',body)
         self.assertIn('migration-source-commit)',body)
-        self.assertNotIn('prototype/',(ROOT/'project/core/Makefile').read_text())
         self.assertLess(body.index("fail 'Lifecycle migration is not ready'"),body.index('\nopen_store\n'))
 
     def test_source_recheck_after_pointer_sync_before_rename(self):

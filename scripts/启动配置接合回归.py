@@ -23,7 +23,6 @@ class Static(unittest.TestCase):
         LuaRuntime().compile((PROTO/'homegate-startup.lua').read_bytes())
         self.assertIn('lifecycle_startup_enabled=false',(PROTO/'homegate-lifecycle-prepare.sh').read_text())
         self.assertIn('startup_admission_enabled=false',(PROTO/'homegate-config-prototype.sh').read_text())
-        self.assertNotIn('prototype/',(PROTO.parent/'Makefile').read_text())
     def test_source_validation_precedes_metadata_creation_and_original_commands_remain(self):
         body=(PROTO/'homegate-lifecycle-prepare.sh').read_text()
         self.assertLess(body.index('configuration=$(lua'),body.index('mkdir "$runtime"'))

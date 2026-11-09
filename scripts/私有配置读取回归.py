@@ -52,7 +52,9 @@ class Codec(unittest.TestCase):
             self.reject(self.frame(slots))
 
     def test_numbers_counts_and_sizes_fail_closed(self):
-        for revision in [b'0',b'33',b'03',b'1\r',b'-1',b'99999999']:
+        for revision in [33,64]:
+            self.assertEqual(self.parse(self.frame(revision=str(revision).encode()))[b'revision'],revision)
+        for revision in [b'0',b'65',b'03',b'1\r',b'-1',b'99999999']:
             self.reject(self.frame(revision=revision))
         for count in [1,193]: self.reject(self.frame(count=count))
         self.reject(self.frame([(b'cloudflare.dns_a.secret',b'')]))

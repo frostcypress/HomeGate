@@ -21,7 +21,9 @@ class Static(BaseStatic):
     def specimen(self):return {'schema':'HGDDNSSCHEDULE1','identity':'a'*64,'generation':'b'*64,'grant':'c'*64,'revision':3,'boot':'11111111-1111-1111-1111-111111111111','pid':'123','birth':'456','token':'d'*32,'started':1000,'deadline':1900}
     def test_immutable_lease_has_fixed_admission_budget_and_bounded_identity(self):
         d=self.specimen();self.assertTrue(self.policy.lease(self.table(d)));self.assertEqual((self.policy.budget,self.policy.limit),(900,8))
-        for k,v in [('deadline',1901),('pid','1'),('birth','0'),('token','bad'),('generation','-'),('revision',33),('extra','PRIVATE_SENTINEL')]:
+        for revision in [33,64]:
+            self.assertTrue(self.policy.lease(self.table({**d,'revision':revision})))
+        for k,v in [('deadline',1901),('pid','1'),('birth','0'),('token','bad'),('generation','-'),('revision',65),('extra','PRIVATE_SENTINEL')]:
             bad={**d,k:v};self.assertFalse(self.policy.lease(self.table(bad)))
     def test_batch_receipt_requires_exact_prefix_framing_and_conservative_effect(self):
         row={'rule':'ddns_a','provider':'cloudflare','status':'unchanged','effect':'none','error_kind':'','retryable':False,'retry_in':0}

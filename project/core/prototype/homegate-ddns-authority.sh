@@ -65,7 +65,7 @@ read_record() {
     case "$revision:$created" in *[!0-9:]*) return 1;; esac
     case "$revision" in ''|0*) return 1;; esac
     case "$created" in ''|0?*) return 1;; esac
-    [ "${#revision}" -le 2 ] && [ "$revision" -le 32 ] && [ "${#created}" -le 9 ] && hex "$nonce" 32 || return 1
+    [ "${#revision}" -le 2 ] && [ "$revision" -le 64 ] && [ "${#created}" -le 9 ] && hex "$nonce" 32 || return 1
     for value in "$identity" "$generation" "$source_hash"; do hex "$value" 64 || return 1;done
     [ "$previous" = none ] || hex "$previous" 64 || return 1
     [ "${#boot}" -eq 36 ] || return 1;case "$boot" in *[!0-9a-f-]*) return 1;; esac

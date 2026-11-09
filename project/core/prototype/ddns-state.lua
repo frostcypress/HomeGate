@@ -8,7 +8,7 @@ local function id(s)return type(s)=='string' and #s>0 and #s<=64 and s:match('^[
 local function hex(s)return type(s)=='string' and #s==64 and s:match('^[0-9a-f]+$') end
 function M.valid(d)
     if type(d)~='table' or d.schema~='HGDDNSSTATE1' or not id(d.rule) or not providers[d.provider] or
-        not integer(d.revision,1,32) or not hex(d.identity) or not hex(d.generation) or type(d.boot)~='string' or
+        not integer(d.revision,1,64) or not hex(d.identity) or not hex(d.generation) or type(d.boot)~='string' or
         #d.boot~=36 or not d.boot:match('^[0-9a-f-]+$') or not integer(d.interval,60,999999999) or
         not integer(d.updated,0,999999999) or not integer(d.failures,0,8) or not integer(d.delay,0,999999999) or
         not outcomes[d.outcome] or not kinds[d.error_kind] or (d.event_epoch~=nil and not integer(d.event_epoch,1,253402300799)) or

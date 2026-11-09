@@ -16,7 +16,7 @@ BASE='/cgi-bin/luci/admin/services/homegate';PAGE=BASE+'/configuration'
 NGINX=ROOT/'build/nginx';FIXTURE=ROOT/'build/nginx-fixture';PROXY=False;INSTALLED=None
 WOL=ROOT/'build/wol';WOL_FIXTURE=ROOT/'build/wol-fixture';ACTIONS=False
 ACTION_GROUPS=('cli_actions','web_access_actions','web_maintenance_actions')
-FIRMWARE_JOB_GROUPS=('cli_ddns','cli_ddns_unknown','cli_ddns_batch','daemon_ddns',
+FIRMWARE_JOB_GROUPS=('cli_ddns','cli_ddns_unknown','cli_ddns_batch','daemon_ddns','daemon_proxy',
                      'cli_acme','cli_acme_unknown','daemon_acme','web_acme','web_unknown','web_certificate')
 
 def setup_state(s, *, bin_ubus=False, switchable_setsid=False):
@@ -215,6 +215,12 @@ class Native(web.Web):
         s=self.login();self.prepare_account(s)
         self.cfg('secret_put',s,id='dns_a',provider='cloudflare',slot='secret',value='SECRET_SENTINEL',consent='1')
         self.publish(s);return s
+    def seed_unpublished_generation(self, revision):
+        store=Path('/etc/homegate/transactions')
+        original=store/('gen-'+(store/'current').read_text().strip())
+        # Copy a sealed generation without changing the committed pointer or ancestry.
+        shutil.copytree(original,store/f'gen-{revision}')
+        return original
     def test_backup(self):
         s=self.configured();original=self.backup(s);source=Path('/etc/config/homegate');before=source.read_bytes()
         large=original+('# '+('a'*64)+'\n')*1800
@@ -313,15 +319,52 @@ class Native(web.Web):
     def test_daemon(self):
         s=self.enable_owner();self.cli('service-plan-set','-','-','-','open','--confirm')
         self.start_owner();d=self.wait_service(lambda d:d['state']=='running');self.assertTrue(d['healthy'])
+        ubus=STATE/'tools/ubus'
+        original_ubus=ubus.read_bytes()
+        instance={'running':True,'pid':self.owner.pid,'command':['/usr/bin/homegate','daemon']}
+        observer=['/usr/sbin/ash','-c','/usr/sbin/lua /usr/libexec/homegate/project/core/prototype/homegate-service-observer.lua 3>&1']
+        try:
+            for pid,boot,expected in ((self.owner.pid,0,0),(self.owner.pid,1,0),(os.getpid(),1,1)):
+                subprocess.run(['/etc/init.d/homegate','enable' if boot else 'disable'],check=True,timeout=8)
+                instance['pid']=pid
+                response=json.dumps({'homegate':{'instances':{'instance1':instance}}})
+                ubus.write_text("#!/bin/sh\nprintf '%s\\n' '"+response+"'\n")
+                sample=subprocess.run(observer,capture_output=True,timeout=8)
+                self.assertEqual(sample.returncode,expected,(sample.stdout,sample.stderr))
+                if expected==0:
+                    self.assertEqual(sample.stdout.splitlines()[:3],[b'HGSERVICE1',str(boot).encode(),b'1'])
+        finally:
+            ubus.write_bytes(original_ubus)
+            subprocess.run(['/etc/init.d/homegate','disable'],check=True,timeout=8)
         status=self.cli('status');self.assertTrue(status['service']['running'],status);self.assertTrue(status['service']['enabled'],status);self.assertTrue(status['service']['healthy'],status)
         self.cli('service-quiescent',ok=False)
         # A second canonical foreground daemon must not acquire or replace it.
         duplicate=subprocess.run(['/usr/bin/homegate','daemon'],capture_output=True,timeout=10);self.assertEqual(duplicate.returncode,1)
         self.assertEqual(self.cli('status')['coordinator']['state'],'running')
         # Exercise the actual rc.common service body with external procd API capture.
-        shell="""procd_open_instance(){ echo open; };procd_set_param(){ printf '%s\\n' \"$*\"; };procd_close_instance(){ echo close; };. /etc/init.d/homegate; stop_service; start_service"""
-        p=subprocess.run(['/usr/sbin/ash','-c',shell],capture_output=True,timeout=30);self.assertEqual(p.returncode,0,p.stdout);self.assertIn(b'command /usr/bin/homegate daemon',p.stdout)
+        shell="""procd_open_instance(){ echo open; };procd_set_param(){ printf '%s\\n' "$*"; };procd_close_instance(){ echo close; };. /etc/init.d/homegate; "$1" """
+        def init(action):
+            p=subprocess.run(['/usr/sbin/ash','-c',shell,'ash',action],capture_output=True,timeout=30)
+            self.assertEqual(p.returncode,0,(p.stdout,p.stderr));return p.stdout
+        init('stop_service')
         self.owner.wait(timeout=20);self.assertEqual(self.owner.returncode,0);self.assertFalse(self.cli('status')['service']['running']);self.cli('service-quiescent')
+        run=Path('/var/run/homegate')
+        lock=run/'frontend.lock'
+        lock.chmod(0o644)
+        self.assertNotIn(b'command /usr/bin/homegate daemon',init('start_service'))
+        self.assertEqual(lock.stat().st_mode&0o777,0o644)
+        lock.chmod(0o600)
+        store=Path('/etc/homegate/transactions')
+        paths=[Path('/etc/config/homegate'),store/'current',store/'startup-active',Path('/etc/homegate/native-service-plan')]
+        before=[p.read_bytes() for p in paths]
+        run.rename(run.with_name('homegate-before-cold-start'))
+        self.assertIn(b'command /usr/bin/homegate daemon',init('start_service'))
+        self.assertEqual(lock.stat().st_mode&0o777,0o600)
+        self.assertEqual([p.read_bytes() for p in paths],before)
+        self.cli('lifecycle-disable','--confirm')
+        run.rename(run.with_name('homegate-before-disabled-start'))
+        self.assertNotIn(b'command /usr/bin/homegate daemon',init('start_service'))
+        self.assertFalse(self.cli('lifecycle-status')['main_enabled'])
         self.verify_unchanged()
     def test_daemon_ddns(self):
         s=self.enable_owner();self.rule(s)
@@ -446,7 +489,8 @@ class Native(web.Web):
         candidate='\n'.join(lines)+'\n';self.assertNotEqual(candidate,public)
         preview=self.cfg('backup_preview',s,backup=candidate);self.cfg('apply',s,confirmation=preview['report']['confirmation'],consent='1')
         self.publish(s);self.cfg('lifecycle_enable',s,consent='1')
-        self.cli('service-plan-set','-','-','plain','open','--confirm');self.start_owner();self.wait_service(lambda d:d['state']=='running',seconds=30)
+        self.cli('service-plan-set','-','-','plain','open','--confirm');self.disable_fixture_setsid()
+        self.start_owner();self.wait_service(lambda d:d['state']=='running',seconds=30)
         public_status=self.cli('proxy-status')
         if not public_status['http_listening']:
             root=Path('/var/run/homegate/proxy');pid=(root/'nginx.pid').read_text().strip();owner=(root/'owner').read_text().strip().split(':')[0]
@@ -600,7 +644,11 @@ fi
         self.assertEqual(self.cli('ddns-status')['results'][0]['at'],observed)
         self.verify_unchanged(allow_provider_calls=True)
     def test_cli_ddns_unknown(self):
-        s=self.configured();self.rule(s);self.cfg('lifecycle_enable',s,consent='1')
+        s=self.configured();self.rule(s);self.seed_unpublished_generation(31)
+        saved=self.web_wait(self.web_request('maintenance_apply',{'mode':'save','log_max_lines':'1100'},True)['job'])
+        self.assertTrue(saved['ok'],saved)
+        self.assertEqual(self.cli('config-status')['revision'],33)
+        self.cfg('lifecycle_enable',s,consent='1')
         grant=self.cli('grant-preview','ddns_a');self.cli('grant-commit',grant['confirmation'])
         self.disable_fixture_setsid()
         (STATE/'provider-mode').write_text('unknown')
@@ -762,7 +810,11 @@ fi
         self.action_result('certificate-file-import',success=True,unsafe_key_mode_refused=True,old_material_retained=True)
         for action,fields in [('preview_wol_host',{'id':'wake_a','name':'Wake host','mac':'c8-7f-54-53-6b-80'}),('preview_wol_settings',{'interface':'br-lan','selected_host':'wake_a'})]:
             preview=self.cfg(action,s,**fields);self.cfg('apply',s,confirmation=preview['report']['confirmation'],consent='1')
+        self.disable_fixture_setsid()
+        sleep=STATE/'tools/sleep';sleep.unlink(missing_ok=True)
+        sleep.write_text('#!/bin/sh\ncase "$1" in ""|*[!0-9]*) exit 1;; esac\nexec /usr/sbin/busybox sleep "$@"\n');sleep.chmod(0o755)
         report=self.cli('wol','wake_a');self.assertEqual((report['raw_sent'],report['udp_sent']),(9,6));self.verify_wake_capture(report)
+        report=self.cli('wol','br-lan','C8:7F:54:53:6B:80');self.assertEqual((report['raw_sent'],report['udp_sent']),(9,6));self.verify_wake_capture(report)
         (STATE/'wol-mode').write_text('all-fail');report=self.cli('wol','wake_a',ok=False);self.assertEqual((report['raw_sent'],report['udp_sent']),(0,0));self.verify_wake_capture(report)
         (STATE/'wol-mode').write_text('ok');self.cli('wol','eth1;id','C8:7F:54:53:6B:80',ok=False);self.assertFalse((STATE/'wol-wire.bin').exists())
         done=self.web_wait(self.web_request('wol_action',{'op':'wake','id':'wake_a'},True)['job']);self.assertTrue(done['ok'],done)
@@ -816,7 +868,11 @@ fi
         self.assertIn('1',(STATE/'integer-sleep-calls').read_text().splitlines())
         self.action_result('config-reset',completed=True,bin_ubus_only=True,root_group_rc_common_775=True,integer_sleep_only=True,failed_observation_retained_preview=True,default_switch_restored=True,empty_coordinator_running=False);self.verify_unchanged()
     def test_cli_acme(self):
-        s=self.acme_setup();self.cfg('lifecycle_enable',s,consent='1')
+        s=self.acme_setup();self.seed_unpublished_generation(31)
+        saved=self.web_wait(self.web_request('maintenance_apply',{'mode':'save','log_max_lines':'1100'},True)['job'])
+        self.assertTrue(saved['ok'],saved)
+        self.assertEqual(self.cli('config-status')['revision'],33)
+        self.cfg('lifecycle_enable',s,consent='1')
         self.assertEqual(self.cli('cert-renew')['results'],[]);self.assertFalse((STATE/'acme-fixture.json').exists())
         self.disable_fixture_setsid()
         d=self.cli('cert-renew','cert_a');self.assertTrue(d['ok']);self.assertEqual(d['state'],'issued')
@@ -1035,18 +1091,44 @@ else:
             self.assertEqual(self.web_request(route)['redirect'],BASE+'/'+destination)
         for route in ['api/status','api/version','api/network','api/ddns','api/certs','api/proxy','api/firewall','api/wol','api/logs','api/log_events','api/access_recent','api/dns_zones','domain','web']:
             d=self.web_request(route);self.assertTrue(d['ok'],(route,d));self.assertTrue('body' in d or 'redirect' in d,(route,d))
+        store=Path('/etc/homegate/transactions')
+        original=self.seed_unpublished_generation(31)
         d=self.web_request('basic_apply',{'mode':'save','ddns_interval':'420','https_port':'444','proxy_https_port':'10444','auto_firewall':'1'},True)
         result=self.web_wait(d['job']);self.assertTrue(result['ok'],result);self.assertIn('notice=',result['redirect'])
+        status=self.cli('config-status');self.assertEqual(status['revision'],33);self.assertEqual(status['history_capacity'],64)
+        credentials='credentials/cloudflare.dns_a.secret'
+        self.assertEqual((store/'gen-33'/credentials).read_bytes(),(original/credentials).read_bytes())
+        self.assertIn('network',self.cli('network-resolve'))
+        self.assertTrue(self.cli('dns-provider-status','dns_a')['credentials_valid'])
+        self.assertTrue(self.cli('cert-status')['ok'])
         self.assertIn("option ddns_interval '420'",Path('/etc/config/homegate').read_text())
         self.assertEqual(self.web_request('overview')['data']['main']['ddns_interval'],'420')
-        d=self.web_request('wol_apply',{'wol_interface':'br-lan','wol_host_count':'1','wol_host_name_1':'Test desktop','wol_host_mac_1':'02:11:22:33:44:55'},True)
+        wol_form={'wol_interface':'br-lan','wol_host_count':'1','wol_host_name_1':'Test desktop','wol_host_mac_1':'02:11:22:33:44:55'}
+        lock=Path('/var/run/homegate/frontend.lock')
+        config=Path('/etc/config/homegate')
+        before=config.read_bytes()
+        lock.chmod(0o644)
+        d=self.web_request('wol_apply',wol_form,True)
+        self.assertFalse(self.web_wait(d['job'])['ok'])
+        self.assertEqual(lock.stat().st_mode & 0o777,0o644)
+        self.assertEqual(config.read_bytes(),before)
+        self.assertEqual((store/'current').read_text().strip(),'33')
+        lock.unlink()
+        self.assertEqual(self.cli('config-status',ok=False)['error'],'Unsafe shared writer lock')
+        self.assertIn('template',self.web_request('wol'))
+        self.assertFalse(lock.exists())
+        d=self.web_request('wol_apply',wol_form,True)
         result=self.web_wait(d['job']);self.assertTrue(result['ok'],result)
+        self.assertEqual(lock.stat().st_mode & 0o777,0o600)
+        status=self.cli('config-status');self.assertEqual(status['revision'],35);self.assertFalse(status['service_enabled'])
+        self.assertEqual((store/'gen-35'/credentials).read_bytes(),(original/credentials).read_bytes())
         hosts=self.web_request('wol')['data']['hosts'];self.assertEqual(len(hosts),1);self.assertEqual(hosts[0]['mac'],'02:11:22:33:44:55')
         before=Path('/etc/config/homegate').read_bytes()
         d=self.web_request('basic_apply',{'https_port':'99999'},True);result=self.web_wait(d['job']);self.assertFalse(result['ok']);self.assertEqual(Path('/etc/config/homegate').read_bytes(),before)
         d=self.web_request('config_export',{},True);result=self.web_wait(d['job']);self.assertTrue(result['ok'],result);self.assertIn('# secrets: omitted',result['body']);self.assertNotIn('SECRET_SENTINEL',result['body'])
         d=self.web_request('basic_apply',{'mode':'apply','enabled':'1'},True);result=self.web_wait(d['job'],seconds=25);self.assertTrue(result['ok'],result);self.assertTrue(result['runtime_applied'])
         self.assertEqual(self.web_request('overview')['data']['main']['enabled'],'1');self.assertTrue(self.cli('status')['service']['running'])
+        (STATE/'provider-calls').unlink(missing_ok=True)
         self.verify_unchanged()
     def test_web_http(self):
         s=self.configured();sid,token=s
@@ -1159,15 +1241,75 @@ else:
 
     def test_web_apply(self):
         s=self.configured()
-        for port in ['447']:
+        receipt=Path('/var/run/homegate/native-service.json')
+        revision=int(Path('/etc/homegate/transactions/current').read_text())
+        binding='a'*64
+        probe=['/usr/sbin/lua','/usr/libexec/homegate/native-service.lua','web-running',str(revision),binding]
+        old_failure={'phase':'native-service','version':self.cli('version')['version'],'state':'failed',
+                     'configuration_revision':revision-1,'source_binding_digest':binding}
+        try:
+            receipt.write_text(json.dumps(old_failure));receipt.chmod(0o600)
+            self.assertEqual(subprocess.run(probe,timeout=5).returncode,3)
+            old_failure.update(configuration_revision=revision,source_binding_digest='b'*64)
+            receipt.write_text(json.dumps(old_failure))
+            self.assertEqual(subprocess.run(probe,timeout=5).returncode,3)
+            old_failure['source_binding_digest']=binding
+            receipt.write_text(json.dumps(old_failure))
+            self.assertEqual(subprocess.run(probe,timeout=5).returncode,1)
+        finally:
+            receipt.unlink(missing_ok=True)
+        rc_common=STATE/'etc/rc.common'
+        original_rc=rc_common.read_text()
+        # procd may have accepted the start even when init returns an error.
+        anchor='start) start_service;;'
+        self.assertEqual(original_rc.count(anchor),1)
+        rc_common.write_text(original_rc.replace(anchor,
+            'start) (sleep 14; start_service) </dev/null >/dev/null 2>&1 & exit 1;;'))
+        try:
             import re
-            code,_,body=self.cgi(BASE+'/basic_apply',cookie=s[0],verb='POST',fields={'token':s[1],'enabled':'1','mode':'apply','https_port':port});self.assertEqual(code,200)
+            code,_,body=self.cgi(BASE+'/basic_apply',cookie=s[0],verb='POST',fields={'token':s[1],'enabled':'1','mode':'apply','https_port':'447'});self.assertEqual(code,200)
             job=re.search(rb"var id='([0-9a-f]{32})'",body).group(1).decode()
-            result=self.web_wait(job,seconds=25);self.assertTrue(result['ok'],result);self.assertTrue(result['runtime_applied'])
+            result=self.web_wait(job,seconds=45);self.assertTrue(result['ok'],result);self.assertTrue(result['runtime_applied'])
             status=self.cli('status');self.assertTrue(status['service']['healthy']);self.assertTrue(status['service']['running'])
-            self.assertEqual(self.web_request('overview')['data']['main']['https_port'],port)
+            self.assertEqual(self.web_request('overview')['data']['main']['https_port'],'447')
+            self.assertEqual(subprocess.run(['/etc/init.d/homegate','enabled'],timeout=8).returncode,0)
+        finally:
+            rc_common.write_text(original_rc)
         self.assertFalse(Path('/etc/homegate/transactions/ddns-authority').exists())
-        result=self.web_wait(self.web_request('basic_apply',{'mode':'apply'},True)['job'],seconds=25);self.assertTrue(result['ok'],result)
+        # Keep the real owner from finishing stop until the Web writer makes a
+        # whole-second retry. The target sleep rejects fractional arguments.
+        import signal
+        run=Path('/var/run/homegate')
+        pid=json.loads((run/'native-service.json').read_text())['pid']
+        sleep=STATE/'tools/sleep'
+        original_sleep=sleep.read_text()
+        anchor="printf '%s\\n' \"$1\" >> /teststate/integer-sleep-calls"
+        self.assertEqual(original_sleep.count(anchor),1)
+        sleep.write_text(original_sleep.replace(anchor,anchor+r'''
+parent=$(tr '\000' ' ' < "/proc/$PPID/cmdline" 2>/dev/null)
+case "$parent" in *HGWEBEXIT*) touch /teststate/web-stop-slept;; esac
+'''))
+        waited=threading.Event()
+        os.kill(pid,signal.SIGSTOP)
+        def resume_owner_after_retry():
+            try:
+                deadline=time.monotonic()+12
+                while time.monotonic()<deadline:
+                    if (run/'native-service.stop').exists() and (STATE/'web-stop-slept').exists():
+                        waited.set();return
+                    time.sleep(.05)
+            finally:
+                os.kill(pid,signal.SIGCONT)
+        resume=threading.Thread(target=resume_owner_after_retry)
+        resume.start()
+        try:
+            result=self.web_wait(self.web_request('basic_apply',{'mode':'apply'},True)['job'],seconds=30)
+        finally:
+            resume.join()
+            sleep.write_text(original_sleep)
+        self.assertTrue(waited.is_set(),'Web writer did not wait for stop on integer-only sleep')
+        self.assertTrue(result['ok'],result)
+        self.assertTrue(result['runtime_stopped_for_save'],result)
         self.assertFalse(self.cli('status')['service']['running']);self.cli('service-quiescent');self.verify_unchanged()
     def test_web_reapply(self):
         self.configured()
@@ -1415,7 +1557,7 @@ def main():
         result=rpc.isolated(rpc.WORK,guest_script=Path(__file__).resolve(),extra_ro=((luci.HTTP,luci.LUA,NGINX,FIXTURE) if PROXY else (luci.HTTP,luci.LUA))+((INSTALLED,) if INSTALLED else ())+((WOL,WOL_FIXTURE) if ACTIONS else ()),
           extra_mounts=lambda s:(((s/'luci-library',luci.LUA/'prefix/lib/lua/luci'),) if INSTALLED else ())+((Path('/etc/ssl'),'/etc/ssl'),(Path('/usr/bin'),'/fixture-host-bin'),(s/'usr-bin','/usr/bin'),(s/'controllers',luci.LUA/'prefix/lib/lua/luci/controller'),(s/'models',luci.LUA/'prefix/lib/lua/luci/model'),(s/'libexec','/usr/libexec'),(s/'tools','/usr/sbin'),(s/'curl-fixture','/usr/bin/curl'))+(((s/'i18n',luci.LUA/'prefix/lib/lua/luci/i18n'),) if INSTALLED else ())+(((s/'wol-sys-net','/sys/class/net'),) if ACTIONS else ()),
           extra_rw_mounts=lambda s:((s/'etc/rc.d','/etc/rc.d'),(s/'var-log','/var/log'),(s/'etc/.homegate-transition','/etc/.homegate-transition'),(s/'etc/homegate','/etc/homegate'),(s/'etc/homegate-engineering','/etc/homegate-engineering'),(s/'etc/config','/etc/config')),
-          state_setup=lambda s: setup_state(s,bin_ubus=group in ('web_maintenance_actions','cli_compat')+FIRMWARE_JOB_GROUPS,switchable_setsid=group in ('cli_compat',)+FIRMWARE_JOB_GROUPS),guest_args=['--http-runtime-dir',str(luci.HTTP),'--luci-runtime-dir',str(luci.LUA),'--nginx-runtime-dir',str(NGINX),'--nginx-fixture-dir',str(FIXTURE),'--wol-runtime-dir',str(WOL),'--wol-fixture-dir',str(WOL_FIXTURE),'--group',group]+(['--installed-root',str(INSTALLED)] if INSTALLED else []))
+          state_setup=lambda s: setup_state(s,bin_ubus=group in ('web_maintenance_actions','web_apply','cli_compat')+FIRMWARE_JOB_GROUPS,switchable_setsid=group in ('cli_compat','cli_actions')+FIRMWARE_JOB_GROUPS),guest_args=['--http-runtime-dir',str(luci.HTTP),'--luci-runtime-dir',str(luci.LUA),'--nginx-runtime-dir',str(NGINX),'--nginx-fixture-dir',str(FIXTURE),'--wol-runtime-dir',str(WOL),'--wol-fixture-dir',str(WOL_FIXTURE),'--group',group]+(['--installed-root',str(INSTALLED)] if INSTALLED else []))
         if result:return result
     return 0
 if __name__=='__main__':sys.exit(main())

@@ -29,11 +29,12 @@ if [ "$action" = send-internal ];then
   done
  fi
  interrupted=false;trap 'interrupted=true' TERM INT
- stop_family() { kill -TERM -- "-$$" 2>/dev/null || :;sleep .2;kill -KILL -- "-$$" 2>/dev/null;exit 7; }
+ stop_family() { kill -TERM -- "-$$" 2>/dev/null || :;sleep .2 2>/dev/null || sleep 1;kill -KILL -- "-$$" 2>/dev/null;exit 7; }
  (version=$(/usr/libexec/homegate-wol/send --version) && [ "$version" = 'homegate-wol 1' ] && exec /usr/libexec/homegate-wol/send "$@") > "$W/result" 2>/dev/null &
  child=$!;now=$(lua "$process" now) || stop_family;deadline=$((now+6))
  while kill -0 "$child" 2>/dev/null;do
-  [ "$interrupted" = false ] || stop_family;now=$(lua "$process" now) || stop_family;[ "$now" -lt "$deadline" ] || stop_family;sleep .1 || :
+  [ "$interrupted" = false ] || stop_family;now=$(lua "$process" now) || stop_family;[ "$now" -lt "$deadline" ] || stop_family
+  sleep .1 2>/dev/null || sleep 1 || stop_family
  done
  wait "$child";result=$?;[ "$(lua "$process" group "$$" 0)" = 0 ] || stop_family
  hg_file "$W/result" 131072 && lua "$HG_DIR/homegate-wol.lua" result "$result" "$count" || fail

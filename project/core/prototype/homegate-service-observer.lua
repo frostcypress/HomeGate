@@ -3,6 +3,7 @@
 local function fail() os.exit(1) end
 if arg[1] then fail() end
 local json= require('luci.jsonc')
+local daemon_command='/usr/bin/homegate\0daemon\0'
 local function read(path,limit,empty,vanishing)
     local f=io.open(path,'rb'); if not f then return nil end
     local body=f:read(limit+1); local ok=f:close()
@@ -32,7 +33,7 @@ local function process(pid)
     if command==nil then return nil end -- task may have exited while inspected
     local b=read('/proc/'..pid..'/stat',8192,false,true)
     if not b then
-        if command=='/usr/bin/homegate\0daemon\0' then fail() end
+        if command==daemon_command then fail() end
         return nil
     end
     local bt=b:match('^%d+ %(.+%) (.+)$'); if not bt then fail() end
@@ -41,7 +42,7 @@ local function process(pid)
         -- Unrelated short-lived tasks may exit during the bounded /proc scan.
         -- A tracked PID is still rejected by the caller when no identity is
         -- returned. A recognized daemon transition is never ignored.
-        if command=='/usr/bin/homegate\0daemon\0' then fail() end
+        if command==daemon_command then fail() end
         return nil
     end
     return command,fields[20]
@@ -127,7 +128,7 @@ local function sample()
         do
             inspected=inspected+1; if inspected>4096 or #p>9 then fail() end
             local command,birth=process(p)
-            if command=='/usr/bin/homegate\0daemon\0' then
+            if command==daemon_command then
                 matching=matching+1
                 if p~=pid then fail() end
                 identity=p..':'..birth

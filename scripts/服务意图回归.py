@@ -209,7 +209,7 @@ class Runtime(unittest.TestCase):
         self.acknowledge(0,0,expected=5); self.cli('commit-apply-intent',self.plan['confirmation'],'0','1',expected=5)
 
     def test_capacity_full_and_changed_boot_keep_recovery_explicit(self):
-        self.begin(1,1); (self.store/'gen-32').mkdir(mode=0o700)
+        self.begin(1,1); (self.store/'gen-64').mkdir(mode=0o700)
         rows=self.journal().decode().splitlines(); rows[9]='00000000-0000-0000-0000-000000000000'
         # Privileged fixture emulates an intact log originating on an older
         # boot, recomputing the documented bindings. Not a production hook.

@@ -32,7 +32,7 @@ case "$action" in
         case "$account" in ''|*[!a-zA-Z0-9_-]*) exit 2;; esac
         [ "${#account}" -le 64 ] || exit 2
         case "$revision" in ''|*[!0-9]*) exit 2;; esac
-        [ "${#revision}" -le 2 ] && [ "$revision" -ge 1 ] && [ "$revision" -le 32 ] || exit 2
+        [ "${#revision}" -le 2 ] && [ "$revision" -ge 1 ] && [ "$revision" -le 64 ] || exit 2
         case "$job" in ''|0*|*[!0-9]*) exit 2;; esac
         [ "${#job}" -le 9 ] && [ "$job" -ge 2 ] || exit 2;;
     *) exit 2;;

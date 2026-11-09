@@ -7,7 +7,7 @@ local reconcile=assert(loadfile(dir..'/cloudflare-reconcile-plan.lua'))()
 local receipt=assert(loadfile(dir..'/cloudflare-receipt.lua'))()
 local codec=assert(loadfile(dir..'/../../luci/lua/luasrc/model/homegate/backup.lua'))()
 local account,revision=arg[2],arg[3]
-if type(account)~='string' or #account<1 or #account>64 or not account:match('^[a-zA-Z0-9_-]+$') or type(revision)~='string' or not revision:match('^[1-9]%d*$') or tonumber(revision)>32 or arg[5] then os.exit(1) end
+if type(account)~='string' or #account<1 or #account>64 or not account:match('^[a-zA-Z0-9_-]+$') or type(revision)~='string' or not revision:match('^[1-9]%d*$') or tonumber(revision)>64 or arg[5] then os.exit(1) end
 local c
 local reconciling=arg[1]=='reconcile-begin' or arg[1]=='reconcile-response' or arg[1]=='reconcile-result'
 local function report(kind,retry,code,result,effect,affected)

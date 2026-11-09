@@ -215,6 +215,8 @@ while :;do
  fi
  if [ -z "$job" ] && [ "$ddns_started" = false ];then start_ddns || { emit failed ddns_resume_failed;exit 4; };fi
  if [ -z "$job" ] && [ -n "$web" ] && [ "$proxy_started" = false ];then
+  proxy_poll_delay=0.1
+  if ! sleep 0.001 9>&- >/dev/null 2>&1;then proxy_poll_delay=1;fi
   entry proxy-start "$web" "$policy" --confirm >/dev/null || { emit failed proxy_start_failed;exit 7; };proxy_started=true
   clock=$(lua "$dir/worker-process.lua" now 9>&-) || fail;ready_until=$((clock+8))
   while :;do
@@ -223,7 +225,7 @@ while :;do
    [ "$code" != 0 ] || break
    clock=$(lua "$dir/worker-process.lua" now 9>&-) || fail
    [ "$code" = 3 ] && [ "$clock" -lt "$ready_until" ] || { emit failed proxy_start_failed;exit 7; }
-   sleep 0.1 9>&- || fail
+   sleep "$proxy_poll_delay" 9>&- || fail
   done
   if [ "$auto_firewall" = true ];then entry firewall-apply --confirm >/dev/null || { emit failed firewall_apply_failed;exit 7; };fi
  fi

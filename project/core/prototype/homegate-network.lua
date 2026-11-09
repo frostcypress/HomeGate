@@ -1,7 +1,7 @@
 -- Fixed network CLI data adapter; no caller paths, commands or overrides.
 local dir=arg[0]:match('^(.*)/[^/]+$');if not dir then os.exit(1) end
 local mode,revision,bridge=arg[1],arg[2],arg[3]
-if type(revision)~='string' or not revision:match('^[1-9]%d*$') or tonumber(revision)>32 then os.exit(1) end
+if type(revision)~='string' or not revision:match('^[1-9]%d*$') or tonumber(revision)>64 then os.exit(1) end
 local codec=assert(loadfile(dir..'/../../luci/lua/luasrc/model/homegate/backup.lua'))()
 local network=assert(loadfile(dir..'/wan6-plan.lua'))()
 local report=assert(loadfile(dir..'/network-report.lua'))()

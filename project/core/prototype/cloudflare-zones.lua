@@ -4,7 +4,7 @@ local dir=arg[0]:match('^(.*)/[^/]+$');if not dir then os.exit(1) end
 local shared=assert(loadfile(dir..'/cloudflare-codec.lua'))('library')
 local account,revision=arg[2],arg[3]
 if type(account)~='string' or #account<1 or #account>64 or not account:match('^[a-zA-Z0-9_-]+$') or
-    type(revision)~='string' or not revision:match('^[1-9]%d*$') or tonumber(revision)>32 or arg[5] then os.exit(1) end
+    type(revision)~='string' or not revision:match('^[1-9]%d*$') or tonumber(revision)>64 or arg[5] then os.exit(1) end
 local function integer(n,low,high) return type(n)=='number' and n==math.floor(n) and n>=low and n<=high end
 local function name(s)
     if type(s)~='string' or #s>255 then return nil end

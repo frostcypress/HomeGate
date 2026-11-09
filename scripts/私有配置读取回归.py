@@ -175,7 +175,7 @@ class Runtime(unittest.TestCase):
 
     def test_maximum_frame_and_slow_consumer_hold_writer_lock(self):
         # Prepare a sealed maximum vault fixture without consuming the
-        # prototype's bounded 32-generation history with 192 individual puts.
+        # prototype's bounded history with 192 individual puts.
         body="config homegate 'main'\n"
         names=[]
         for i in range(32):

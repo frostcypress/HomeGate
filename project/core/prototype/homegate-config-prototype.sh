@@ -38,6 +38,7 @@ journal_active=false
 public_mode=false
 public_limit=1024
 credential_limit=16
+history_capacity=64
 if [ "${1:-}" = --persistent ]; then
     persistent_mode=true; public_mode=true; public_limit=262144; credential_limit=192; shift
 elif [ "${1:-}" = --public-uci ]; then
@@ -172,8 +173,8 @@ persistent_fence_read() {
     if IFS= read -r extra <&8; then fail 'Unexpected persistent fence data' 7; fi
     exec 8<&-
     [ "$fence_format:$fence_identity" = "HGWRITEFENCE1:$store_identity" ] || fail 'Persistent fence identity mismatch' 7
-    number "$fence_base" 1 32 && [ "$fence_base" = "$value" ] || fail 'Invalid fence baseline' 7
-    number "$fence_target" 1 32 && [ "$fence_target" = "$value" ] && [ "$fence_target" -gt "$fence_base" ] || fail 'Invalid fence candidate' 7
+    number "$fence_base" 1 "$history_capacity" && [ "$fence_base" = "$value" ] || fail 'Invalid fence baseline' 7
+    number "$fence_target" 1 "$history_capacity" && [ "$fence_target" = "$value" ] && [ "$fence_target" -gt "$fence_base" ] || fail 'Invalid fence candidate' 7
     [ "${#fence_token}" -eq 32 ] || fail 'Invalid fence handle' 7
     case "$fence_token" in *[!0-9a-f]*) fail 'Invalid fence handle' 7;; esac
     case "$fence_state" in active|settled-applied|settled-restored) ;; *) fail 'Invalid fence state' 7;; esac
@@ -273,14 +274,14 @@ open_store() {
     for existing in "$store/gen-"*; do
         [ -e "$existing" ] || [ -L "$existing" ] || continue
         index=${existing##*/gen-}
-        number "$index" 1 32 && [ "$index" = "$value" ] || fail 'Invalid generation name'
+        number "$index" 1 "$history_capacity" && [ "$index" = "$value" ] || fail 'Invalid generation name'
         private_dir "$existing" || fail 'Unsafe generation directory'
         [ "$persistent_mode" = false ] || validate_generation "$index"
         [ "$index" -le "$max_revision" ] || max_revision=$index
     done
     if [ -e "$store/current" ] || [ -L "$store/current" ]; then
         read_one "$store/current" 3
-        number "$one" 1 32 && [ "$one" = "$value" ] || fail 'Invalid current generation'
+        number "$one" 1 "$history_capacity" && [ "$one" = "$value" ] || fail 'Invalid current generation'
         head_revision=$value
         validate_generation "$head_revision"
     elif [ "$max_revision" -ne 0 ]; then
@@ -431,7 +432,7 @@ validate_generation() {
     done
     public_valid "$checked_dir/public.conf"
     read_one "$checked_dir/parent" 3
-    number "$one" 0 31 && [ "$one" = "$value" ] && [ "$value" -lt "$1" ] || fail 'Invalid generation ancestry'
+    number "$one" 0 "$((history_capacity - 1))" && [ "$one" = "$value" ] && [ "$value" -lt "$1" ] || fail 'Invalid generation ancestry'
     validated_parent=$value
     vault_valid "$checked_dir/credentials"
     private_file "$checked_dir/manifest" || fail 'Unsafe integrity manifest'
@@ -442,7 +443,7 @@ validate_generation() {
     [ "$(stat -c %s "$checked_dir/manifest")" -eq "$((${#expected_manifest} + 1))" ] || fail 'Invalid integrity framing'
 }
 begin_generation() {
-    [ "$max_revision" -lt 32 ] || fail 'Prototype history capacity reached' 4
+    [ "$max_revision" -lt "$history_capacity" ] || fail 'Prototype history capacity reached' 4
     new_revision=$((max_revision + 1))
     candidate_dir="$store/gen-$new_revision"
     mkdir "$candidate_dir" 2>/dev/null || fail 'Unable to allocate generation'
@@ -576,8 +577,8 @@ journal_read() {
         [ "${#journal_checksum}" -eq 64 ] || fail 'Invalid service intent checksum'
         case "$journal_checksum" in *[!0-9a-f]*) fail 'Invalid service intent checksum';; esac
     fi
-    number "$journal_base" 1 32 && [ "$journal_base" = "$value" ] || fail 'Invalid application baseline'
-    number "$journal_target" 1 32 && [ "$journal_target" = "$value" ] &&
+    number "$journal_base" 1 "$history_capacity" && [ "$journal_base" = "$value" ] || fail 'Invalid application baseline'
+    number "$journal_target" 1 "$history_capacity" && [ "$journal_target" = "$value" ] &&
         [ "$journal_target" -gt "$journal_base" ] || fail 'Invalid application candidate'
     case "$journal_state" in prepared|applying|restoring|applied|restored) ;; *) fail 'Invalid application journal phase';; esac
     [ "${#journal_token}" -eq 32 ] || fail 'Invalid application handle'
@@ -842,18 +843,18 @@ plan_read() {
     number "$(stat -c %s "$store/pending")" 1 "$((public_limit + 512))" || fail 'Invalid preview size'
     {
         IFS= read -r plan_base && IFS= read -r plan_token && IFS= read -r plan_kind && IFS= read -r plan_source || fail 'Invalid preview header'
-        number "$plan_base" 1 32 && [ "$plan_base" = "$value" ] || fail 'Invalid preview base'
+        number "$plan_base" 1 "$history_capacity" && [ "$plan_base" = "$value" ] || fail 'Invalid preview base'
         [ "$plan_base" = "$head_revision" ] && [ "$plan_token" = "$confirmation" ] || fail 'Expired confirmation' 5
-        case "$plan_kind" in editor) [ "$persistent_mode:$native_editor_enabled" = true:true ] && number "$plan_source" 1 32 || fail 'Invalid editor preview';;
+        case "$plan_kind" in editor) [ "$persistent_mode:$native_editor_enabled" = true:true ] && number "$plan_source" 1 "$history_capacity" || fail 'Invalid editor preview';;
             import) [ "$plan_source" = 0 ] || fail 'Invalid import preview';;
-            rollback) number "$plan_source" 1 32 && [ "$plan_source" = "$value" ] || fail 'Invalid rollback preview';;
-            migration) [ "$public_mode" = true ] && [ "$head_revision" = 1 ] && number "$plan_source" 2 32 && [ "$plan_source" = "$value" ] || fail 'Invalid migration preview';;
+            rollback) number "$plan_source" 1 "$history_capacity" && [ "$plan_source" = "$value" ] || fail 'Invalid rollback preview';;
+            migration) [ "$public_mode" = true ] && [ "$head_revision" = 1 ] && number "$plan_source" 2 "$history_capacity" && [ "$plan_source" = "$value" ] || fail 'Invalid migration preview';;
             migration-source)
                 [ "$persistent_mode" = true ] && [ "$lifecycle_migration_enabled" = true ] && [ "$head_revision" = 1 ] &&
-                    number "$plan_source" 2 32 && [ "$plan_source" = "$value" ] || fail 'Invalid lifecycle migration preview' 7;;
+                    number "$plan_source" 2 "$history_capacity" && [ "$plan_source" = "$value" ] || fail 'Invalid lifecycle migration preview' 7;;
             production-copy)
                 [ "$persistent_mode:$production_copy_mode:$production_copy_enabled" = true:true:true ] && [ "$head_revision" = 1 ] &&
-                    number "$plan_source" 2 32 && [ "$plan_source" = "$value" ] || fail 'Invalid production copy preview' 7;;
+                    number "$plan_source" 2 "$history_capacity" && [ "$plan_source" = "$value" ] || fail 'Invalid production copy preview' 7;;
             *) fail 'Invalid preview operation';; esac
         if [ "$public_mode" = true ]; then
             IFS= read -r created && IFS= read -r deadline && IFS= read -r plan_boot && IFS= read -r plan_baseline && IFS= read -r plan_digest || fail 'Incomplete public UCI plan'
@@ -1140,7 +1141,7 @@ case "$command" in
         projection_role=restore;;
     init|status|export|preview|cancel) [ "$#" -eq 0 ] || fail 'Unexpected arguments' 2;;
     editor-state-read) [ "$#" = 0 ] && [ "$persistent_mode:$native_editor_enabled" = true:true ] || fail 'Native editor reader is not ready' 2;;
-    editor-preview) [ "$#" = 1 ] && [ "$persistent_mode:$native_editor_enabled" = true:true ] && number "$1" 1 32 || fail 'Native editor is not ready' 2;editor_base=$1;;
+    editor-preview) [ "$#" = 1 ] && [ "$persistent_mode:$native_editor_enabled" = true:true ] && number "$1" 1 "$history_capacity" || fail 'Native editor is not ready' 2;editor_base=$1;;
     writer-check) [ "$#" -eq 0 ] && [ "$persistent_mode" = true ] || fail 'Writer check requires persistent namespace' 2;;
     dns-recovery-check|dns-recovery-snapshot-read)
         [ "$#" -eq 0 ] && [ "$persistent_mode" = true ] && [ "$dns_recovery_read_enabled" = true ] || fail 'DNS recovery reader is not ready' 2;;
@@ -1167,7 +1168,7 @@ case "$command" in
     recover-application) [ "$#" -eq 0 ] && [ "$public_mode" = true ] || fail 'Recovery requires full schema' 2;;
     recover-fence)
         [ "$#" -eq 0 ] && [ "$persistent_mode" = true ] && [ "$orphan_recovery_enabled" = true ] || fail 'Orphan recovery is not ready' 2;;
-    rollback-preview) [ "$#" -eq 1 ] && number "$1" 1 32 && [ "$1" = "$value" ] || fail 'Expected generation number' 2;;
+    rollback-preview) [ "$#" -eq 1 ] && number "$1" 1 "$history_capacity" && [ "$1" = "$value" ] || fail 'Expected generation number' 2;;
     commit-apply-projection|commit-apply-observed)
         [ "$public_mode" = true ] && [ "$#" -eq 1 ] && [ "${#1}" -eq 32 ] || fail 'Expected confirmation handle' 2
         case "$1" in *[!0-9a-f]*) fail 'Invalid confirmation handle' 2;; esac
@@ -1282,7 +1283,7 @@ case "$command" in
         scope=main-public-v1; [ "$public_mode" = false ] || scope=public-uci-v1
         application_phase=none; [ "$journal_active" = false ] || application_phase=$journal_state
         intent_bound=false; [ "$journal_format" = HGAPPLICATION1 ] || intent_bound=true
-        printf '{"api_version":1,"prototype":true,"ok":true,"revision":%s,"preview_present":%s,"service_enabled":false,"history_capacity":32,"credential_capacity":%s,"scope":"%s","application_pending":%s,"application_phase":"%s","workers_pending":%s,"service_intent_bound":%s,"persistent_namespace":%s,"persistent_fence_pending":%s}\n' "$head_revision" "$preview" "$credential_limit" "$scope" "$journal_active" "$application_phase" "$workers_pending" "$intent_bound" "$persistent_mode" "$persistent_fence_pending"
+        printf '{"api_version":1,"prototype":true,"ok":true,"revision":%s,"preview_present":%s,"service_enabled":false,"history_capacity":%s,"credential_capacity":%s,"scope":"%s","application_pending":%s,"application_phase":"%s","workers_pending":%s,"service_intent_bound":%s,"persistent_namespace":%s,"persistent_fence_pending":%s}\n' "$head_revision" "$preview" "$history_capacity" "$credential_limit" "$scope" "$journal_active" "$application_phase" "$workers_pending" "$intent_bound" "$persistent_mode" "$persistent_fence_pending"
         ;;
     export)
         need_initialized

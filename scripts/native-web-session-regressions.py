@@ -27,6 +27,20 @@ with tempfile.TemporaryDirectory(prefix='homegate-web-session-') as td:
  for action,value in [('read-owner',str(root/'request')),('owner','a'*32)]:
   r=launch([action,value]);v=r.stdout.strip().split(':',4)
   check(action+' keeps PID=PGID=SID and exit status',r.returncode==23 and len(v)==5 and v[0]==v[1]==v[2] and v[3:]==[action,value])
+ proxy_launcher=root/'proxy-launcher.lua'
+ probe.write_text('#!/bin/sh\nprintf "%s:%s:%s" "$$" "$(ps -o pgid= -p $$ | tr -d \' \')" "$(ps -o sid= -p $$ | tr -d \' \')"\nprintf ":%s" "$@"\nprintf "\\n"\nexit 23\n')
+ for action,worker,arguments,expected in [
+     ('proxy-serve','homegate-proxy.sh',['a'*32],['serve','a'*32]),
+     ('proxy-validate','homegate-proxy-validation.sh',['a'*32,'candidate-probe'],['candidate-probe','a'*32]),
+     ('firewall-operate','homegate-firewall.sh',['apply','a'*32],['operate-internal','apply','a'*32]),
+     ('firewall-operate','homegate-firewall.sh',['cleanup','none'],['operate-internal','cleanup','none']),
+     ('wol-send','homegate-wol.sh',['none'],['send-internal'])]:
+  script=raw.replace("'/bin/ash'","'/bin/sh'").replace("core..'"+worker+"'",json.dumps(str(probe)))
+  proxy_launcher.write_text(script)
+  r=launch([action,*arguments],path=proxy_launcher);v=r.stdout.strip().split(':')
+  check(action+' '+':'.join(expected)+' keeps worker session identity',r.returncode==23 and len(v)==len(expected)+3 and v[0]==v[1]==v[2] and v[3:]==expected)
+ for argv in [['proxy-validate','a'*32,'unknown'],['proxy-serve','../bad'],['firewall-operate','apply','none'],['firewall-operate','status','a'*32],['wol-send','../bad'],['wol-send','none','extra']]:
+  r=launch(argv,path=proxy_launcher);check('refuse '+str(argv),r.returncode==126 and json.loads(r.stdout)['ok'] is False)
  for name,argv,session in [('group leader refuses',['owner','a'*32],True),('unknown action',['execute','a'*32],False),('invalid token',['owner','../unsafe'],False),('relative path',['read-owner','relative'],False),('control in path',['read-owner','/tmp/a\nb'],False),('extra argument',['owner','a'*32,'x'],False)]:
   r=launch(argv,session);check(name,r.returncode==126 and json.loads(r.stdout)['ok'] is False)
  missing=root/'missing.lua';missing.write_text("package.preload.nixio=function()return {}end\n"+raw)

@@ -102,7 +102,7 @@ case "$action" in
         fi
         exec ash "$dir/homegate-lifecycle-prepare.sh" record-apply "$desired" --confirm;;
     prepare|prepare-resume|config-status|config-export|import-preview|activate-preview|config-preview|config-cancel|grant-cancel) [ "$#" -eq 0 ] || fail;;
-    config-rollback-preview) [ "$#" -eq 1 ] || fail;case "$1" in ''|*[!0-9]*|0*) fail;;esac;[ "${#1}" -le 2 ] && [ "$1" -le 32 ] || fail;;
+    config-rollback-preview) [ "$#" -eq 1 ] || fail;case "$1" in ''|*[!0-9]*|0*) fail;;esac;[ "${#1}" -le 2 ] && [ "$1" -le 64 ] || fail;;
     import-commit|config-commit|config-finish|grant-commit) [ "$#" -eq 1 ] && token_valid "$1" || fail;;
     dns-provider-status|dns-zones|ddns-sync|ddns-status|grant-preview) [ "$#" -eq 1 ] && id_valid "$1" || fail;;
     grant-revoke) [ "$#" -eq 1 ] && [ "$1" = --confirm ] || fail;;

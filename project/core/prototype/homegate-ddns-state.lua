@@ -5,7 +5,7 @@ local shared=assert(loadfile(dir..'/cloudflare-codec.lua'))('library')
 local planner=assert(loadfile(dir..'/ddns-plan.lua'))()
 local state=assert(loadfile(dir..'/ddns-state.lua'))()
 local mode,revision,rule=arg[1],arg[2],arg[3]
-if not revision or not revision:match('^[1-9]%d*$') or tonumber(revision)>32 or not planner.id(rule) then os.exit(1) end
+if not revision or not revision:match('^[1-9]%d*$') or tonumber(revision)>64 or not planner.id(rule) then os.exit(1) end
 if mode=='scope' or mode=='reset-scope' then
     if arg[4] then os.exit(1) end
     local snapshot=assert(loadfile(dir..'/private-snapshot.lua'))().read(io.stdin,backup)

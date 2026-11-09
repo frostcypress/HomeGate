@@ -15,7 +15,7 @@ function M.lease(d)
     local continuous=type(d)=='table' and d.continuous==true
     if type(d)=='table' and d.continuous~=nil and not continuous then return false end
     return keys(d,continuous and 12 or 11,{continuous=true,schema=true,identity=true,generation=true,grant=true,revision=true,boot=true,pid=true,birth=true,token=true,started=true,deadline=true}) and
-        d.schema=='HGDDNSSCHEDULE1' and hex(d.identity,64) and hex(d.generation,64) and hex(d.grant,64) and integer(d.revision,1,32) and
+        d.schema=='HGDDNSSCHEDULE1' and hex(d.identity,64) and hex(d.generation,64) and hex(d.grant,64) and integer(d.revision,1,64) and
         type(d.boot)=='string' and #d.boot==36 and d.boot:match('^[0-9a-f-]+$') and digits(d.pid,9) and tonumber(d.pid)>=2 and digits(d.birth,20) and hex(d.token,32) and
         integer(d.started,0,999999099) and d.deadline==(continuous and 0 or d.started+M.budget)
 end

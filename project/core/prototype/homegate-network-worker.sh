@@ -7,7 +7,7 @@ network_resolve_enabled=false
 [ "$network_resolve_enabled" = true ] && [ "$#" -eq 3 ] || exit 2
 revision=$1;job=$2;bridge=$3
 case "$revision:$job" in *[!0-9:]*) exit 2;; esac
-[ "$revision" -ge 1 ] && [ "$revision" -le 32 ] && [ "${#job}" -le 9 ] && [ "$job" -ge 2 ] || exit 2
+[ "$revision" -ge 1 ] && [ "$revision" -le 64 ] && [ "${#job}" -le 9 ] && [ "$job" -ge 2 ] || exit 2
 case "$bridge" in ''|.|..|*[!a-zA-Z0-9_.:-]*) exit 2;; esac
 [ "${#bridge}" -le 32 ] && [ -p /proc/self/fd/0 ] || exit 1
 work=/var/run/homegate/.network-read-$job

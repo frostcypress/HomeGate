@@ -2,7 +2,7 @@
 local dir=arg[0]:match('^(.*)/[^/]+$');if not dir then os.exit(1) end
 local mode,account,revision,phase=arg[1],arg[2],arg[3],arg[4]
 if (mode~='receipt' and mode~='load' and mode~='receipt-terminal' and mode~='receipt-orphan' and mode~='receipt-checkpoint') or type(account)~='string' or #account>64 or not account:match('^[a-zA-Z0-9_-]+$') or
-    type(revision)~='string' or not revision:match('^[1-9]%d*$') or tonumber(revision)>32 or arg[5] or
+    type(revision)~='string' or not revision:match('^[1-9]%d*$') or tonumber(revision)>64 or arg[5] or
     (mode=='receipt' and phase~='initial' and phase~='advance') or
     (mode=='receipt-checkpoint' and phase~='initial' and phase~='advance' and phase~='current') or
     (mode~='receipt' and mode~='receipt-checkpoint' and phase) then os.exit(1) end

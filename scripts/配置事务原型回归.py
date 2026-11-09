@@ -281,11 +281,28 @@ class Runtime(unittest.TestCase):
             self.put(b'PRIVATE', account='account_' + str(index))
         self.put(b'PRIVATE', account='overflow', expected=1)
         self.assertEqual(self.cli('status')['revision'], 17)
-        for _ in range(15):
+        for _ in range(14):
             self.put(b'REPLACED', account='account_0')
+        self.assertEqual(self.cli('status')['revision'], 31)
+        baseline = self.export()
+        saved = (self.store / 'gen-31' / 'manifest').read_bytes()
+        plan = self.preview(baseline.replace(b'log_max_lines=1024', b'log_max_lines=1100'))
+        self.cli('commit', plan['confirmation'])
         self.assertEqual(self.cli('status')['revision'], 32)
+        self.put(b'TEST-ONLY', account='account_0')
+        self.assertEqual(self.cli('status')['revision'], 33)
+        plan = self.cli('rollback-preview', '31')
+        self.assertEqual(self.cli('commit', plan['confirmation'])['revision'], 34)
+        self.assertEqual(self.export(), baseline)
+        self.assertEqual((self.store / 'gen-31' / 'manifest').read_bytes(), saved)
+        for credential in (self.store / 'gen-31' / 'credentials').iterdir():
+            restored = self.store / 'gen-34' / 'credentials' / credential.name
+            self.assertEqual(restored.read_bytes(), credential.read_bytes())
+        for _ in range(30):
+            self.put(b'REPLACED', account='account_0')
+        self.assertEqual(self.cli('status')['history_capacity'], 64)
         self.put(b'FULL', expected=4)
-        self.assertEqual(self.cli('status')['revision'], 32)
+        self.assertEqual(self.cli('status')['revision'], 64)
 
     def test_randomness_short_read_fails_without_replacing_pending(self):
         original = self.preview()['confirmation']

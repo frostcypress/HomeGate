@@ -25,7 +25,7 @@ local function switches_valid(source)
 end
 function M.build(snapshot,source,desired,codec,validator,ip,intent)
     if type(snapshot)~='table' or type(snapshot.revision)~='number' or
-       snapshot.revision~=math.floor(snapshot.revision) or snapshot.revision<1 or snapshot.revision>32 then return nil end
+       snapshot.revision~=math.floor(snapshot.revision) or snapshot.revision<1 or snapshot.revision>64 then return nil end
     local marker=intent.marker(source)
     if not marker or not intent.request(marker,desired) or not validator.validate(snapshot,source,codec.json,ip) or
        not switches_valid(source) then return nil end

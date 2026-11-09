@@ -54,7 +54,7 @@ case "$action" in
   fi
   now=$(lua "$dir/worker-process.lua" now) || fail;deadline=$((now+5))
   while [ -e "$run/proxy/audit-clear" ] || [ -L "$run/proxy/audit-clear" ] || [ -e "$run/proxy/audit-clear.next" ] || [ -L "$run/proxy/audit-clear.next" ];do
-   now=$(lua "$dir/worker-process.lua" now) || fail;[ "$now" -lt "$deadline" ] || fail 1;sleep .1 || fail
+   now=$(lua "$dir/worker-process.lua" now) || fail;[ "$now" -lt "$deadline" ] || fail 1;sleep .1 || sleep 1 || fail
   done
   reply=$(lua "$dir/homegate-access-audit.lua" read) || fail
   printf '%s\n' "$reply" | lua "$base/native-adapters.lua" access-result;exit $?;;

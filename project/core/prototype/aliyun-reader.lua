@@ -38,7 +38,7 @@ end
 if ...=='library' then return {escape=escape,canonical=canonical,base64=b64,pad=pad,domain=domain} end
 local account,revision,mode,job=arg[2],arg[3],arg[4],arg[5]
 if type(account)~='string' or #account<1 or #account>64 or not account:match('^[a-zA-Z0-9_-]+$') or
-    type(revision)~='string' or not revision:match('^[1-9]%d*$') or tonumber(revision)>32 then os.exit(1) end
+    type(revision)~='string' or not revision:match('^[1-9]%d*$') or tonumber(revision)>64 then os.exit(1) end
 local records=assert(loadfile(dir..'/aliyun-records.lua'))()
 local reconcile=assert(loadfile(dir..'/aliyun-reconcile-plan.lua'))()
 local operation_state={attempted=false,affected=0}

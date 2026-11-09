@@ -18,7 +18,8 @@ local arity={['read-owner']=2,owner=2,['observe-config-service']=2,
  ['observe-config-health']=4,['observe-network']=5,['observe-dns']=7,['dns-records']=7,
  ['ddns-plan']=5,['ddns-work']=2,['ddns-schedule']=2,
  ['acme-work']=2,['acme-cleanup']=2,['acme-schedule']=3,
- ['certificate-validate']=3,['certificate-preview']=2}
+ ['certificate-validate']=3,['certificate-preview']=2,
+ ['proxy-serve']=2,['proxy-validate']=3,['firewall-operate']=3,['wol-send']=2}
 if not action or #arg~=arity[action] or type(value)~='string' then refuse() end
 local program,args=watchdog,nil
 if action=='read-owner' then
@@ -26,6 +27,15 @@ if action=='read-owner' then
 elseif action=='ddns-schedule' then
  if value~='run' and value~='serve' then refuse() end
  program,args=core..'homegate-ddns-schedule.sh',{value,'--confirm'}
+elseif action=='wol-send' then
+ if value~='none' then refuse() end
+ program,args=core..'homegate-wol.sh',{'send-internal'}
+elseif action=='firewall-operate' then
+ local token=arg[3]
+ if value=='apply' or value=='watch' then
+  if #token~=32 or token:find('[^0-9a-f]') then refuse() end
+ elseif (value~='status' and value~='cleanup') or token~='none' then refuse() end
+ program,args=core..'homegate-firewall.sh',{'operate-internal',value,token}
 else
  if #value~=32 or value:find('[^0-9a-f]') then refuse() end
  if action=='observe-config-service' then
@@ -42,9 +52,15 @@ else
   args={'--certificate-validate',value,arg[3]}
  elseif action=='certificate-preview' then
   program,args=core..'native-web-certificate-watchdog.sh',{'--certificate-validate',value,value}
+ elseif action=='proxy-serve' then
+  program,args=core..'homegate-proxy.sh',{'serve',value}
+ elseif action=='proxy-validate' then
+  local mode=arg[3]
+  if mode~='check' and mode~='candidate-probe' and mode~='accepted-probe' then refuse() end
+  program,args=core..'homegate-proxy-validation.sh',{mode,value}
  elseif action~='owner' then
   local revision,job=arg[3],arg[4]
-  if not number_arg(revision,2,1) or tonumber(revision)>32 or not number_arg(job,9,2) then refuse() end
+  if not number_arg(revision,2,1) or tonumber(revision)>64 or not number_arg(job,9,2) then refuse() end
   if action=='observe-config-health' then
    args={'--health-status',value,revision,job}
   elseif action=='observe-network' then

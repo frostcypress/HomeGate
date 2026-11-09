@@ -1,7 +1,7 @@
 -- Fixed account/result adapter; secrets remain in the inherited snapshot pipe.
 local dir=arg[0]:match('^(.*)/[^/]+$');if not dir then os.exit(1) end
 local mode,revision,account=arg[1],arg[2],arg[3]
-if type(revision)~='string' or not revision:match('^[1-9]%d*$') or tonumber(revision)>32 or
+if type(revision)~='string' or not revision:match('^[1-9]%d*$') or tonumber(revision)>64 or
     type(account)~='string' or #account<1 or #account>64 or not account:match('^[a-zA-Z0-9_-]+$') then os.exit(1) end
 local codec=assert(loadfile(dir..'/../../luci/lua/luasrc/model/homegate/backup.lua'))()
 local providers={cloudflare=true,aliyun=true,dnspod=true,huaweicloud=true}

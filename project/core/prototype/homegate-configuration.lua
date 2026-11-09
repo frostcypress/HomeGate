@@ -1,7 +1,7 @@
 -- Internal fixed-source configuration adapter. Never print private input.
 local dir=arg[0]:match('^(.*)/[^/]+$');if not dir then os.exit(1) end
 local mode,revision=arg[1],arg[2]
-if mode~='validate' or arg[3] or type(revision)~='string' or not revision:match('^[1-9]%d*$') or tonumber(revision)>32 then os.exit(7) end
+if mode~='validate' or arg[3] or type(revision)~='string' or not revision:match('^[1-9]%d*$') or tonumber(revision)>64 then os.exit(7) end
 local codec=assert(loadfile(dir..'/../../luci/lua/luasrc/model/homegate/backup.lua'))()
 local reader=assert(loadfile(dir..'/private-snapshot.lua'))()
 local model=assert(loadfile(dir..'/configuration-validation.lua'))()

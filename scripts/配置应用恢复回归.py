@@ -187,7 +187,7 @@ class Runtime(unittest.TestCase):
 
     def test_recovery_directory_sync_failure_and_full_history_keep_recovery_available(self):
         started=self.start()
-        (self.store/'gen-32').mkdir(mode=0o700)  # Unreachable interrupted candidate consumes capacity.
+        (self.store/'gen-64').mkdir(mode=0o700)  # Unreachable interrupted candidate consumes capacity.
         self.fault('fsync','from pathlib import Path\nif sys.argv[-1]=='+repr(str(self.store))+' and Path('+repr(str(self.store/'current'))+').read_text()=="2\\n": sys.exit(1)')
         self.cli('apply-finish',started['apply_handle'],'failure',expected=7)
         self.assertEqual(self.phase(),'restoring'); self.assertEqual(self.cli('status')['revision'],2)

@@ -1,7 +1,7 @@
 -- Fixed recovery record and source observation; no recovery action or transport.
 local dir=arg[0]:match('^(.*)/[^/]+$');if not dir then os.exit(7) end
 local mode,revision=arg[1],arg[2]
-if type(revision)~='string' or not revision:match('^[1-9]%d*$') or tonumber(revision)>32 then os.exit(7) end
+if type(revision)~='string' or not revision:match('^[1-9]%d*$') or tonumber(revision)>64 then os.exit(7) end
 local codec=assert(loadfile(dir..'/../../luci/lua/luasrc/model/homegate/backup.lua'))()
 local health=assert(loadfile(dir..'/runtime-health.lua'))()
 local model=assert(loadfile(dir..'/recovery-report.lua'))()

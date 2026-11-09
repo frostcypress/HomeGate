@@ -123,14 +123,19 @@ case "$action" in
    # Publication/intent are sealed. Release only the extra admission fence;
    # existing source/plan/revision guards still bind every service action.
    exec 8>&-
-   running=false;status=
+   running=false;status=;failure_stage=runtime-admission
+   start_exit=;receipt=
    ready=false
    while ! held;do
     if /usr/bin/homegate service-admission 9>&- >/dev/null;then ready=true;break;fi
-    now=$(lua "$clock" now) || break;[ "$now" -lt "$((deadline-5))" ] || break;sleep .2
+    now=$(lua "$clock" now) || break;[ "$now" -lt "$((deadline-5))" ] || break;sleep 1
    done
-   if [ "$ready" = true ] && /etc/init.d/homegate start 9>&- >/dev/null;then
-    tries=0
+   if [ "$ready" = true ];then
+    failure_stage=runtime-start
+    receipt_deadline=$((deadline-5))
+    # Init can fail after dispatch. Give the same bounded receipt window
+    # regardless of its return code and issue the start request only once.
+    /etc/init.d/homegate start 9>&- >/dev/null;start_exit=$?
     while :;do
      # Read the source-bound, component-verified coordinator receipt. The
      # strict public health reader may legitimately be busy during a batch.
@@ -139,12 +144,16 @@ case "$action" in
       if printf '%s\n' "$status" | lua "$base/native-service.lua" web-ready "$desired" 9>&-;then running=true;break;fi
      fi
      [ "$receipt" != 1 ] || break
-     now=$(lua "$clock" now) || break;[ "$now" -lt "$((deadline-5))" ] || break
-     tries=$((tries+1));sleep .2
+     now=$(lua "$clock" now) || break;[ "$now" -lt "$receipt_deadline" ] || break
+     sleep 1
     done
    fi
-   if [ "$running" = true ];then /etc/init.d/homegate enable 9>&- >/dev/null || running=false;fi
-   printf '%s\n' "$status" | lua "$codec" runtime-result "$value" "$running" || fail
+   if [ "$running" = true ];then
+    failure_stage=boot-enable
+    { /etc/init.d/homegate enable 9>&- >/dev/null &&
+      /etc/init.d/homegate enabled 9>&- >/dev/null; } || running=false
+   fi
+   printf '%s\n' "$status" | lua "$codec" runtime-result "$value" "$running" "$failure_stage" "$start_exit" "$receipt" || fail
   fi
   file "$work/result.next" && fsync "$work/result.next" && mv "$work/result.next" "$work/result" && fsync "$work/result" "$work" || fail
   file "$work/deadline" && rm "$work/deadline" || fail

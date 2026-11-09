@@ -35,6 +35,17 @@ def payload(root):
             old=(gate+'=false\n').encode()
             assert files[key].count(old)==1,(name,gate)
             files[key]=files[key].replace(old,(gate+'=true\n').encode())
+    # procd registers the public command, which execs the native foreground owner.
+    service_observer=BASE+'project/core/prototype/homegate-service-observer.lua'
+    legacy_command=rb"local daemon_command='/usr/bin/homegate\0daemon\0'"
+    native_command=rb"local daemon_command='ash\0/usr/libexec/homegate/native-service.sh\0serve\0'"
+    assert files[service_observer].count(legacy_command)==1
+    # The engineering payload deliberately uses a disabled stub. Production
+    # observes the real rc.d links through its installed init script.
+    disabled_init=b'/usr/libexec/homegate/service-disabled enabled'
+    assert files[service_observer].count(disabled_init)==1
+    files[service_observer]=files[service_observer].replace(
+        legacy_command,native_command).replace(disabled_init,b'/etc/init.d/homegate enabled')
     support=['engineering.lua','ddns-control.sh','apply-handle.lua','service-disabled','config-web.sh','config-web.lua','schedule-control.sh']
     for name in support:
         files[BASE+name]=native((root/'packaging/engineering/files'/name).read_bytes())
@@ -102,6 +113,10 @@ observe_dns() {
         ('homegate-acme-job.sh', 'setsid ash "$HG_DIR/homegate-acme-job.sh" work-cleanup "$HG_JOB"', 'acme-cleanup "$HG_JOB"'),
         ('homegate-acme-schedule.sh', 'setsid ash "$HG_DIR/homegate-acme-schedule.sh" serve "$certificate" "$token"', 'acme-schedule "$token" "$certificate"'),
         ('homegate-certificate.sh', 'setsid ash "$dir/homegate-service-observer-watchdog.sh" --certificate-validate "$token" "$id"', 'certificate-validate "$token" "$id"'),
+        ('homegate-proxy.sh', 'setsid ash "$HG_DIR/homegate-proxy.sh" serve "$token"', 'proxy-serve "$token"'),
+        ('homegate-proxy.sh', 'setsid ash "$HG_DIR/homegate-proxy-validation.sh" "$1" "$token"', 'proxy-validate "$token" "$1"'),
+        ('homegate-firewall.sh', 'setsid ash "$HG_DIR/homegate-firewall.sh" operate-internal "$action" "$token"', 'firewall-operate "$action" "$token"'),
+        ('homegate-wol.sh', 'setsid ash "$HG_DIR/homegate-wol.sh" send-internal', 'wol-send none'),
     )
     for name,old,new in job_launches:
         key=BASE+'project/core/prototype/'+name

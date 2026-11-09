@@ -18,7 +18,6 @@ local result={api_version=1,ok=false,headers={}};local bytes=0;local private={};
 local needs_config_write=write and not ({config_export=true,diagnostic_download=true,log_clear=true})[request.route]
 if request.route=='config_import' and request.form.mode~='restore'then needs_config_write=false end
 local effect_started=false
-local configuration_prepare_attempted=false
 local failure_stage
 local pending_imports={}
 local stopped_for_save=false
@@ -55,6 +54,15 @@ local function validate_pair(cert,key)
  if rc~=0 then result.failure_stage='certificate-validation';result.exit_code=rc end;return raw,rc
 end
 local function copy(v)if type(v)~='table'then return v end;local d={};for k,x in pairs(v)do d[k]=copy(x)end;return d end
+local function read_editor_state()
+ local raw,code=capture('ash '..quote(proto..'/homegate-config-prototype.sh')..' --persistent editor-state-read 3>&1 >/dev/null')
+ local state=code==0 and lib.strict(raw)
+ if type(state)=='table' and type(state.configuration)=='table' and type(state.revision)=='number'then return state end
+end
+local function read_configuration_source()
+ local f=original_io.open('/etc/config/homegate','rb');local source=f and f:read(262145);if f then f:close()end
+ return source
+end
 local function load_document(pkg)
  if documents[pkg]then return documents[pkg]end
  if fixture then documents[pkg]=copy(fixture.documents[pkg] or {});return documents[pkg]end
@@ -68,11 +76,28 @@ local function load_document(pkg)
   end
   documents[pkg]=doc;return doc
  end
- local raw,code=capture('ash '..quote(proto..'/homegate-config-prototype.sh')..' --persistent editor-state-read 3>&1 >/dev/null')
- local state=code==0 and lib.strict(raw)
- if type(state)=='table' and type(state.configuration)=='table' and type(state.revision)=='number'then revision=state.revision;documents[pkg]=state.configuration
+ local state=read_editor_state()
+ if not state and needs_config_write then
+  local store='/etc/homegate/transactions'
+  local prepare='prepare'
+  -- A reboot can remove the shared lock while leaving an adopted store intact.
+  if lib.dir(store) and not fs.lstat(store..'/bootstrap-pending')
+     and not fs.lstat('/var/run/homegate/frontend.lock') then
+   prepare='prepare-resume'
+  else
+   local factory=assert(original_io.open(base..'/factory.config','rb'));local expected=factory:read(262145);factory:close()
+   if read_configuration_source()~=expected then error('Source adoption required in configuration maintenance')end
+  end
+  failure_stage='configuration-prepare'
+  local _,rc=core({prepare})
+  if rc~=0 then error('Configuration initialization unavailable') end
+  state=read_editor_state()
+  if not state then error('Prepared configuration could not be read') end
+  failure_stage=nil
+ end
+ if state then revision=state.revision;documents[pkg]=state.configuration
  else
-  local f=original_io.open('/etc/config/homegate','rb');local source=f and f:read(262145);if f then f:close()end
+  local source=read_configuration_source()
   local d=source and #source<=262144 and codec.private_configuration(source)
   documents[pkg]=d and d.configuration or {}
   if d then for _,s in ipairs(documents[pkg])do
@@ -81,19 +106,6 @@ local function load_document(pkg)
     local prefix=s.kind=='dns_account' and v.provider or s.kind=='ddns_rule' and 'ddns' or 'web';local value=d.credentials[prefix..'.'..s.name..'.'..key];if value then v[key=='key_id' and 'id' or key]=value end
    end
   end end
-  if needs_config_write then
-   local factory=assert(original_io.open(base..'/factory.config','rb'));local expected=factory:read(262145);factory:close()
-   if source~=expected then error('Source adoption required in configuration maintenance')end
-   failure_stage='configuration-prepare'
-   if configuration_prepare_attempted then error('Prepared configuration could not be read') end
-   configuration_prepare_attempted=true
-   local _,rc=core({'prepare'})
-   if rc~=0 then error('Configuration initialization unavailable') end
-   documents[pkg]=nil
-   local prepared=load_document(pkg)
-   failure_stage=nil
-   return prepared
-  end
  end
  for _,s in ipairs(documents[pkg])do
   if s.kind=='dns_account'then for _,k in ipairs({'id','secret','account_id','endpoint'})do local v=s.values[k];if v and v~=''then private[#private+1]=v end end
@@ -163,9 +175,15 @@ function cursor:commit(pkg)
  local body=text(load_document(pkg))
  local status,status_code=decoded({'status'})
  if status_code==0 and status and status.service and status.service.running then
-  local _,rc=core({'service-stop','--confirm'});if rc~=0 then return false end
+  local _,rc=core({'service-stop','--confirm'})
+  if rc~=0 then result.failure_stage='runtime-stop';result.exit_code=rc;return false end
   local quiet=false
-  for i=1,40 do local _,code=core({'service-quiescent'});if code==0 then quiet=true;break end;call({'sleep','.2'},nil,1)end
+  -- Use whole-second sleeps on firmware without fractional sleep support.
+  for attempt=1,21 do
+   local _,code=core({'service-quiescent'})
+   if code==0 then quiet=true;break end
+   if attempt<21 then call({'sleep','1'},nil,1)end
+  end
   if not quiet then result.failure_stage='runtime-stop';return false end
   stopped_for_save=true;result.runtime_stopped_for_save=true
  end

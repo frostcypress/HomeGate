@@ -7,7 +7,7 @@ ddns_plan_enabled=false
 [ "$ddns_plan_enabled" = true ] && [ "$#" -eq 3 ] || exit 2
 revision=$1;job=$2;rule=$3
 case "$revision:$job" in *[!0-9:]*) exit 2;; esac
-[ "$revision" -ge 1 ] && [ "$revision" -le 32 ] && [ "${#job}" -le 9 ] && [ "$job" -ge 2 ] || exit 2
+[ "$revision" -ge 1 ] && [ "$revision" -le 64 ] && [ "${#job}" -le 9 ] && [ "$job" -ge 2 ] || exit 2
 case "$rule" in *[!a-zA-Z0-9_-]*) exit 2;; esac
 [ "${#rule}" -le 64 ] && [ -p /proc/self/fd/0 ] || exit 1
 work=/var/run/homegate/.ddns-plan-$job

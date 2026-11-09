@@ -17,7 +17,7 @@ function M.row(d,rule)
  return (d.status=='failed' and (d.effect=='none' or d.effect=='unknown')) or d.effect=='none'
 end
 function M.report(d)
- if not keys(d,{api_version=true,prototype=true,ok=true,phase=true,job=true,rule=true,configuration_revision=true,pending=true,state=true,result=true,last_effect=true,reason=true,effect=true,write_ready=true},14) or d.api_version~=1 or d.prototype~=true or d.ok~=true or d.phase~='ddns-job' or not hex(d.job) or not id(d.rule) or not integer(d.configuration_revision,32) or d.configuration_revision<1 or d.write_ready~=false or d.effect~='none' then return false end
+ if not keys(d,{api_version=true,prototype=true,ok=true,phase=true,job=true,rule=true,configuration_revision=true,pending=true,state=true,result=true,last_effect=true,reason=true,effect=true,write_ready=true},14) or d.api_version~=1 or d.prototype~=true or d.ok~=true or d.phase~='ddns-job' or not hex(d.job) or not id(d.rule) or not integer(d.configuration_revision,64) or d.configuration_revision<1 or d.write_ready~=false or d.effect~='none' then return false end
  if d.state=='pending' then return d.pending==true and d.result==false and d.last_effect=='unknown' and d.reason=='accepted' end
  if d.state=='interrupted' then return d.pending==false and d.result==false and d.last_effect=='unknown' and d.reason=='interrupted' end
  if d.state~='finished' or d.pending~=false or not M.row(d.result,d.rule) or d.last_effect~=d.result.effect then return false end

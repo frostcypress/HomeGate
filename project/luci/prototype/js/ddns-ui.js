@@ -49,7 +49,7 @@ function mount(root,request){
  function valid(d,action){return d&&d.api_version===1&&d.prototype===true&&d.ok===true&&d.phase==='ddns-ui'&&d.operation===action&&d.effect===(action==='submit'?'unknown':'none')&&d.write_ready===false&&d.report&&d.report.ok===true;}
  function exact(d,fields){return d&&typeof d==='object'&&Object.keys(d).length===fields.length&&fields.every(function(k){return Object.prototype.hasOwnProperty.call(d,k);});}
  function jobValid(j){
-  if(!exact(j,['api_version','prototype','ok','phase','job','rule','configuration_revision','pending','state','result','last_effect','reason','effect','write_ready'])||j.api_version!==1||j.prototype!==true||j.ok!==true||j.phase!=='ddns-job'||!/^[0-9a-f]{32}$/.test(j.job)||!id(j.rule)||!Number.isInteger(j.configuration_revision)||j.configuration_revision<1||j.configuration_revision>32||j.effect!=='none'||j.write_ready!==false)return false;
+  if(!exact(j,['api_version','prototype','ok','phase','job','rule','configuration_revision','pending','state','result','last_effect','reason','effect','write_ready'])||j.api_version!==1||j.prototype!==true||j.ok!==true||j.phase!=='ddns-job'||!/^[0-9a-f]{32}$/.test(j.job)||!id(j.rule)||!Number.isInteger(j.configuration_revision)||j.configuration_revision<1||j.configuration_revision>64||j.effect!=='none'||j.write_ready!==false)return false;
   if(j.state==='pending'||j.state==='interrupted')return j.pending===(j.state==='pending')&&j.result===false&&j.last_effect==='unknown'&&j.reason===(j.pending?'accepted':'interrupted');
   var r=j.result;if(j.state!=='finished'||j.pending!==false||!exact(r,['rule','provider','status','effect','error_kind','retryable','retry_in'])||r.rule!==j.rule||!['cloudflare','aliyun','dnspod','huaweicloud'].includes(r.provider)||!['none','confirmed','unknown'].includes(r.effect)||r.effect!==j.last_effect||!Number.isInteger(r.retry_in)||r.retry_in<0||r.retry_in>999999999||typeof r.retryable!=='boolean'||!['','authentication','not_found','unsupported','invalid_request','invalid_zone','temporary','network_unavailable','timeout','rate_limit','invalid_configuration'].includes(r.error_kind))return false;
   if(!Object.prototype.hasOwnProperty.call(statuses,r.status)&&!['created','updated','unchanged','failed'].includes(r.status))return false;
@@ -106,7 +106,7 @@ function mount(root,request){
  }
  function prepare(){
   if(busy)return;var list=selected();if(!list.length||list.length>32)return;invalidate();perform('preview',{selection:list.join(',')},function(d){
-   var r=d.report,actual=names(r);if(r.phase!=='ddns-authority'||r.authorized!==false||r.service_started!==false||r.expires_in!==300||!/^[0-9a-f]{32}$/.test(r.confirmation)||!Number.isInteger(r.configuration_revision)||r.configuration_revision<1||r.configuration_revision>32||JSON.stringify(actual)!==JSON.stringify(list))throw new Error();
+   var r=d.report,actual=names(r);if(r.phase!=='ddns-authority'||r.authorized!==false||r.service_started!==false||r.expires_in!==300||!/^[0-9a-f]{32}$/.test(r.confirmation)||!Number.isInteger(r.configuration_revision)||r.configuration_revision<1||r.configuration_revision>64||JSON.stringify(actual)!==JSON.stringify(list))throw new Error();
    staged=r;scope.textContent='将授权：'+actual.join('、')+'；配置版本 '+r.configuration_revision+'。预览有效期 300 秒，配置变化后需重新预览。';pane.hidden=false;notice.textContent='预览尚未授权。请核对规则后确认。';
   });
  }

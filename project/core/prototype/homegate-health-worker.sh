@@ -7,7 +7,7 @@ health_status_enabled=false
 [ "$health_status_enabled" = true ] && [ "$#" -eq 2 ] || exit 2
 revision=$1;job=$2
 case "$revision:$job" in *[!0-9:]*) exit 2;; esac
-[ "$revision" -ge 1 ] && [ "$revision" -le 32 ] && [ "${#job}" -le 9 ] && [ "$job" -ge 2 ] && [ -p /proc/self/fd/0 ] || exit 1
+[ "$revision" -ge 1 ] && [ "$revision" -le 64 ] && [ "${#job}" -le 9 ] && [ "$job" -ge 2 ] && [ -p /proc/self/fd/0 ] || exit 1
 work=/var/run/homegate/.health-read-$job
 [ -d "$work" ] && [ ! -L "$work" ] && [ "$(stat -c '%u:%a' "$work")" = 0:700 ] || exit 1
 for name in result public; do

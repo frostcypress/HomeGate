@@ -5,7 +5,7 @@ local shared=assert(loadfile(dir..'/cloudflare-codec.lua'))('library')
 local planner=assert(loadfile(dir..'/ddns-plan.lua'))()
 local sync=assert(loadfile(dir..'/ddns-sync.lua'))()
 local revision,rule=arg[2],arg[3]
-if type(revision)~='string' or not revision:match('^[1-9]%d*$') or tonumber(revision)>32 or (arg[1]~='source' and not planner.id(rule)) then os.exit(1) end
+if type(revision)~='string' or not revision:match('^[1-9]%d*$') or tonumber(revision)>64 or (arg[1]~='source' and not planner.id(rule)) then os.exit(1) end
 local function read(fd,limit)
     local f=io.open('/proc/self/fd/'..fd,'rb');if not f then os.exit(1) end
     local b=f:read(limit+1) or '';if not f:close() or #b>limit then os.exit(1) end;return b

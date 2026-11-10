@@ -417,7 +417,9 @@ class Native(web.Web):
         store=Path('/etc/homegate/transactions');before={str(p.relative_to(store)):p.read_bytes() for p in store.rglob('*') if p.is_file()}
         source=Path('/etc/config/homegate').read_bytes();plan=Path('/etc/homegate/native-service-plan').read_bytes()
         self.start_owner();first=self.wait_service(lambda d:d['state']=='running',seconds=30)
-        self.assertTrue(self.cli('status')['service']['healthy']);self.assertTrue(self.cli('firewall-status')['active'])
+        status=self.cli('status')
+        self.assertTrue(status['service']['healthy'],status)
+        self.assertTrue(self.cli('firewall-status')['active'])
         def request():
             conn=http.client.HTTPConnection('127.0.0.1',10080,timeout=5);conn.request('GET','/',headers={'Host':'example.test'});response=conn.getresponse();self.assertEqual(response.status,200);self.assertEqual(response.read(),b'NATIVE_COMPONENT_RECOVERY');conn.close()
         request();proxy=Path('/var/run/homegate/proxy');owner,birth=(proxy/'owner').read_text().strip().split(':');pid=(proxy/'nginx.pid').read_text().strip()

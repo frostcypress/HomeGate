@@ -38,7 +38,7 @@ journal_active=false
 public_mode=false
 public_limit=1024
 credential_limit=16
-history_capacity=64
+history_capacity=96
 if [ "${1:-}" = --persistent ]; then
     persistent_mode=true; public_mode=true; public_limit=262144; credential_limit=192; shift
 elif [ "${1:-}" = --public-uci ]; then
@@ -1283,7 +1283,7 @@ case "$command" in
         scope=main-public-v1; [ "$public_mode" = false ] || scope=public-uci-v1
         application_phase=none; [ "$journal_active" = false ] || application_phase=$journal_state
         intent_bound=false; [ "$journal_format" = HGAPPLICATION1 ] || intent_bound=true
-        printf '{"api_version":1,"prototype":true,"ok":true,"revision":%s,"preview_present":%s,"service_enabled":false,"history_capacity":%s,"credential_capacity":%s,"scope":"%s","application_pending":%s,"application_phase":"%s","workers_pending":%s,"service_intent_bound":%s,"persistent_namespace":%s,"persistent_fence_pending":%s}\n' "$head_revision" "$preview" "$history_capacity" "$credential_limit" "$scope" "$journal_active" "$application_phase" "$workers_pending" "$intent_bound" "$persistent_mode" "$persistent_fence_pending"
+        printf '{"api_version":1,"prototype":true,"ok":true,"revision":%s,"preview_present":%s,"service_enabled":false,"history_capacity":%s,"history_remaining":%s,"credential_capacity":%s,"scope":"%s","application_pending":%s,"application_phase":"%s","workers_pending":%s,"service_intent_bound":%s,"persistent_namespace":%s,"persistent_fence_pending":%s}\n' "$head_revision" "$preview" "$history_capacity" "$((history_capacity - max_revision))" "$credential_limit" "$scope" "$journal_active" "$application_phase" "$workers_pending" "$intent_bound" "$persistent_mode" "$persistent_fence_pending"
         ;;
     export)
         need_initialized

@@ -18,7 +18,7 @@ function M.proof(row,identity,raw)
 end
 function M.valid(d,json,parse,sync)
     if not keys(d,header,9) or d.schema~='HGDDNSBATCHRESULT1' or not hex(d.identity) or not hex(d.generation) or not hex(d.grant) or
-        type(d.revision)~='number' or d.revision<1 or d.revision>64 or d.revision~=math.floor(d.revision) or type(d.boot)~='string' or #d.boot~=36 or not d.boot:match('^[0-9a-f-]+$') or
+        type(d.revision)~='number' or d.revision<1 or d.revision>96 or d.revision~=math.floor(d.revision) or type(d.boot)~='string' or #d.boot~=36 or not d.boot:match('^[0-9a-f-]+$') or
         type(d.batch)~='string' or #d.batch>30 or not d.batch:match('^[1-9]%d*:[1-9]%d*$') or (d.previous~='none' and not hex(d.previous)) or type(d.rows)~='table' or #d.rows<1 or #d.rows>32 then return false end
     local seen={}
     for index,row in ipairs(d.rows) do

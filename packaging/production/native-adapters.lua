@@ -127,10 +127,30 @@ elseif mode=='log-events'then
  local max=tonumber(arg[2] or '1024');if not max or max%1~=0 or max<1 or max>20000 or arg[3]then os.exit(2)end
  local raw=read('/var/log/homegate.log',8388608,true) or '';local rows={}
  local keys={accesskeyid=true,access_key_id=true,accesskeysecret=true,access_key_secret=true,signature=true,signaturenonce=true,token=true,api_token=true,['api-token']=true,secret=true,password=true}
+ local function redact_parameters(line)
+  local chunks={}
+  local scan,keep=1,1
+  while true do
+   local _,assignment,key=line:find('%f[%w_-]([%w_-]+)=',scan)
+   if not assignment then break end
+   scan=assignment+1
+   -- Search inside unrecognized values such as url=...?... for named credentials.
+   if keys[key:lower()] then
+    local ending=line:find('[&%s"]',scan) or (#line+1)
+    if ending>scan then
+     chunks[#chunks+1]=line:sub(keep,assignment)
+     chunks[#chunks+1]='<redacted>'
+     scan,keep=ending,ending
+    end
+   end
+  end
+  chunks[#chunks+1]=line:sub(keep)
+  return table.concat(chunks)
+ end
  local pem=false
  for line in raw:gmatch('[^\n]+')do
   if line:find('-----BEGIN',1,true)then pem=true end
-  local safe=pem and '[redacted PEM]' or line:gsub('([%w_-]+)=([^&%s"]+)',function(k,v)return k..'='..(keys[k:lower()] and '<redacted>' or v)end)
+  local safe=pem and '[redacted PEM]' or redact_parameters(line)
   local lower=safe:lower();local auth=lower:find('authorization:',1,true);if auth then safe=safe:sub(1,auth-1)..'Authorization: <redacted>'end
   if line:find('-----END',1,true)then pem=false end
   local stamp,level,message=safe:match('^(%d%d%d%d%-%d%d%-%d%d %d%d:%d%d:%d%d) %[(%u+)%] (.*)$');level=level or 'INFO';message=message or safe

@@ -20,7 +20,7 @@ def module(path,name):
     spec=importlib.util.spec_from_file_location(name,path)
     result=importlib.util.module_from_spec(spec);spec.loader.exec_module(result);return result
 
-def verify_lifecycle_hooks(control,make,package='homegate-core',hooks=('preinst','prerm','postinst','postrm')):
+def verify_lifecycle_hooks(control,make,package='homegate-core',hooks=('preinst','prerm','postinst','postrm'),prerm_dispatcher=None):
     entries={};result={}
     with tarfile.open(fileobj=io.BytesIO(control),mode='r:*') as archive:
         for entry in archive:
@@ -33,6 +33,10 @@ def verify_lifecycle_hooks(control,make,package='homegate-core',hooks=('preinst'
     for hook in hooks:
         wanted=(make.split('define Package/'+package+'/'+hook+'\n')[1].split('\nendef')[0].replace('$$','$').strip()+'\n').encode()
         actual=entries.get(hook)
+        if hook=='prerm' and prerm_dispatcher is not None:
+            if actual!=prerm_dispatcher or entries.get('prerm-pkg')!=wanted:
+                raise ValueError('Native prerm dispatcher/body differs from source')
+            result[hook]='HomeGate-live-dispatcher-and-exact-pkg-body';continue
         if actual==wanted:
             if hook+'-pkg' in entries:raise ValueError('Unexpected duplicate native lifecycle body')
             result[hook]='direct';continue
@@ -88,7 +92,7 @@ def prepare_kit(root,packages,destination):
             else:body=inspector.tar_member(blob,'data.tar.gz');control=inspector.tar_member(blob,'control.tar.gz')
             verify_gzip(body);verify_gzip(control)
             if name==NAMES[0]:
-                hook_validation=verify_lifecycle_hooks(control,make)
+                hook_validation=verify_lifecycle_hooks(control,make,prerm_dispatcher=(feed/'tools/homegate-core.prerm').read_bytes())
             elif name==NAMES[1]:
                 verify_lifecycle_hooks(control,make,package=name,hooks=('postinst',))
             controls[name]=hashlib.sha256(control).hexdigest()

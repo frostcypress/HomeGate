@@ -77,7 +77,7 @@ old_ifs=$IFS;IFS=:;set -- $info;IFS=$old_ifs
 [ "$#" = 6 ] && [ "$3" = "$$" ] && [ "$4" = "$$" ] && [ "$6" = 1 ] || fail
 printf '%s:%s\n' "$$" "$5" > "$D/owner" || fail
 interrupted=false;trap 'interrupted=true' TERM INT
-finish() { lua "$HG_DIR/homegate-access.lua" report "$1" || :;kill -TERM -- "-$$" 2>/dev/null || :;sleep .2;kill -KILL -- "-$$" 2>/dev/null;exit 7; }
+finish() { lua "$HG_DIR/homegate-access.lua" report "$1" || :;kill -TERM -- "-$$" 2>/dev/null || :;sleep .2 || sleep 1 || :;kill -KILL -- "-$$" 2>/dev/null;exit 7; }
 lua "$HG_DIR/homegate-access.lua" report downloading || fail
 (
  exec 9>&-
@@ -95,7 +95,7 @@ lua "$HG_DIR/homegate-access.lua" report downloading || fail
 child=$!;now=$(lua "$process" now) || finish failed;deadline=$((now+60))
 while kill -0 "$child" 2>/dev/null;do
  [ "$interrupted" = false ] && ! hg_exists "$D/stop" || finish stopped
- now=$(lua "$process" now) || finish failed;[ "$now" -lt "$deadline" ] || finish failed;sleep .1 || :
+ now=$(lua "$process" now) || finish failed;[ "$now" -lt "$deadline" ] || finish failed;sleep .1 || sleep 1 || finish failed
 done
 result=failed;if wait "$child";then result=published;fi
 [ "$(lua "$process" group "$$" 0)" = 0 ] || finish failed

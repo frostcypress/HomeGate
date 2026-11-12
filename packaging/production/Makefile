@@ -82,6 +82,11 @@ endef
 define Package/homegate-core/postrm
 @HOMEGATE_POSTRM@
 endef
+
+ifeq ($(CONFIG_USE_APK),)
+# package-pack.mk runs these commands in CONTROL after creating the SDK dispatcher.
+homegate-core_COMMANDS += $(INSTALL_BIN) $(CURDIR)/tools/homegate-core.prerm prerm || exit 1;
+endif
 $(eval $(call BuildPackage,homegate-core))
 $(eval $(call BuildPackage,luci-app-homegate))
 $(eval $(call BuildPackage,luci-i18n-homegate-zh-cn))

@@ -40,7 +40,7 @@ if arg[1]=='parent' then
     io.write(root..':'..birth..'\n');return
 end
 local revision=arg[2]
-if not number(revision,64) then fail() end
+if not number(revision,96) then fail() end
 if arg[1]=='names' then
     if arg[3] then fail() end
     local raw=io.stdin:read(65537) or '';local d=shared.parse(raw)

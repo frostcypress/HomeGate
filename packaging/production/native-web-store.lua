@@ -37,7 +37,7 @@ elseif mode=='start-options' or mode=='runtime-result'then
  local token=arg[2];if not id(token) or not dir(root) or not dir(root..'/'..token)then fail()end
  local path=root..'/'..token..'/result.next';local d=strict(read(path,2097152));if not d or type(d.ok)~='boolean' or d.api_version~=1 then fail()end
  if mode=='start-options'then
-  if d.ok and d.runtime_start then local r=d.runtime_start.revision;if type(r)~='number' or r<1 or r>64 or r%1~=0 then fail()end;io.write(r,'\n')end;return
+  if d.ok and d.runtime_start then local r=d.runtime_start.revision;if type(r)~='number' or r<1 or r>96 or r%1~=0 then fail()end;io.write(r,'\n')end;return
  end
  local verified=false
  if arg[3]=='true'then

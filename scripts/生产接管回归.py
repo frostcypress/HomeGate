@@ -16,7 +16,7 @@ BASE='/cgi-bin/luci/admin/services/homegate';PAGE=BASE+'/configuration'
 NGINX=ROOT/'build/nginx';FIXTURE=ROOT/'build/nginx-fixture';PROXY=False;INSTALLED=None
 WOL=ROOT/'build/wol';WOL_FIXTURE=ROOT/'build/wol-fixture';ACTIONS=False
 ACTION_GROUPS=('cli_actions','web_access_actions','web_maintenance_actions')
-FIRMWARE_JOB_GROUPS=('cli_ddns','cli_ddns_unknown','cli_ddns_batch','daemon_ddns','daemon_proxy',
+FIRMWARE_JOB_GROUPS=('migration','backup','rollback','recovery','web_owner_refusal','cli_ddns','cli_ddns_unknown','cli_ddns_batch','daemon_ddns','daemon_proxy',
                      'cli_acme','cli_acme_unknown','daemon_acme','web_acme','web_unknown','web_certificate')
 
 def setup_state(s, *, bin_ubus=False, switchable_setsid=False):
@@ -195,6 +195,7 @@ class Native(web.Web):
         probe=subprocess.run(['ash','-c','PATH=/usr/sbin:/usr/bin:/sbin:/bin; command -v setsid'],capture_output=True)
         self.assertNotEqual(probe.returncode,0,probe.stdout)
     def test_migration(self):
+        self.disable_fixture_setsid()
         source,_=self.production_fixture();legacy=source.read_bytes();s=self.login();self.cfg('prepare',s)
         p=self.cfg('production_copy_preview',s)['report'];self.assertEqual(p['operation'],'migration-source')
         self.api('configuration_api','apply',s,{'confirmation':p['confirmation'],'consent':'1'},expected=503)
@@ -222,7 +223,17 @@ class Native(web.Web):
         shutil.copytree(original,store/f'gen-{revision}')
         return original
     def test_backup(self):
+        self.disable_fixture_setsid()
         s=self.configured();original=self.backup(s);source=Path('/etc/config/homegate');before=source.read_bytes()
+        revision=self.cli('config-status')['revision']
+        preview=subprocess.run(['/usr/bin/homegate','config-preview'],input=original.encode(),capture_output=True,timeout=12)
+        self.assertEqual(preview.returncode,0,(preview.stdout,preview.stderr))
+        self.assertTrue(json.loads(preview.stdout)['confirmation'])
+        self.cli('config-cancel')
+        self.assertTrue(self.cli('activate-preview')['confirmation'])
+        self.cli('config-cancel')
+        self.assertEqual(self.cli('config-status')['revision'],revision)
+        self.assertEqual(source.read_bytes(),before)
         large=original+('# '+('a'*64)+'\n')*1800
         self.assertGreater(len(large),102400)
         self.cfg('backup_preview',s,backup=large);self.cfg('cancel',s)
@@ -242,6 +253,7 @@ class Native(web.Web):
         self.assertFalse((generation/'credentials/cloudflare.dns_b.secret').exists())
         self.assertFalse((store/'ddns-authority').exists());self.verify_unchanged()
     def test_rollback(self):
+        self.disable_fixture_setsid()
         s=self.configured();store=Path('/etc/homegate/transactions');ancestor=(store/'current').read_text().strip();original=self.backup(s)
         self.cfg('secret_put',s,id='dns_a',provider='cloudflare',slot='secret',value='SECOND_SECRET_SENTINEL',consent='1');self.publish(s)
         p=self.cfg('backup_preview',s,backup=original.replace('DNS account','Later account'))
@@ -254,6 +266,7 @@ class Native(web.Web):
         self.api('configuration_api','rollback_preview',s,{'generation':'32'},expected=503)
         self.cli('config-rollback-preview','../1',ok=False);self.verify_unchanged()
     def test_recovery(self):
+        self.disable_fixture_setsid()
         s=self.configured();old=self.backup(s);source=Path('/etc/config/homegate')
         p=self.cfg('backup_preview',s,backup=old.replace('DNS account','Recover account'))
         tool=STATE/'tools/fsync';tool.unlink();tool.write_text('#!/usr/sbin/ash\ncase "$1" in /etc/config/.homegate-projection.*) exit 1;; esac\nexec /usr/sbin/busybox fsync "$@"\n');tool.chmod(0o755)
@@ -319,6 +332,19 @@ class Native(web.Web):
     def test_daemon(self):
         s=self.enable_owner();self.cli('service-plan-set','-','-','-','open','--confirm')
         self.start_owner();d=self.wait_service(lambda d:d['state']=='running');self.assertTrue(d['healthy'])
+        receipt=Path('/var/run/homegate/native-service.json')
+        expected=receipt.read_bytes();before=receipt.stat()
+        time.sleep(1.6)
+        after=receipt.stat()
+        self.assertEqual((after.st_ino,after.st_mtime_ns),(before.st_ino,before.st_mtime_ns))
+        changed=expected.replace(b'"reason":"ready"',b'"reason":"oops"')
+        self.assertNotEqual(changed,expected)
+        receipt.write_bytes(changed)
+        self.wait_service(lambda report:report.get('reason')=='ready')
+        self.assertEqual(receipt.read_bytes(),expected)
+        receipt.unlink()
+        self.wait_service(lambda report:report.get('reason')=='ready')
+        self.assertEqual(receipt.read_bytes(),expected)
         ubus=STATE/'tools/ubus'
         original_ubus=ubus.read_bytes()
         instance={'running':True,'pid':self.owner.pid,'command':['/usr/bin/homegate','daemon']}
@@ -485,13 +511,18 @@ class Native(web.Web):
         s=self.configured();p=self.cfg('preview_web_rule',s,id='plain',domain='example.test',https='0',certificate='')
         self.cfg('apply',s,confirmation=p['report']['confirmation'],consent='1')
         self.cfg('web_target_put',s,id='plain',value='http://127.0.0.1:'+str(server.server_port),consent='1')
+        long_domain='.'.join(('a'*63,'b'*63,'c'*63,'d'*56,'test'))
+        self.assertEqual(len(long_domain),253)
+        p=self.cfg('preview_web_rule',s,id='long',domain=long_domain,https='0',certificate='')
+        self.cfg('apply',s,confirmation=p['report']['confirmation'],consent='1')
+        self.cfg('web_target_put',s,id='long',value='http://127.0.0.1:'+str(server.server_port),consent='1')
         public=self.backup(s);lines=public.splitlines()
         for i,line in enumerate(lines):
             if line.strip().startswith("option 'http_port'") or line.strip().startswith('option http_port'):lines[i]="\toption http_port '18080'"
         candidate='\n'.join(lines)+'\n';self.assertNotEqual(candidate,public)
         preview=self.cfg('backup_preview',s,backup=candidate);self.cfg('apply',s,confirmation=preview['report']['confirmation'],consent='1')
         self.publish(s);self.cfg('lifecycle_enable',s,consent='1')
-        self.cli('service-plan-set','-','-','plain','open','--confirm');self.disable_fixture_setsid()
+        self.cli('service-plan-set','-','-','plain,long','open','--confirm');self.disable_fixture_setsid()
         self.start_owner();self.wait_service(lambda d:d['state']=='running',seconds=30)
         public_status=self.cli('proxy-status')
         if not public_status['http_listening']:
@@ -518,6 +549,12 @@ class Native(web.Web):
         rows=self.cli('access-clear-entry','0:0:0:0:0:0:0:1','example.test')['entries'];self.assertEqual(len(rows),1);self.assertEqual(rows[0]['ip'],'127.0.0.2')
         self.assertEqual(self.cli('access-clear-denied')['entries'],rows)
         self.assertEqual(self.cli('access-clear-all')['entries'],[])
+        conn=http.client.HTTPConnection('127.0.0.1',10080,timeout=5)
+        conn.request('GET','/',headers={'Host':long_domain})
+        response=conn.getresponse()
+        self.assertEqual(response.status,200)
+        self.assertEqual(response.read(),b'NATIVE_COORDINATOR_PROXY')
+        conn.close()
         rules=json.loads((STATE/'fw-kernel.json').read_text());self.assertIn('HG_NATIVE_NAT',rules['nat']);self.assertEqual(rules['nat']['HOMEGATE_NAT'],[['-j','RETURN']])
         self.cli('service-stop','--confirm');self.owner.wait(timeout=20);self.cli('service-quiescent')
         rules=json.loads((STATE/'fw-kernel.json').read_text());self.assertNotIn('HG_NATIVE_NAT',rules['nat']);self.assertEqual(rules['nat']['HOMEGATE_NAT'],[['-j','RETURN']]);self.verify_unchanged()
@@ -646,10 +683,10 @@ fi
         self.assertEqual(self.cli('ddns-status')['results'][0]['at'],observed)
         self.verify_unchanged(allow_provider_calls=True)
     def test_cli_ddns_unknown(self):
-        s=self.configured();self.rule(s);self.seed_unpublished_generation(31)
+        s=self.configured();self.rule(s);self.seed_unpublished_generation(63)
         saved=self.web_wait(self.web_request('maintenance_apply',{'mode':'save','log_max_lines':'1100'},True)['job'])
         self.assertTrue(saved['ok'],saved)
-        self.assertEqual(self.cli('config-status')['revision'],33)
+        self.assertEqual(self.cli('config-status')['revision'],65)
         self.cfg('lifecycle_enable',s,consent='1')
         grant=self.cli('grant-preview','ddns_a');self.cli('grant-commit',grant['confirmation'])
         self.disable_fixture_setsid()
@@ -783,17 +820,38 @@ fi
         self.action_result('wol-packet-capture',raw_sent=report['raw_sent'],udp_sent=report['udp_sent'],real_network=False)
     def test_cli_actions(self):
         s=self.configured()
+        self.disable_fixture_setsid()
+        sleep=STATE/'tools/sleep';sleep.unlink(missing_ok=True)
+        sleep.write_text('#!/bin/sh\ncase "$1" in ""|*[!0-9]*) exit 1;; esac\nprintf "%s\\n" "$1" >> /teststate/integer-sleep-calls\nexec /usr/sbin/busybox sleep "$@"\n');sleep.chmod(0o755)
+        (STATE/'access-mode').write_text('delayed')
         first=self.cli('access-update',' cn ');self.assertTrue(first['ok']);self.assertEqual((first['phase'],first['region'],first['native_state']),('access','CN','published'));self.assertGreater(first['ipv4'],0);self.assertGreater(first['ipv6'],0)
+        self.assertIn('1',(STATE/'integer-sleep-calls').read_text().splitlines())
         calls=(STATE/'access-calls').read_bytes();cached=self.cli('access-update','CN');self.assertEqual(cached['source'],'cache');self.assertEqual((STATE/'access-calls').read_bytes(),calls)
         fresh=self.cli('access-refresh','CN');self.assertEqual(fresh['native_state'],'published');self.assertGreater(len((STATE/'access-calls').read_bytes()),len(calls))
         cache=Path('/etc/homegate/access/CN.cidr');before=cache.read_bytes();(STATE/'access-mode').write_text('truncated')
         failed=self.cli('access-refresh','CN',ok=False);self.assertTrue(failed['ok']);self.assertEqual(failed['source'],'stale-cache');self.assertTrue(failed['warning']);self.assertEqual(cache.read_bytes(),before)
         self.assertFalse(self.cli('access-update','US',ok=False)['ok']);self.assertEqual(cache.read_bytes(),before)
-        self.action_result('CN-update-refresh',published=True,cached_without_download=True,failed_refresh_exit_1=True,validated_cache_retained=True)
+        self.action_result('CN-update-refresh',published=True,cached_without_download=True,failed_refresh_exit_1=True,validated_cache_retained=True,no_setsid=True,integer_sleep=True)
         (STATE/'access-mode').write_text('ok')
         done=self.web_wait(self.web_request('access_update',{'region':'CN'},True)['job']);self.assertTrue(done['ok'],{'result':done,'access':self.cli('access-status')});cache=Path('/etc/homegate/access/CN.cidr');before=cache.read_bytes()
         (STATE/'access-mode').write_text('truncated');done=self.web_wait(self.web_request('access_update',{'region':'CN'},True)['job']);self.assertFalse(done['ok']);self.assertEqual(cache.read_bytes(),before)
         self.action_result('access-route-refresh',success=True,failed_download_not_reported_as_updated=True,cache_retained=True)
+        entered=STATE/'access-entered';entered.unlink()
+        (STATE/'access-mode').write_text('hold')
+        with subprocess.Popen(['/usr/bin/homegate','access-refresh','CN'],stdout=subprocess.PIPE,stderr=subprocess.PIPE) as refresh:
+            deadline=time.monotonic()+10
+            while not entered.exists():
+                self.assertLess(time.monotonic(),deadline)
+                time.sleep(.1)
+            stop=subprocess.run(['/usr/sbin/ash','/usr/libexec/homegate/ddns-control.sh','access-stop','--confirm'],capture_output=True,timeout=8)
+            self.assertEqual(stop.returncode,0,stop.stdout)
+            output,err=refresh.communicate(timeout=12)
+        self.assertEqual(refresh.returncode,1,(output,err))
+        self.assertEqual(json.loads(output)['native_state'],'stopped')
+        self.assertEqual(cache.read_bytes(),before)
+        reap=subprocess.run(['/usr/sbin/ash','/usr/libexec/homegate/ddns-control.sh','access-reap','--confirm'],capture_output=True,timeout=8)
+        self.assertEqual(reap.returncode,0,reap.stdout)
+        self.action_result('access-refresh-stop',session_reaped=True,cache_retained=True)
         import fcntl
         audit=Path('/var/run/homegate/access.json');lock=Path('/var/run/homegate/proxy.lock')
         audit.write_text(json.dumps({'entries':[{'ip':ip,'host':'example.test','allowed':allow,'reason':'ip' if allow else 'denied','region':'','time':'2026-10-30T00:00:00Z','count':1} for ip,allow in [('192.0.2.1',True),('192.0.2.2',False),('192.0.2.3',True)]]}));audit.chmod(0o600)
@@ -812,9 +870,6 @@ fi
         self.action_result('certificate-file-import',success=True,unsafe_key_mode_refused=True,old_material_retained=True)
         for action,fields in [('preview_wol_host',{'id':'wake_a','name':'Wake host','mac':'c8-7f-54-53-6b-80'}),('preview_wol_settings',{'interface':'br-lan','selected_host':'wake_a'})]:
             preview=self.cfg(action,s,**fields);self.cfg('apply',s,confirmation=preview['report']['confirmation'],consent='1')
-        self.disable_fixture_setsid()
-        sleep=STATE/'tools/sleep';sleep.unlink(missing_ok=True)
-        sleep.write_text('#!/bin/sh\ncase "$1" in ""|*[!0-9]*) exit 1;; esac\nexec /usr/sbin/busybox sleep "$@"\n');sleep.chmod(0o755)
         report=self.cli('wol','wake_a');self.assertEqual((report['raw_sent'],report['udp_sent']),(9,6));self.verify_wake_capture(report)
         report=self.cli('wol','br-lan','C8:7F:54:53:6B:80');self.assertEqual((report['raw_sent'],report['udp_sent']),(9,6));self.verify_wake_capture(report)
         (STATE/'wol-mode').write_text('all-fail');report=self.cli('wol','wake_a',ok=False);self.assertEqual((report['raw_sent'],report['udp_sent']),(0,0));self.verify_wake_capture(report)
@@ -870,10 +925,10 @@ fi
         self.assertIn('1',(STATE/'integer-sleep-calls').read_text().splitlines())
         self.action_result('config-reset',completed=True,bin_ubus_only=True,root_group_rc_common_775=True,integer_sleep_only=True,failed_observation_retained_preview=True,default_switch_restored=True,empty_coordinator_running=False);self.verify_unchanged()
     def test_cli_acme(self):
-        s=self.acme_setup();self.seed_unpublished_generation(31)
+        s=self.acme_setup();self.seed_unpublished_generation(63)
         saved=self.web_wait(self.web_request('maintenance_apply',{'mode':'save','log_max_lines':'1100'},True)['job'])
         self.assertTrue(saved['ok'],saved)
-        self.assertEqual(self.cli('config-status')['revision'],33)
+        self.assertEqual(self.cli('config-status')['revision'],65)
         self.cfg('lifecycle_enable',s,consent='1')
         self.assertEqual(self.cli('cert-renew')['results'],[]);self.assertFalse((STATE/'acme-fixture.json').exists())
         self.disable_fixture_setsid()
@@ -898,9 +953,20 @@ fi
         self.assertEqual(self.cli('acme-ca-status',' LE ',' STAGING ')['environment'],'staging')
         self.assertEqual(self.cli('acme-ca-status','','')['environment'],'production')
         (STATE/'ca-bad').touch();self.cli('acme-ca-status','letsencrypt','staging',ok=False)
-        log=Path('/var/log/homegate.log');log.write_text('2026-10-29 12:00:00 [INFO] DDNS unchanged token=SECRET_SENTINEL\n2026-10-29 12:00:01 [ERROR] ACME failed Authorization: Bearer SECRET_SENTINEL\n');log.chmod(0o600)
+        log=Path('/var/log/homegate.log')
+        log.write_text(
+            '2026-10-29 12:00:00 [INFO] DDNS url=https://probe.invalid/?accessKeyId=FIRST_ID'
+            '&Signature=NEXT_SIGNATURE&keep=public-value token=SECRET?WITH=SEPARATOR\n'
+            '2026-10-29 12:00:01 [ERROR] ACME failed Authorization: Bearer SECRET_SENTINEL\n'
+        )
+        log.chmod(0o600)
         d=self.cli('log-events','1');self.assertEqual(d['count'],1);self.assertEqual(d['events'][0]['category'],'certificate');self.assertTrue(d['events'][0]['important'])
-        self.assertEqual(self.cli('log-events')['count'],2)
+        d=self.cli('log-events')
+        self.assertEqual(d['count'],2)
+        self.assertEqual(d['events'][0]['raw'],
+                         '2026-10-29 12:00:00 [INFO] DDNS url=https://probe.invalid/?accessKeyId=<redacted>'
+                         '&Signature=<redacted>&keep=public-value token=<redacted>')
+        self.assertTrue(d['events'][1]['raw'].endswith('Authorization: <redacted>'))
         log.unlink();log.symlink_to(STATE/'private-foreign');p=subprocess.run(['/usr/bin/homegate','log-events'],capture_output=True);self.assertEqual(p.returncode,0);self.assertFalse(json.loads(p.stdout)['ok'])
         hold=Path('/etc/.homegate-transition/hold');hold.touch();hold.chmod(0o600)
         self.cli('cert-renew',ok=False);self.api('configuration_api','preview_account',self.login(),{'id':'dns_b','provider':'cloudflare','name':'Blocked'},expected=503)
@@ -1017,7 +1083,7 @@ else:
             codec=root/'codec.lua';codec.write_text(mapped((ROOT/'packaging/production/native-package.lua').read_text()))
             hook=root/'hook';hook.write_text('#!/usr/sbin/ash\n'+mapped((ROOT/'packaging/production/native-package.sh').read_text()));hook.chmod(0o755)
             postrm=root/'postrm';postrm.write_text(mapped((ROOT/'packaging/production/postrm.sh').read_text()));postrm.chmod(0o755)
-            init=root/'etc/init.d/homegate';init.write_text('#!/usr/sbin/ash\n'+mapped((ROOT/'packaging/production/homegate.init').read_text())+'\nprocd_open_instance(){ :; };procd_set_param(){ :; };procd_close_instance(){ printf 1 > '+str(state)+'; };case "$1" in enable) enable;;disable) disable;;enabled) enabled;;start) start_service;;stop) stop_service;;esac\n');init.chmod(0o755)
+            init=root/'etc/init.d/homegate';init.write_text('#!/usr/sbin/ash\n'+mapped((ROOT/'packaging/production/homegate.init').read_text())+'\nprocd_open_instance(){ :; };procd_set_param(){ :; };procd_close_instance(){ printf 1 > '+str(state)+'; };json_init(){ :; };json_add_string(){ :; };json_dump(){ echo "{}"; };ubus(){ [ "$6" = delete ] && printf "%s\\n" delete >> '+str(root/'procd-log')+'; };case "$1" in enable) enable;;disable) disable;;enabled) enabled;;start) start_service;;stop) stop_service;;package_stopped) package_stopped;;esac\n');init.chmod(0o755)
             def call(args,ok=True,env=None):
                 p=subprocess.run(args,capture_output=True,timeout=10,env=env);self.assertEqual(p.returncode==0,ok,(args,p.returncode,p.stderr[-250:]));return p
             if boot:call([str(init),'enable'])
@@ -1041,11 +1107,13 @@ else:
             # Unknown stop cannot authorize postrm to delete data.
             blocked.touch();state.write_text('1');call([str(hook),'prerm','remove'],ok=False)
             call([str(postrm),'remove'],ok=False);self.assertTrue(keep.exists());blocked.unlink()
-            # SDK default_prerm still calls these after custom-hook failure.
             # Even if the external stop blocker has cleared, no completed
-            # package transaction authorizes those default side effects yet.
+            # package transaction authorizes stop/disable or procd deletion.
             link=root/'etc/rc.d/S95homegate';before_link=link.is_symlink()
             call([str(init),'disable'],ok=False);call([str(init),'stop'],ok=False)
+            before_procd=(root/'procd-log').read_bytes()
+            call([str(init),'package_stopped'],ok=False)
+            self.assertEqual((root/'procd-log').read_bytes(),before_procd)
             self.assertEqual(link.is_symlink(),before_link);self.assertEqual(state.read_text(),'1')
             foreign=root/'foreign-lease';foreign.write_text('KEEP');foreign.chmod(0o600)
             call(['/usr/sbin/ash','-c','exec 9>>"$1"; flock -n 9; "$2" disable','sdk-default',str(foreign),str(init)],ok=False);self.assertEqual(foreign.read_text(),'KEEP')
@@ -1094,12 +1162,12 @@ else:
         for route in ['api/status','api/version','api/network','api/ddns','api/certs','api/proxy','api/firewall','api/wol','api/logs','api/log_events','api/access_recent','api/dns_zones','domain','web']:
             d=self.web_request(route);self.assertTrue(d['ok'],(route,d));self.assertTrue('body' in d or 'redirect' in d,(route,d))
         store=Path('/etc/homegate/transactions')
-        original=self.seed_unpublished_generation(31)
+        original=self.seed_unpublished_generation(63)
         d=self.web_request('basic_apply',{'mode':'save','ddns_interval':'420','https_port':'444','proxy_https_port':'10444','auto_firewall':'1'},True)
         result=self.web_wait(d['job']);self.assertTrue(result['ok'],result);self.assertIn('notice=',result['redirect'])
-        status=self.cli('config-status');self.assertEqual(status['revision'],33);self.assertEqual(status['history_capacity'],64)
+        status=self.cli('config-status');self.assertEqual(status['revision'],65);self.assertEqual(status['history_capacity'],96);self.assertEqual(status['history_remaining'],31)
         credentials='credentials/cloudflare.dns_a.secret'
-        self.assertEqual((store/'gen-33'/credentials).read_bytes(),(original/credentials).read_bytes())
+        self.assertEqual((store/'gen-65'/credentials).read_bytes(),(original/credentials).read_bytes())
         self.assertIn('network',self.cli('network-resolve'))
         self.assertTrue(self.cli('dns-provider-status','dns_a')['credentials_valid'])
         self.assertTrue(self.cli('cert-status')['ok'])
@@ -1114,7 +1182,7 @@ else:
         self.assertFalse(self.web_wait(d['job'])['ok'])
         self.assertEqual(lock.stat().st_mode & 0o777,0o644)
         self.assertEqual(config.read_bytes(),before)
-        self.assertEqual((store/'current').read_text().strip(),'33')
+        self.assertEqual((store/'current').read_text().strip(),'65')
         lock.unlink()
         self.assertEqual(self.cli('config-status',ok=False)['error'],'Unsafe shared writer lock')
         self.assertIn('template',self.web_request('wol'))
@@ -1122,8 +1190,8 @@ else:
         d=self.web_request('wol_apply',wol_form,True)
         result=self.web_wait(d['job']);self.assertTrue(result['ok'],result)
         self.assertEqual(lock.stat().st_mode & 0o777,0o600)
-        status=self.cli('config-status');self.assertEqual(status['revision'],35);self.assertFalse(status['service_enabled'])
-        self.assertEqual((store/'gen-35'/credentials).read_bytes(),(original/credentials).read_bytes())
+        status=self.cli('config-status');self.assertEqual(status['revision'],67);self.assertFalse(status['service_enabled'])
+        self.assertEqual((store/'gen-67'/credentials).read_bytes(),(original/credentials).read_bytes())
         hosts=self.web_request('wol')['data']['hosts'];self.assertEqual(len(hosts),1);self.assertEqual(hosts[0]['mac'],'02:11:22:33:44:55')
         before=Path('/etc/config/homegate').read_bytes()
         d=self.web_request('basic_apply',{'https_port':'99999'},True);result=self.web_wait(d['job']);self.assertFalse(result['ok']);self.assertEqual(Path('/etc/config/homegate').read_bytes(),before)
@@ -1262,21 +1330,42 @@ else:
             receipt.unlink(missing_ok=True)
         rc_common=STATE/'etc/rc.common'
         original_rc=rc_common.read_text()
+        lua=STATE/'tools/lua'
+        original_lua=lua.read_text()
+        # Age only the Web owner's clock after publication. r200 exhausts its
+        # shared receipt deadline here even though the coordinator starts later.
+        lua.write_text(original_lua.replace('#!/bin/sh\n',r'''#!/bin/sh
+case "$1:$2" in
+ */native-web-store.lua:start-options) touch /teststate/web-publication-complete;;
+ */worker-process.lua:now)
+  if [ -f /teststate/web-publication-complete ];then
+   parent=$(tr '\000' ' ' < "/proc/$PPID/cmdline" 2>/dev/null)
+   case "$parent" in *'/native-web.sh owner '*)
+    now=$(/usr/bin/lua5.1 /teststate/lua-runner.lua "$@") || exit 1
+    touch /teststate/web-aged-clock
+    printf '%s\n' "$((now+176))";exit 0;;
+   esac
+  fi;;
+esac
+''',1))
         # procd may have accepted the start even when init returns an error.
         anchor='start) start_service;;'
         self.assertEqual(original_rc.count(anchor),1)
         rc_common.write_text(original_rc.replace(anchor,
-            'start) (sleep 14; start_service) </dev/null >/dev/null 2>&1 & exit 1;;'))
+            'start) echo start >> /teststate/web-start-calls; (sleep 8; start_service) </dev/null >/dev/null 2>&1 & exit 1;;'))
         try:
             import re
             code,_,body=self.cgi(BASE+'/basic_apply',cookie=s[0],verb='POST',fields={'token':s[1],'enabled':'1','mode':'apply','https_port':'447'});self.assertEqual(code,200)
             job=re.search(rb"var id='([0-9a-f]{32})'",body).group(1).decode()
             result=self.web_wait(job,seconds=45);self.assertTrue(result['ok'],result);self.assertTrue(result['runtime_applied'])
+            self.assertTrue((STATE/'web-aged-clock').exists())
+            self.assertEqual((STATE/'web-start-calls').read_text().splitlines(),['start'])
             status=self.cli('status');self.assertTrue(status['service']['healthy']);self.assertTrue(status['service']['running'])
             self.assertEqual(self.web_request('overview')['data']['main']['https_port'],'447')
             self.assertEqual(subprocess.run(['/etc/init.d/homegate','enabled'],timeout=8).returncode,0)
         finally:
             rc_common.write_text(original_rc)
+            lua.write_text(original_lua)
         self.assertFalse(Path('/etc/homegate/transactions/ddns-authority').exists())
         # Keep the real owner from finishing stop until the Web writer makes a
         # whole-second retry. The target sleep rejects fractional arguments.
@@ -1401,8 +1490,9 @@ case "$1:${2:-}:$parent" in
  '-n:9:/bin/ash /usr/libexec/homegate/native-web.sh owner '*)
   if mkdir /teststate/owner-probe-once 2>/dev/null;then
    path=$(readlink /proc/$$/fd/9)
-   (exec 9>&-;exec 3>>"$path";/usr/sbin/busybox flock 3 || exit 1;touch /teststate/owner-probe-ready;sleep .12) </dev/null >/dev/null 2>&1 &
-   tries=0;while [ ! -e /teststate/owner-probe-ready ];do tries=$((tries+1));[ "$tries" -lt 100 ] || exit 1;sleep .01;done
+   hold=.20;[ ! -e /teststate/owner-probe-long ] || hold=2
+   (exec 9>&-;exec 3>>"$path";/usr/sbin/busybox flock 3 || exit 1;touch /teststate/owner-probe-ready;/usr/sbin/busybox sleep "$hold") </dev/null >/dev/null 2>&1 &
+   tries=0;while [ ! -e /teststate/owner-probe-ready ];do tries=$((tries+1));[ "$tries" -lt 100 ] || exit 1;/usr/sbin/busybox sleep .01;done
   fi;;
 esac
 exec /usr/sbin/busybox flock "$@"
@@ -1410,6 +1500,11 @@ exec /usr/sbin/busybox flock "$@"
         try:
             result=self.web_wait(self.web_request('maintenance_apply',{'mode':'save','log_max_lines':'2049'},True)['job'])
             self.assertTrue(result['ok'],result);self.assertTrue((STATE/'owner-probe-ready').exists());self.assertIn("option log_max_lines '2049'",Path('/etc/config/homegate').read_text())
+            (STATE/'owner-probe-ready').unlink();(STATE/'owner-probe-once').rmdir();(STATE/'owner-probe-long').touch()
+            before=Path('/etc/config/homegate').read_bytes()
+            result=self.web_wait(self.web_request('maintenance_apply',{'mode':'save','log_max_lines':'2050'},True)['job'])
+            self.assertFalse(result['ok']);self.assertIs(result['started'],False);self.assertEqual(result['error_code'],'preflight')
+            self.assertEqual(Path('/etc/config/homegate').read_bytes(),before)
         finally:
             tool.unlink()
             if link is not None:tool.symlink_to(link)
@@ -1456,7 +1551,11 @@ class Deployment(unittest.TestCase):
                 hooks={'core':('preinst','prerm','postinst','postrm'),'web':('postinst',)}
                 for hook in hooks.get(part,()):
                     definition=make.split(f'define Package/{name}/{hook}\n',1)[1].split('\nendef',1)[0]
-                    control.append((hook,(definition.replace('$$','$').strip()+'\n').encode(),0o755))
+                    body_bytes=(definition.replace('$$','$').strip()+'\n').encode()
+                    if hook=='prerm':
+                        control.append(('prerm-pkg',body_bytes,0o755))
+                        body_bytes=(feed/'tools/homegate-core.prerm').read_bytes()
+                    control.append((hook,body_bytes,0o755))
                 container=archive([('debian-binary',b'2.0\n',0o644),('control.tar.gz',archive(control),0o644),('data.tar.gz',archive(body),0o644)])
                 (packages/(name+'.ipk')).write_bytes(container)
             result=prepare_kit(ROOT,packages,root/'kit');self.assertEqual(len(result['sha256']),6);self.assertEqual((root/'kit').stat().st_mode&0o777,0o700)
@@ -1471,13 +1570,15 @@ class Deployment(unittest.TestCase):
         from native_transition import verify_lifecycle_hooks
         with tempfile.TemporaryDirectory() as work:
             feed=Path(work)/'feed';stage_package(ROOT,feed);make=(feed/'Makefile').read_text();files={}
+            prerm_dispatcher=(feed/'tools/homegate-core.prerm').read_bytes()
             for hook in ('preinst','prerm','postinst','postrm'):
                 wanted=(make.split('define Package/homegate-core/'+hook+'\n')[1].split('\nendef')[0].replace('$$','$').strip()+'\n').encode()
                 if hook in ('prerm','postinst'):
                     wrapper=b'#!/bin/sh\n'
                     if hook=='postinst':wrapper+=b'[ "${IPKG_NO_SCRIPT}" = "1" ] && exit 0\n'
                     wrapper+=b'[ -s ${IPKG_INSTROOT}/lib/functions.sh ] || exit 0\n. ${IPKG_INSTROOT}/lib/functions.sh\ndefault_'+hook.encode()+b' $0 $@\n'
-                    files[hook]=wrapper;files[hook+'-pkg']=wanted
+                    files[hook]=prerm_dispatcher if hook=='prerm' else wrapper
+                    files[hook+'-pkg']=wanted
                 else:files[hook]=wanted
             def archive(rows,unsafe=None):
                 out=io.BytesIO()
@@ -1488,15 +1589,17 @@ class Deployment(unittest.TestCase):
                         if unsafe=='mode' and name=='prerm-pkg':item.mode=0o644
                         t.addfile(item,io.BytesIO(raw))
                 return out.getvalue()
-            good=list(files.items());result=verify_lifecycle_hooks(archive(good),make)
-            self.assertEqual(result['prerm'],'SDK-default-and-exact-pkg-body')
+            good=list(files.items());result=verify_lifecycle_hooks(archive(good),make,prerm_dispatcher=prerm_dispatcher)
+            self.assertEqual(result['prerm'],'HomeGate-live-dispatcher-and-exact-pkg-body')
+            old_prerm=files['postinst'].replace(b'[ "${IPKG_NO_SCRIPT}" = "1" ] && exit 0\n',b'').replace(b'default_postinst',b'default_prerm')
             cases=[([(n,b'exit 0\n'+v if n=='prerm' else v) for n,v in good],None),
+                   ([(n,old_prerm if n=='prerm' else v) for n,v in good],None),
                    ([(n,v+b'echo injected\n' if n=='postinst-pkg' else v) for n,v in good],None),
                    ([(n,v) for n,v in good if n!='prerm-pkg'],None),
                    (good+[('prerm-pkg',files['prerm-pkg'])],None),(good,'owner'),(good,'mode')]
             for rows,unsafe in cases:
                 with self.subTest(unsafe=unsafe,rows=[n for n,_ in rows]):
-                    with self.assertRaises(ValueError):verify_lifecycle_hooks(archive(rows,unsafe),make)
+                    with self.assertRaises(ValueError):verify_lifecycle_hooks(archive(rows,unsafe),make,prerm_dispatcher=prerm_dispatcher)
     def test_source_package_tree(self):
         with tempfile.TemporaryDirectory() as work:
             dest=Path(work)/'feed';stage_package(ROOT,dest);make=(dest/'Makefile').read_text()

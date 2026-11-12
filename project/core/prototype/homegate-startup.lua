@@ -32,7 +32,7 @@ if mode=='source' then
     if not candidate or not validator.validate(candidate,candidate,codec.json,ip) then os.exit(1) end
     io.write(flag(candidate)..'\n');return
 end
-if type(revision)~='string' or not revision:match('^[1-9]%d*$') or tonumber(revision)>64 then os.exit(7) end
+if type(revision)~='string' or not revision:match('^[1-9]%d*$') or tonumber(revision)>96 then os.exit(7) end
 if mode=='bound' then
     if arg[3] then os.exit(7) end
     local snapshot=assert(loadfile(dir..'/private-snapshot.lua'))().read(io.stdin,codec)

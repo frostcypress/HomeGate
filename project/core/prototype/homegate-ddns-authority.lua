@@ -16,7 +16,7 @@ if arg[1]=='selection' or arg[1]=='names' or arg[1]=='member' then
     io.write(arg[1]=='names' and codec.json(names)..'\n' or table.concat(names,',')..'\n');return
 end
 local mode,revision,rule=arg[1],arg[2],arg[3]
-if (mode~='scope' and mode~='snapshot') or arg[4] or type(revision)~='string' or not revision:match('^[1-9]%d*$') or tonumber(revision)>64 then os.exit(1) end
+if (mode~='scope' and mode~='snapshot') or arg[4] or type(revision)~='string' or not revision:match('^[1-9]%d*$') or tonumber(revision)>96 then os.exit(1) end
 local raw=io.stdin:read(reader.limit+1) or '';local snapshot=reader.parse(raw,codec)
 if not snapshot or snapshot.revision~=tonumber(revision) then os.exit(1) end
 local intent,provider=authority.intent(snapshot,rule,plan.id)

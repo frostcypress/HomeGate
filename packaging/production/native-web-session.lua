@@ -19,7 +19,7 @@ local arity={['read-owner']=2,owner=2,['observe-config-service']=2,
  ['ddns-plan']=5,['ddns-work']=2,['ddns-schedule']=2,
  ['acme-work']=2,['acme-cleanup']=2,['acme-schedule']=3,
  ['certificate-validate']=3,['certificate-preview']=2,
- ['proxy-serve']=2,['proxy-validate']=3,['firewall-operate']=3,['wol-send']=2}
+ ['proxy-serve']=2,['proxy-validate']=3,['firewall-operate']=3,['wol-send']=2,['access-region']=2}
 if not action or #arg~=arity[action] or type(value)~='string' then refuse() end
 local program,args=watchdog,nil
 if action=='read-owner' then
@@ -42,6 +42,8 @@ else
   args={value}
  elseif action=='ddns-work' then
   program,args=core..'homegate-ddns-job.sh',{'work',value}
+ elseif action=='access-region' then
+  program,args=core..'homegate-access-region.sh',{'worker',value}
  elseif action=='acme-work' or action=='acme-cleanup' then
   program,args=core..'homegate-acme-job.sh',{action=='acme-work' and 'work' or 'work-cleanup',value}
  elseif action=='acme-schedule' then
@@ -60,7 +62,7 @@ else
   program,args=core..'homegate-proxy-validation.sh',{mode,value}
  elseif action~='owner' then
   local revision,job=arg[3],arg[4]
-  if not number_arg(revision,2,1) or tonumber(revision)>64 or not number_arg(job,9,2) then refuse() end
+  if not number_arg(revision,2,1) or tonumber(revision)>96 or not number_arg(job,9,2) then refuse() end
   if action=='observe-config-health' then
    args={'--health-status',value,revision,job}
   elseif action=='observe-network' then

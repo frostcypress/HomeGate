@@ -55,7 +55,7 @@ if [ "${1:-}" = --cloudflare-check ] || [ "${1:-}" = --aliyun-check ] || [ "${1:
     case "$dns_account" in ''|*[!a-zA-Z0-9_-]*) exit 2;; esac
     [ "${#dns_account}" -le 64 ] || exit 2
     case "$dns_revision:$dns_job" in *[!0-9:]*) exit 2;; esac
-    [ "$dns_revision" -ge 1 ] && [ "$dns_revision" -le 64 ] && [ "${#dns_job}" -le 9 ] && [ "$dns_job" -ge 2 ] || exit 2
+    [ "$dns_revision" -ge 1 ] && [ "$dns_revision" -le 96 ] && [ "${#dns_job}" -le 9 ] && [ "$dns_job" -ge 2 ] || exit 2
     set -- --action "$1" cloudflare-check
 fi
 if [ "${1:-}" = --ddns-plan ]; then
@@ -64,7 +64,7 @@ if [ "${1:-}" = --ddns-plan ]; then
     # The authorized snapshot can still be producing input after the worker starts.
     action=ddns-plan;budget=15;ddns_revision=$2;ddns_job=$3;ddns_rule=$4
     case "$ddns_revision:$ddns_job" in *[!0-9:]*) exit 2;; esac
-    [ "$ddns_revision" -ge 1 ] && [ "$ddns_revision" -le 64 ] && [ "${#ddns_job}" -le 9 ] && [ "$ddns_job" -ge 2 ] || exit 2
+    [ "$ddns_revision" -ge 1 ] && [ "$ddns_revision" -le 96 ] && [ "${#ddns_job}" -le 9 ] && [ "$ddns_job" -ge 2 ] || exit 2
     case "$ddns_rule" in *[!a-zA-Z0-9_-]*) exit 2;; esac
     [ "${#ddns_rule}" -le 64 ] || exit 2
     set -- --action "$1" ddns-plan
@@ -74,7 +74,7 @@ if [ "${1:-}" = --network-resolve ]; then
     [ "$#" -eq 4 ] || exit 2
     action=network-resolve;budget=5;network_revision=$2;network_job=$3;network_bridge=$4
     case "$network_revision:$network_job" in *[!0-9:]*) exit 2;; esac
-    [ "$network_revision" -ge 1 ] && [ "$network_revision" -le 64 ] && [ "${#network_job}" -le 9 ] && [ "$network_job" -ge 2 ] || exit 2
+    [ "$network_revision" -ge 1 ] && [ "$network_revision" -le 96 ] && [ "${#network_job}" -le 9 ] && [ "$network_job" -ge 2 ] || exit 2
     case "$network_bridge" in ''|.|..|*[!a-zA-Z0-9_.:-]*) exit 2;; esac
     [ "${#network_bridge}" -le 32 ] || exit 2
     set -- --action "$1" network-resolve
@@ -84,7 +84,7 @@ if [ "${1:-}" = --health-status ]; then
     [ "$#" -eq 3 ] || exit 2
     action=health-status;budget=5;health_revision=$2;health_job=$3
     case "$health_revision:$health_job" in *[!0-9:]*) exit 2;; esac
-    [ "$health_revision" -ge 1 ] && [ "$health_revision" -le 64 ] && [ "${#health_job}" -le 9 ] && [ "$health_job" -ge 2 ] || exit 2
+    [ "$health_revision" -ge 1 ] && [ "$health_revision" -le 96 ] && [ "${#health_job}" -le 9 ] && [ "$health_job" -ge 2 ] || exit 2
     set -- --action "$1" health-status
 fi
 if [ "${1:-}" = --recovery-status ]; then
@@ -95,7 +95,7 @@ if [ "${1:-}" = --recovery-status ]; then
     [ "${#recovery_ddns_proof}" -le 110 ] || exit 2
     case "$recovery_ddns_proof" in *[!a-z0-9:-]*) exit 2;; esac
     case "$recovery_revision:$recovery_job" in *[!0-9:]*) exit 2;; esac
-    [ "$recovery_revision" -ge 1 ] && [ "$recovery_revision" -le 64 ] && [ "${#recovery_job}" -le 9 ] && [ "$recovery_job" -ge 2 ] || exit 2
+    [ "$recovery_revision" -ge 1 ] && [ "$recovery_revision" -le 96 ] && [ "${#recovery_job}" -le 9 ] && [ "$recovery_job" -ge 2 ] || exit 2
     [ "${#recovery_token}" -le 160 ] || exit 2
     case "$recovery_token" in ''|*[!a-z0-9:]*) exit 2;; esac
     set -- --action "$1" recovery-status
@@ -155,8 +155,15 @@ now=$(lua "$process" now 2>/dev/null) || exit 1
 deadline=$((now + budget))
 stop_family() {
     # Signal only this still-running session leader's own process group.
+    if [ "$action" = health-status ]; then trap '' TERM INT; fi
     kill -TERM -- "-$$" 2>/dev/null || :
     sleep 1
+    if [ "$action" = health-status ] &&
+        [ "$(lua "$process" group "$$" "$$" 2>/dev/null)" = 0 ] &&
+        [ "$(lua "$process" group "$$" "$$" 2>/dev/null)" = 0 ]; then
+        # Let the caller discard an untouched observation after a proven stop.
+        exit 125
+    fi
     kill -KILL -- "-$$" 2>/dev/null
     exit 1
 }
@@ -218,4 +225,5 @@ members=$(lua "$process" group "$$" "$$" 2>/dev/null) || stop_family
 sleep "$poll_delay" 2>/dev/null || stop_family
 members=$(lua "$process" group "$$" "$$" 2>/dev/null) || stop_family
 [ "$members" = 0 ] || stop_family
+if [ "$action" = health-status ] && [ "$result" -ne 0 ]; then exit 125; fi
 exit "$result"

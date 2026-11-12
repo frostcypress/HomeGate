@@ -59,7 +59,7 @@ if mode=='plan' or mode=='plan-set'then
   elseif s.kind=='web_rule' and enabled then out.web[#out.web+1]=s.name end
  end
  local revision=tonumber(read('/etc/homegate/transactions/current',16))
- if not revision or revision<1 or revision>64 or type(arg[2])~='string' or #arg[2]>8192 then fail()end
+ if not revision or revision<1 or revision>96 or type(arg[2])~='string' or #arg[2]>8192 then fail()end
  if mode=='plan-set'then
   local index={};for _,s in ipairs(doc.configuration)do index[s.name]=s end
   local function selection(raw,kind,acme)
@@ -102,7 +102,7 @@ elseif mode=='ready'then
 elseif mode=='emit'then
  local states={starting=true,running=true,renewing=true,stopping=true,stopped=true,failed=true,restart_required=true}
  local state,pid,ticks,revision=arg[2],tonumber(arg[3]),tonumber(arg[4]),tonumber(arg[5]);local reason=arg[6]
- if not states[state] or not number(pid,999999999) or not number(ticks,9007199254740991) or not number(revision,64) or not reason or #reason>64 or reason:find('[^a-z_]')then fail()end
+ if not states[state] or not number(pid,999999999) or not number(ticks,9007199254740991) or not number(revision,96) or not reason or #reason>64 or reason:find('[^a-z_]')then fail()end
  local digest=arg[7];if not digest or #digest~=64 or not digest:match('^[0-9a-f]+$')then fail()end
  emit({api_version=1,native=true,ok=state~='failed' and state~='restart_required',phase='native-service',version=version(),state=state,pid=pid,process_start_ticks=ticks,configuration_revision=revision,source_binding_digest=digest,reason=reason,healthy=state=='running',running=state=='starting' or state=='running' or state=='renewing' or state=='stopping',effect='none',write_ready=false});return
 elseif mode=='alive'then

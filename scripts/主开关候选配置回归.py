@@ -53,12 +53,12 @@ class Static(unittest.TestCase):
         lua,codec,validator,ip,model,intent,source,snapshot=fixture()
         for desired in [None,'','1','SECRET_SENTINEL']:
             self.assertIsNone(model.build(snapshot,source,desired,codec,validator,ip,intent))
-        for revision in [33,64]:
+        for revision in [33,64,65,96]:
             snapshot['revision']=revision
             result=model.build(snapshot,source,'enabled',codec,validator,ip,intent)
             self.assertIsNotNone(result)
             self.assertEqual(result['base_revision'],revision)
-        for revision in [0,65,1.5,'7']:
+        for revision in [0,97,1.5,'7']:
             snapshot['revision']=revision;self.assertIsNone(model.build(snapshot,source,'enabled',codec,validator,ip,intent))
         snapshot['revision']=7;snapshot['configuration'][1]['values']['ddns_interval']='600'
         self.assertIsNone(model.build(snapshot,source,'enabled',codec,validator,ip,intent))

@@ -6,6 +6,8 @@ unset IPKG_INSTROOT INIT_TRACE LUA_INIT LUA_PATH LUA_CPATH HOMEGATE_CONFIG_PROTO
 exec 3>&- 4>&- 5>&- 6>&- 7>&- 8>&- 9>&-
 exec 2>/dev/null
 base=/usr/libexec/homegate;codec=$base/native-web-store.lua;root=/tmp/homegate-frontend-jobs;run=/var/run/homegate
+clock=$base/project/core/prototype/worker-process.lua
+pause(){ lua "$clock" pause "$1" || sleep "$2"; }
 fail(){ printf '{"api_version":1,"ok":false,"error":"Web request refused; inspect retained task"}\n';exit "${1:-1}"; }
 dir(){ [ -d "$1" ] && [ ! -L "$1" ] && [ "$(stat -c '%u:%a' "$1")" = 0:700 ]; }
 file(){ [ -f "$1" ] && [ ! -L "$1" ] && [ "$(stat -c '%u:%a:%h' "$1")" = 0:600:1 ]; }
@@ -27,15 +29,19 @@ case "$action" in
   exec lua "$codec" purge -;;
  read) lua "$base/native-web-session.lua" read-owner "$value" & child=$!;wait "$child";exit $?;;
  read-owner)
-  clock=$base/project/core/prototype/worker-process.lua
   info=$(lua "$clock" info "$$" none) || fail;oldifs=$IFS;IFS=:;set -- $info;IFS=$oldifs;[ "$#" = 6 ] && [ "$3:$4" = "$$:$$" ] || fail
   now=$(lua "$clock" now) || fail;deadline=$((now+18))
   trap '' TERM INT
   (trap - TERM INT;exec lua "$base/native-web.lua" read "$value") & child=$!
+  stop_read(){
+   kill -TERM -- "-$$" 2>/dev/null || :
+   pause 300 .3 || sleep 1 || :
+   kill -KILL -- "-$$" 2>/dev/null;exit 1
+  }
   while kill -0 "$child" 2>/dev/null;do
    now=$(lua "$clock" now) || now=$deadline
-   if [ "$now" -ge "$deadline" ];then kill -TERM -- "-$$" 2>/dev/null || :;sleep .3;kill -KILL -- "-$$" 2>/dev/null;exit 1;fi
-   sleep .1
+   [ "$now" -lt "$deadline" ] || stop_read
+   pause 100 .1 || sleep 1 || stop_read
   done
   wait "$child";exit $?;;
  submit)
@@ -84,10 +90,12 @@ case "$action" in
   # A status probe can briefly own this just-created file before its unique
   # creator acquires FD9. Retry only this pre-work claim, never an operation.
   tries=0
-  while ! flock -n 9;do tries=$((tries+1));[ "$tries" -lt 40 ] || fail 4;sleep .01;done
+  while ! flock -n 9;do
+   tries=$((tries+1));[ "$tries" -lt 40 ] || fail 4
+   pause 10 .01 || fail 4
+  done
   [ "$(stat -Lc '%d:%i' /proc/self/fd/9)" = "$(stat -c '%d:%i' "$work/owner.lock")" ] || fail
   [ ! -e "$work/result" ] && [ ! -e "$work/result.next" ] || fail
-  clock=$base/project/core/prototype/worker-process.lua
   now=$(lua "$clock" now) || fail;deadline=$((now+180))
   (set -C;printf '%s\n' "$deadline" > "$work/deadline") || fail
   info=$(lua "$clock" info "$$" none) || fail
@@ -100,7 +108,7 @@ case "$action" in
   empty "$run/frontend-web.lock" || fail;exec 8>>"$run/frontend-web.lock"
   not_started(){ lua "$codec" not-started "$not_started_reason" > "$work/result.next" && fsync "$work/result.next" && mv "$work/result.next" "$work/result" && rm "$work/request" "$work/deadline" && fsync "$work" || fail;exit 0; }
   not_started_reason=busy
-  while ! flock -n 8;do now=$(lua "$clock" now) || fail;[ "$now" -lt "$deadline" ] || not_started;sleep .1;done
+  while ! flock -n 8;do now=$(lua "$clock" now) || fail;[ "$now" -lt "$deadline" ] || not_started;sleep .1 || sleep 1;done
   not_started_reason=package-state
   held && not_started
   stopped=false;trap 'stopped=true' TERM INT
@@ -110,14 +118,15 @@ case "$action" in
   while kill -0 "$child" 2>/dev/null;do
    now=$(lua "$clock" now) || stopped=true
    if [ "$stopped" = true ] || [ "$now" -ge "$deadline" ];then
-    trap '' TERM INT;kill -TERM -- "-$$" 2>/dev/null || :;sleep .3
+    trap '' TERM INT;kill -TERM -- "-$$" 2>/dev/null || :;sleep .3 || sleep 1
     lua "$codec" error > "$work/interrupted";fsync "$work/interrupted";mv "$work/interrupted" "$work/result";fsync "$work"
     kill -KILL -- "-$$" 2>/dev/null;exit 1
    fi
-   sleep .1
+   sleep .1 || sleep 1
   done
   wait "$child";code=$?
   if [ "$code" != 0 ] || [ ! -s "$work/result.next" ];then lua "$codec" error > "$work/result.next" || fail;fi
+  publish_result(){ file "$work/result.next" && fsync "$work/result.next" && mv "$work/result.next" "$work/result" && fsync "$work/result" "$work"; }
   desired=$(lua "$codec" start-options "$value") || fail
   if [ -n "$desired" ];then
    # Publication/intent are sealed. Release only the extra admission fence;
@@ -125,40 +134,69 @@ case "$action" in
    exec 8>&-
    running=false;status=;failure_stage=runtime-admission
    start_exit=;receipt=
-   ready=false
-   while ! held;do
-    if /usr/bin/homegate service-admission 9>&- >/dev/null;then ready=true;break;fi
-    now=$(lua "$clock" now) || break;[ "$now" -lt "$((deadline-5))" ] || break;sleep 1
-   done
-   if [ "$ready" = true ];then
-    failure_stage=runtime-start
-    receipt_deadline=$((deadline-5))
-    # Init can fail after dispatch. Give the same bounded receipt window
-    # regardless of its return code and issue the start request only once.
-    /etc/init.d/homegate start 9>&- >/dev/null;start_exit=$?
-    while :;do
-     # Read the source-bound, component-verified coordinator receipt. The
-     # strict public health reader may legitimately be busy during a batch.
-     status=$(ash "$base/native-service.sh" receipt "$desired" 9>&-);receipt=$?
-     if [ "$receipt" = 0 ];then
-      if printf '%s\n' "$status" | lua "$base/native-service.lua" web-ready "$desired" 9>&-;then running=true;break;fi
-     fi
-     [ "$receipt" != 1 ] || break
-     now=$(lua "$clock" now) || break;[ "$now" -lt "$receipt_deadline" ] || break
-     sleep 1
+   runtime_interrupted(){
+    # Only the Web owner's verified session is signalled. The coordinator
+    # dispatched by procd is independent, so its outcome remains uncertain.
+    trap '' TERM INT;kill -TERM -- "-$$" 2>/dev/null || :;sleep 1
+    lua "$codec" runtime-result "$value" false "$failure_stage" "$start_exit" "$receipt" </dev/null && publish_result
+    kill -KILL -- "-$$" 2>/dev/null;exit 1
+   }
+   runtime_call(){
+    until_time=$1;shift
+    now=$(lua "$clock" now) || return 1
+    [ "$stopped" = false ] && [ "$now" -lt "$until_time" ] || return 1
+    "$@" 9>&- & child=$!
+    while kill -0 "$child" 2>/dev/null;do
+     now=$(lua "$clock" now) || runtime_interrupted
+     [ "$stopped" = false ] && [ "$now" -lt "$until_time" ] || runtime_interrupted
+     sleep .1 || sleep 1
     done
+    wait "$child";runtime_exit=$?
+    now=$(lua "$clock" now) || return 1
+    [ "$stopped" = false ] && [ "$now" -lt "$until_time" ]
+   }
+   ready=false
+   now=$(lua "$clock" now) || fail
+   admission_deadline=$((now+30))
+   while ! held;do
+    runtime_call "$admission_deadline" /usr/bin/homegate service-admission >/dev/null || break
+    if [ "$runtime_exit" = 0 ];then ready=true;break;fi
+    sleep 1 || break
+   done
+   if [ "$ready" = true ] && ! held;then
+    failure_stage=runtime-start
+    now=$(lua "$clock" now) || fail
+    if runtime_call "$((now+30))" /etc/init.d/homegate start >/dev/null;then
+     start_exit=$runtime_exit
+     # Init may fail after dispatch. It is called once and either return
+     # code gets the full window for the source-bound coordinator receipt.
+     now=$(lua "$clock" now) || fail
+     receipt_deadline=$((now+60))
+     (set -C;: > "$work/runtime-receipt") || fail
+     while runtime_call "$receipt_deadline" ash "$base/native-service.sh" receipt "$desired" > "$work/runtime-receipt";do
+      receipt=$runtime_exit
+      if [ "$receipt" = 0 ];then
+       status=$(cat "$work/runtime-receipt") || fail
+       if printf '%s\n' "$status" | lua "$base/native-service.lua" web-ready "$desired" 9>&-;then running=true;break;fi
+      fi
+      [ "$receipt" != 1 ] || break
+      sleep 1 || break
+     done
+    fi
    fi
    if [ "$running" = true ];then
     failure_stage=boot-enable
-    { /etc/init.d/homegate enable 9>&- >/dev/null &&
-      /etc/init.d/homegate enabled 9>&- >/dev/null; } || running=false
+    now=$(lua "$clock" now) || fail
+    boot_deadline=$((now+10))
+    { runtime_call "$boot_deadline" /etc/init.d/homegate enable >/dev/null && [ "$runtime_exit" = 0 ] &&
+      runtime_call "$boot_deadline" /etc/init.d/homegate enabled >/dev/null && [ "$runtime_exit" = 0 ]; } || running=false
    fi
    printf '%s\n' "$status" | lua "$codec" runtime-result "$value" "$running" "$failure_stage" "$start_exit" "$receipt" || fail
   fi
-  file "$work/result.next" && fsync "$work/result.next" && mv "$work/result.next" "$work/result" && fsync "$work/result" "$work" || fail
+  publish_result || fail
   file "$work/deadline" && rm "$work/deadline" || fail
   file "$work/request" && rm "$work/request" || fail
-  for name in call-input call-output;do if [ -e "$work/$name" ];then file "$work/$name" && rm "$work/$name" || fail;fi;done
+  for name in call-input call-output runtime-receipt;do if [ -e "$work/$name" ];then file "$work/$name" && rm "$work/$name" || fail;fi;done
   exit 0;;
  *) fail 2;;
 esac

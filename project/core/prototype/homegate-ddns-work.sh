@@ -47,7 +47,7 @@ read_fields() {
     id "$rule" && id "$account" || return 1
     case "$provider" in cloudflare|aliyun|dnspod|huaweicloud) ;; *) return 1;; esac
     case "$revision" in ''|0*|*[!0-9]*) return 1;; esac
-    [ "${#revision}" -le 2 ] && [ "$revision" -le 64 ] || return 1
+    [ "${#revision}" -le 2 ] && [ "$revision" -le 96 ] || return 1
     case "$birth" in ''|*[!0-9]*) return 1;; esac
     [ "${#birth}" -le 20 ] && [ "${#inode}" -le 48 ] && [ "${#boot}" -eq 36 ] || return 1
     case "$inode" in ''|*[!0-9:]*|:*|*:|*:*:*) return 1;; esac
@@ -128,7 +128,7 @@ if [ "$action" = bind ]; then
     ! exists "$plan" && ! exists "$next" || fail
     case "$provider" in cloudflare|aliyun|dnspod|huaweicloud) ;; *) fail;; esac
     case "$revision" in ''|0*|*[!0-9]*) fail;; esac
-    [ "${#revision}" -le 2 ] && [ "$revision" -le 64 ] || fail
+    [ "${#revision}" -le 2 ] && [ "$revision" -le 96 ] || fail
     exists "$work/binding" && fail
     info=$(lua "$dir/worker-process.lua" info "$job" none 2>/dev/null) || fail
     old_ifs=$IFS;IFS=:;set -- $info;IFS=$old_ifs

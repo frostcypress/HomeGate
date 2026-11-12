@@ -76,7 +76,7 @@ end
 function M.decode(raw,doc,encode,time_valid)
     if type(raw)~='string' or #raw>8192 or type(doc)~='table' or doc.schema~='HGDDNSRECOVERY1' or doc.producer~='homegate-ddns-state' or
        type(doc.version)~='string' or not doc.version:match('^%d+%.%d+%.%d+%-r%d+$') or type(doc.source)~='table' or
-       doc.source.schema~='HGRECOVERYSOURCE1' or not int(doc.source.configuration_revision,1,64) or not time_valid(doc.updated_at) then return nil end
+       doc.source.schema~='HGRECOVERYSOURCE1' or not int(doc.source.configuration_revision,1,96) or not time_valid(doc.updated_at) then return nil end
     local expected=M.make(doc.version,doc.source.configuration_revision,doc.source.identity,doc.source.generation,doc.boot,doc.input_digest,doc.summary,doc.cache_state,doc.updated_at,encode)
     if not expected or expected~=raw then return nil end;return doc
 end
@@ -85,7 +85,7 @@ function M.fresh(doc,version,revision,binding,proof)
         doc.source.identity==binding.identity and doc.source.generation==binding.generation and doc.boot==proof.boot and doc.input_digest==proof.digest
 end
 function M.pending(version,revision,identity,generation,b,digest,candidate,ticket,encode)
-    if type(version)~='string' or not version:match('^%d+%.%d+%.%d+%-r%d+$') or not int(tonumber(revision),1,64) or
+    if type(version)~='string' or not version:match('^%d+%.%d+%.%d+%-r%d+$') or not int(tonumber(revision),1,96) or
        not hex(identity) or not hex(generation) or not boot(b) or not hex(digest) or not hex(candidate) or
        type(ticket)~='string' or #ticket~=32 or ticket:find('[^0-9a-f]') then return nil end
     return encode({schema='HGDDNSRECOVERYPENDING2',version=version,

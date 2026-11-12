@@ -67,10 +67,15 @@ elseif arg[1]=="group" and arg[2] and arg[3] and not arg[4] then
 elseif arg[1]=="now" and not arg[2] then
     local body=read("/proc/uptime",128); local s=body and body:match("^(%d+)%.")
     if not s or #s>9 then fail() end; io.write(s,"\n")
+elseif arg[1]=="pause" and not arg[3] then
+    local ns=({["10"]=10000000,["100"]=100000000,["300"]=300000000})[arg[2]]
+    if not ns then fail() end
+    local ok,nx=pcall(require,"nixio")
+    if not ok or type(nx)~="table" or type(nx.nanosleep)~="function" or nx.nanosleep(0,ns)~=true then fail() end
 elseif arg[1]=="revision" and not arg[2] then
     local body=io.stdin:read(1025)
     local s=body and body:match('^{"api_version":1,"prototype":true,"ok":true,"revision":(%d+),"scope":"internal%-worker%-context"}\n$')
-    if not s then fail() end; number(s,64); io.write(s,"\n")
+    if not s then fail() end; number(s,96); io.write(s,"\n")
 elseif arg[1]=="ticket" and not arg[2] then
     local body=io.stdin:read(1025)
     if not body or #body>1024 then fail() end
@@ -79,7 +84,7 @@ elseif arg[1]=="ticket" and not arg[2] then
     elseif body:match('^{"api_version":1,"prototype":true,"ok":true,"revision":%d+,"application_pending":false,"worker_acknowledged":true}\n$') then io.write("completed\n")
     else fail() end
 elseif arg[1]=="receipt" and arg[2] and arg[3] and arg[4] and not arg[5] then
-    number(arg[3],64); if arg[4]~="apply" and arg[4]~="restore" then fail() end
+    number(arg[3],96); if arg[4]~="apply" and arg[4]~="restore" then fail() end
     if arg[2]~="/etc/homegate/transactions" and not arg[2]:match("^/tmp/homegate%-config%-prototype%-") then fail() end
     local body=read(arg[2].."/runtime",256)
     local dir=arg[0]:match("^(.*)/[^/]+$"); if not dir then fail() end

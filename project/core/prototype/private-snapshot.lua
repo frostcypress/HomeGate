@@ -21,7 +21,7 @@ function M.parse(body,codec)
     end
     local ok,result=pcall(function()
         if bytes(11)~="HGPRIVATE1\n" then error(error_message) end
-        local revision=number(64)
+        local revision=number(96)
         if revision<1 then error(error_message) end
         local size=number(262144); local count=number(192)
         local public=bytes(size)

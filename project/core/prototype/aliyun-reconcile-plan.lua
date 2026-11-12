@@ -51,7 +51,7 @@ end
 function M.terminal(c,r,encode)
     local exported=M.export(c)
     if not exported or encode(exported)~=encode(c) or type(c.account)~='string' or #c.account<1 or #c.account>64 or
-        not c.account:match('^[a-zA-Z0-9_-]+$') or not integer(c.revision,1,64) or not integer(c.affected,0,100000) or
+        not c.account:match('^[a-zA-Z0-9_-]+$') or not integer(c.revision,1,96) or not integer(c.affected,0,100000) or
         type(c.records)~='table' or #c.records>100000 or type(r)~='table' or r.ok~=true or r.effect~='confirmed' or r.error_kind~='' or
         r.provider~='aliyun' or r.provider_code~='' or r.retryable~=false or r.reconciliation_required~=false or
         r.account~=c.account or r.configuration_revision~=c.revision then return false end

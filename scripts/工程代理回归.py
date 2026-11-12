@@ -36,6 +36,7 @@ def setup_state(s):
  mode=Path('/teststate/access-mode').read_text() if Path('/teststate/access-mode').exists() else 'valid'
  with open('/teststate/access-calls','a') as f:f.write('fetch\n')
  Path('/teststate/access-entered').touch()
+ if mode=='delayed':time.sleep(.5)
  if mode=='hold':
   import subprocess
   subprocess.Popen(['/usr/sbin/busybox','sleep','45']);time.sleep(45);sys.exit(1)

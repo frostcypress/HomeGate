@@ -34,7 +34,7 @@ function M.response(action,payload,d,raw,select,id,json,schedule,jobs)
   if not keys(d,{api_version=true,prototype=true,ok=true,phase=true,configuration_revision=true,effect=true,write_ready=true,rules=true},8) or d.phase~='ddns-status' or d.effect~='none' or d.write_ready~=false or type(d.rules)~='table' or #d.rules>32 then return false end
   for k in pairs(d.rules) do if type(k)~='number' or k<1 or k>#d.rules or k~=math.floor(k) then return false end end
   local names={};for i,row in ipairs(d.rules) do if type(row)~='table' or not id(row.rule) or (i>1 and names[i-1]>=row.rule) then return false end;names[i]=row.rule end
-  if type(d.configuration_revision)~='number' or d.configuration_revision~=math.floor(d.configuration_revision) or d.configuration_revision<1 or d.configuration_revision>64 then return false end
+  if type(d.configuration_revision)~='number' or d.configuration_revision~=math.floor(d.configuration_revision) or d.configuration_revision<1 or d.configuration_revision>96 then return false end
   local copy={};for k,v in pairs(d) do copy[k]=v end;copy.phase='ddns-batch';copy.sampled=false;copy.rules={}
   local rows,public_rows={},{}
   for i,row in ipairs(d.rules) do
@@ -70,7 +70,7 @@ function M.response(action,payload,d,raw,select,id,json,schedule,jobs)
  if d.rules~=nil then fields.rules=true elseif d.rule~=nil then fields.rule=true else return false end
  if action=='preview' then fields.confirmation=true;fields.expires_in=true;count=count+2
  elseif action~='commit' then return false end
- if not keys(d,fields,count) or type(d.configuration_revision)~='number' or d.configuration_revision<1 or d.configuration_revision>64 or d.configuration_revision~=math.floor(d.configuration_revision) or not ({cloudflare=true,aliyun=true,dnspod=true,huaweicloud=true,multiple=true})[d.provider] then return false end
+ if not keys(d,fields,count) or type(d.configuration_revision)~='number' or d.configuration_revision<1 or d.configuration_revision>96 or d.configuration_revision~=math.floor(d.configuration_revision) or not ({cloudflare=true,aliyun=true,dnspod=true,huaweicloud=true,multiple=true})[d.provider] then return false end
  local joined=d.rule
  if d.rules~=nil then
   if type(d.rules)~='table' or #d.rules<2 or #d.rules>32 then return false end

@@ -168,6 +168,7 @@
     "packaging/production/Makefile",
     "packaging/production/README.md",
     "packaging/production/homegate.config",
+    "packaging/production/homegate-core.prerm",
     "packaging/production/homegate.init",
     "packaging/production/native-adapters.lua",
     "packaging/production/native-adapters.sh",

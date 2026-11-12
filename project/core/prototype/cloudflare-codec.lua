@@ -2,7 +2,7 @@
 local json=require('luci.jsonc')
 local dir=arg[0]:match('^(.*)/[^/]+$'); if not dir then os.exit(1) end
 local function account_valid(s) return type(s)=='string' and #s>=1 and #s<=64 and s:match('^[a-zA-Z0-9_-]+$') end
-local function revision_valid(s) return type(s)=='string' and s:match('^[1-9]%d*$') and tonumber(s)<=64 end
+local function revision_valid(s) return type(s)=='string' and s:match('^[1-9]%d*$') and tonumber(s)<=96 end
 local account,revision=arg[2],arg[3]
 local function report(kind,retry,code)
     local ok=kind==''

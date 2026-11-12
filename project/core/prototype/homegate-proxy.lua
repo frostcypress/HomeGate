@@ -88,6 +88,8 @@ if mode=='render'then
  local d=load();local token=read(root..'/token',33):match('^([0-9a-f]+)\n$');if not token or #token~=32 then fail()end
  local lines={};local function add(s)lines[#lines+1]=s end
  add('worker_processes 1;\nerror_log /dev/null crit;\npid '..root..'/nginx.pid;\nevents { worker_connections 128; }\nhttp {')
+ -- Exact DNS names can reach 253 bytes before NGINX hash entry overhead.
+ add('server_names_hash_bucket_size 512;')
  add('access_log off; server_tokens off; client_max_body_size 0; client_body_buffer_size 128k; client_header_timeout 15s; client_body_timeout 60s; send_timeout 60s; keepalive_timeout 30s;')
  local temp='/var/run/homegate-proxy-body/'..token
  for _,n in ipairs({'client_body','proxy','fastcgi','uwsgi','scgi'})do add(n..'_temp_path '..temp..'/'..n..';')end

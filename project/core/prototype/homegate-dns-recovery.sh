@@ -38,7 +38,7 @@ case "$action" in
         case "$account" in ''|*[!a-zA-Z0-9_-]*) exit 2;; esac
         [ "${#account}" -le 64 ] || exit 2
         case "$revision:$job" in *[!0-9:]*) exit 2;; esac
-        [ "${#revision}" -le 2 ] && [ "$revision" -ge 1 ] && [ "$revision" -le 64 ] || exit 2
+        [ "${#revision}" -le 2 ] && [ "$revision" -ge 1 ] && [ "$revision" -le 96 ] || exit 2
         case "$job" in ''|0*|*[!0-9]*) exit 2;; esac
         [ "${#job}" -le 9 ] && [ "$job" -ge 2 ] || exit 2;;
     *) exit 2;;
@@ -109,7 +109,7 @@ fi
 case "$stored_account" in ''|*[!a-zA-Z0-9_-]*) exit 1;; esac
 [ "${#stored_account}" -le 64 ] || exit 1
 case "$stored_revision:$stored_job" in *[!0-9:]*) exit 1;; esac
-[ "${#stored_revision}" -le 2 ] && [ "$stored_revision" -ge 1 ] && [ "$stored_revision" -le 64 ] || exit 1
+[ "${#stored_revision}" -le 2 ] && [ "$stored_revision" -ge 1 ] && [ "$stored_revision" -le 96 ] || exit 1
 case "$stored_job" in ''|0*|*[!0-9]*) exit 1;; esac
 [ "${#stored_job}" -le 9 ] && [ "$stored_job" -ge 2 ] && [ "${#original_boot}" -eq 36 ] || exit 1
 case "$original_boot" in *[!0-9a-f-]*) exit 1;; esac

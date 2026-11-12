@@ -43,14 +43,20 @@ source_locks() {
   exec 7>>"$p";flock -n 7 || return 1
  fi
 }
+init_with_stop_lease() {
+ file "$record" || return 1
+ exec 9>>"$record"
+ result=1
+ if [ "$(stat -Lc '%d:%i:%u:%a:%h' /proc/self/fd/9)" = "$(stat -c '%d:%i:%u:%a:%h' "$record")" ] && flock -n 9;then
+  /etc/init.d/homegate "$1";result=$?
+ fi
+ exec 9>&-
+ return "$result"
+}
 stash_config() {
  if [ "$desired_mode" = remove ];then
-  file "$record" || return 1
-  exec 9>>"$record"
-  [ "$(stat -Lc '%d:%i:%u:%a:%h' /proc/self/fd/9)" = "$(stat -c '%d:%i:%u:%a:%h' "$record")" ] && flock -n 9 || return 1
-  /etc/init.d/homegate disable >/dev/null;result=$?
-  exec 9>&-
-  return "$result"
+  init_with_stop_lease disable >/dev/null
+  return $?
  fi
  source_locks && lua /usr/libexec/homegate/native-package.lua move-config || return 1
  [ ! -e /etc/homegate/package-config ] || fsync /etc/homegate/package-config /etc/homegate /etc/config || return 1
@@ -101,7 +107,7 @@ case "$action" in
     case "$ancestor" in ''|*[!0-9]*) exit 7;;esac;depth=$((depth+1))
    done
   fi
-  # Save intent before any SDK default stop. Unknown children preserve both
+  # Save intent before stopping. Unknown children preserve both
   # executable files and data by making prerm fail.
   desired_mode=$mode;mode=stopping;write_record || exit 7
   if [ -e /tmp/homegate-frontend-jobs ] || [ -L /tmp/homegate-frontend-jobs ];then
@@ -113,11 +119,16 @@ case "$action" in
    while [ "$count" -lt 20 ];do
     if /usr/bin/homegate service-quiescent >/dev/null;then
      /usr/bin/homegate service-reap --confirm >/dev/null || exit 4
-     stash_config || exit 7;mode=$desired_mode;write_record || exit 7;exit 0
+     break
     fi
     count=$((count+1));sleep 1 || exit 4
-   done;exit 4
+   done
+   [ "$count" -lt 20 ] || exit 4
+  else
+   [ ! -e /var/run/homegate ] && [ ! -L /var/run/homegate ] || exit 4
+   /usr/bin/homegate service-quiescent >/dev/null || exit 4
   fi
+  init_with_stop_lease package_stopped || exit 4
   stash_config || exit 7;mode=$desired_mode;write_record || exit 7;;
  postinst)
   dir "$root" && read_record || exit 7

@@ -21,7 +21,7 @@ local function request()
   if not allowed[k] or type(v)~='string' or v:find('%z') or #v>(k=='backup' and 262144 or k=='certificate_pem' and 65536 or k=='private_key_pem' and 16384 or k=='domains' and 8192 or (k=='value' or k=='allow' or k=='deny') and 4096 or 512) then return nil end;count=count+1
  end
  if count~=#schemas[d.action]+1 or #raw>(d.action=='backup_preview' and 1572864 or d.action=='cert_import' and 114688 or 32768) then return nil end
- if d.generation and (not d.generation:match('^[1-9]%d?$') or tonumber(d.generation)>64) then return nil end
+ if d.generation and (not d.generation:match('^[1-9]%d?$') or tonumber(d.generation)>96) then return nil end
  if d.action=='preview_access' and d.region~='' and d.region~='CN'then return nil end
  if d.action=='proxy_start' and (not ({open=true,allow=true})[d.policy] or not d.selection:match('^[a-zA-Z0-9_,%-]+$'))then return nil end
  if d.action=='preview_web_rule' and not ({['0']=true,['1']=true})[d.https]then return nil end

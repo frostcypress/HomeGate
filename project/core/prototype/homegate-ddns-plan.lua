@@ -5,12 +5,12 @@ local shared=assert(loadfile(dir..'/cloudflare-codec.lua'))('library')
 local planner=assert(loadfile(dir..'/ddns-plan.lua'))()
 local revision,selected=arg[2],arg[3]
 if arg[1]=='intent' then
-    if type(revision)~='string' or not revision:match('^[1-9]%d*$') or tonumber(revision)>64 or selected then os.exit(1) end
+    if type(revision)~='string' or not revision:match('^[1-9]%d*$') or tonumber(revision)>96 or selected then os.exit(1) end
     local raw=io.stdin:read(262145) or '';local switches=#raw<=262144 and codec.private_ddns_switches(raw)
     if not switches then os.exit(1) end
     local f=io.open('/proc/self/fd/4','wb');if not f or not f:write(codec.json({schema='HGDDNSINTENT1',revision=tonumber(revision),switches=switches})..'\n') or not f:close() then os.exit(1) end;return
 end
-if type(revision)~='string' or not revision:match('^[1-9]%d*$') or tonumber(revision)>64 or
+if type(revision)~='string' or not revision:match('^[1-9]%d*$') or tonumber(revision)>96 or
     (selected~='' and not planner.id(selected)) then os.exit(1) end
 if arg[1]=='result' then
     if arg[5] then os.exit(1) end

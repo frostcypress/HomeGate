@@ -141,11 +141,22 @@ auto_firewall=$(printf '%s\n' "$plan" | lua "$codec" field auto_firewall 9>&-) |
 info=$(lua "$dir/worker-process.lua" info "$$" none 9>&-) || fail
 oldifs=$IFS;IFS=:;set -- $info;IFS=$oldifs;[ "$#" = 6 ] || fail;birth=$5
 stage=admission;intent_guard && [ "$(stamp && plan_stamp)" = "$binding" ] || fail 4
+receipt=$run/native-service.json;next_receipt=$receipt.next
+published_status=;published_report=
 emit() {
  case "$1" in failed|restart_required) final_state=$1;final_reason=$2;;esac
- for file in "$run/native-service.json" "$run/native-service.json.next";do ! exists "$file" || private_file "$file" || return 1;done
- lua "$codec" emit "$1" "$$" "$birth" "$revision" "$2" "$binding_digest" 9>&- > "$run/native-service.json.next" &&
- fsync "$run/native-service.json.next" && mv -f "$run/native-service.json.next" "$run/native-service.json" && fsync "$run/native-service.json" "$run"
+ # Keep the published receipt when its state, bytes and private metadata agree.
+ if [ "$published_status" = "$1:$2" ] && ! exists "$next_receipt" &&
+    [ -f "$receipt" ] && [ ! -L "$receipt" ] &&
+    [ "$(stat -c '%u:%a:%h:%s' "$receipt")" = "0:600:1:$((${#published_report}+1))" ] &&
+    IFS= read -r existing_report < "$receipt" && [ "$existing_report" = "$published_report" ];then
+  return 0
+ fi
+ for file in "$receipt" "$next_receipt";do ! exists "$file" || private_file "$file" || return 1;done
+ lua "$codec" emit "$1" "$$" "$birth" "$revision" "$2" "$binding_digest" 9>&- > "$next_receipt" &&
+ IFS= read -r report < "$next_receipt" && fsync "$next_receipt" &&
+ mv -f "$next_receipt" "$receipt" && fsync "$receipt" "$run" || return 1
+ published_status=$1:$2;published_report=$report
 }
 stopping=false;reload=false;job=;ddns_started=false;proxy_started=false;final_state=stopped;final_reason=known
 trap 'stopping=true' TERM INT
@@ -198,20 +209,22 @@ while :;do
   if [ "$code" = 0 ];then job=;scan_due=true
   elif [ "$code" != 3 ];then emit failed certificate_failed;exit 7;fi
  fi
- now=$(lua "$dir/worker-process.lua" now 9>&-) || fail
- if [ -z "$job" ] && { [ "$scan_due" = true ] || [ "$((now-last_check))" -ge 60 ]; };then
-  last_check=$now;scan_due=false
-  if [ -n "$certificates" ];then pause_ddns || { emit failed ddns_pause_unknown;exit 4; };fi
-  for certificate in $certificates;do
-   material=$(ash "$dir/homegate-certificate.sh" status "$certificate" 9>&-) || { emit failed certificate_unavailable;exit 7; }
-   printf '%s\n' "$material" | lua "$codec" ready due 9>&-;code=$?
-   if [ "$code" = 3 ];then continue;fi
-   [ "$code" = 0 ] || { emit failed certificate_unknown;exit 7; }
+ if [ -n "$certificates" ] && [ -z "$job" ];then
+  now=$(lua "$dir/worker-process.lua" now 9>&-) || fail
+  if [ "$scan_due" = true ] || [ "$((now-last_check))" -ge 60 ];then
+   last_check=$now;scan_due=false
    pause_ddns || { emit failed ddns_pause_unknown;exit 4; }
-   job=$(lua "$dir/cloudflare-codec.lua" nonce < /proc/sys/kernel/random/uuid 9>&-) || fail
-   entry acme-renew "$certificate" "$job" --confirm >/dev/null || { emit failed certificate_start_failed;exit 7; }
-   break
-  done
+   for certificate in $certificates;do
+    material=$(ash "$dir/homegate-certificate.sh" status "$certificate" 9>&-) || { emit failed certificate_unavailable;exit 7; }
+    printf '%s\n' "$material" | lua "$codec" ready due 9>&-;code=$?
+    if [ "$code" = 3 ];then continue;fi
+    [ "$code" = 0 ] || { emit failed certificate_unknown;exit 7; }
+    pause_ddns || { emit failed ddns_pause_unknown;exit 4; }
+    job=$(lua "$dir/cloudflare-codec.lua" nonce < /proc/sys/kernel/random/uuid 9>&-) || fail
+    entry acme-renew "$certificate" "$job" --confirm >/dev/null || { emit failed certificate_start_failed;exit 7; }
+    break
+   done
+  fi
  fi
  if [ -z "$job" ] && [ "$ddns_started" = false ];then start_ddns || { emit failed ddns_resume_failed;exit 4; };fi
  if [ -z "$job" ] && [ -n "$web" ] && [ "$proxy_started" = false ];then

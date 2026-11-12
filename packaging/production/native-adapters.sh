@@ -27,7 +27,7 @@ case "$action" in
    case "$code" in 0|1) printf '%s\n' "$row";exit "$code";;3) ;;*) lua "$base/native-adapters.lua" access-error;exit 1;;esac
    now=$(lua "$dir/worker-process.lua" now) || fail 1
    if [ "$now" -ge "$deadline" ];then ash "$base/ddns-control.sh" access-stop --confirm >/dev/null;lua "$base/native-adapters.lua" access-error;exit 1;fi
-   sleep .1 || fail 1
+   sleep .1 || sleep 1 || fail 1
   done;;
  access-clear)
   lock=$run/proxy.lock

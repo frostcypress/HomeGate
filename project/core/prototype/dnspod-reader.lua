@@ -17,7 +17,7 @@ end
 if ...=='library' then return {authorization=authorization,hex=hex} end
 local account,revision,mode,job=arg[2],arg[3],arg[4],arg[5]
 if type(account)~='string' or #account<1 or #account>64 or not account:match('^[a-zA-Z0-9_-]+$') or
-    type(revision)~='string' or not revision:match('^[1-9]%d*$') or tonumber(revision)>64 then os.exit(1) end
+    type(revision)~='string' or not revision:match('^[1-9]%d*$') or tonumber(revision)>96 then os.exit(1) end
 local records=assert(loadfile(dir..'/dnspod-records.lua'))()
 local reconcile=assert(loadfile(dir..'/dnspod-reconcile-plan.lua'))()
 local operation_state={attempted=false,affected=0}

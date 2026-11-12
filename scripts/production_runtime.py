@@ -71,7 +71,10 @@ fi
     tools = b'for tool in ash lua stat sha256sum flock fsync setsid head;do'
     assert files[control].count(tools) == 1
     files[control] = files[control].replace(tools, b'''session_tool=setsid
-case "$action" in prepare|prepare-resume|config-status|config-export|config-commit|dns-provider-status|dns-zones|ddns-delete|ddns-status|ddns-sync|ddns-reset|ddns-reconcile|ddns-collect-receipt|ddns-collect-orphan|ddns-collect-work|ddns-retire-archive|grant-preview|grant-commit|grant-cancel|grant-revoke) session_tool=;;esac
+case "$action" in
+ prepare|prepare-resume|config-status|config-export|config-preview|config-rollback-preview|config-cancel|config-commit|config-finish|activate-preview|import-preview|import-commit|secret-put) session_tool=;;
+ dns-provider-status|dns-zones|ddns-delete|ddns-status|ddns-sync|ddns-reset|ddns-reconcile|ddns-collect-receipt|ddns-collect-orphan|ddns-collect-work|ddns-retire-archive|grant-preview|grant-commit|grant-cancel|grant-revoke) session_tool=;;
+esac
 for tool in ash lua stat sha256sum flock fsync head $session_tool;do''')
     config_engine = BASE+'project/core/prototype/homegate-config-prototype.sh'
     observer = b'setsid ash "$(dirname "$0")/homegate-service-observer-watchdog.sh" "$confirmation" 3>'
@@ -116,6 +119,7 @@ observe_dns() {
         ('homegate-proxy.sh', 'setsid ash "$HG_DIR/homegate-proxy.sh" serve "$token"', 'proxy-serve "$token"'),
         ('homegate-proxy.sh', 'setsid ash "$HG_DIR/homegate-proxy-validation.sh" "$1" "$token"', 'proxy-validate "$token" "$1"'),
         ('homegate-firewall.sh', 'setsid ash "$HG_DIR/homegate-firewall.sh" operate-internal "$action" "$token"', 'firewall-operate "$action" "$token"'),
+        ('homegate-access-region.sh', 'setsid ash "$HG_DIR/homegate-access-region.sh" worker "$token"', 'access-region "$token"'),
         ('homegate-wol.sh', 'setsid ash "$HG_DIR/homegate-wol.sh" send-internal', 'wol-send none'),
     )
     for name,old,new in job_launches:
@@ -333,6 +337,7 @@ def stage_package(root,destination):
     assert '@HOMEGATE_' not in make
     (destination/'Makefile').write_text(make,encoding='utf-8')
     (destination/'tools').mkdir();shutil.copyfile(root/'project/luci/common/tools/po2lmo.py',destination/'tools/po2lmo.py')
+    shutil.copyfile(root/'packaging/production/homegate-core.prerm',destination/'tools/homegate-core.prerm')
     po=destination/'po/zh_Hans';po.mkdir(parents=True)
     import importlib.util,json
     spec=importlib.util.spec_from_file_location('native_po_builder',root/'project/luci/common/tools/po2lmo.py')

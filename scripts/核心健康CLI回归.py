@@ -303,6 +303,29 @@ class Runtime(AccountFixture):
         self.health(expected=7)
         self.assertTrue(list(self.native.lockdir.glob('.health-read-*')))
 
+    def test_failed_worker_only_retires_its_empty_observation(self):
+        original = self.health_adapter.read_text()
+        self.health_adapter.write_text(original.replace('local output=model.report', 'os.exit(1)\nlocal output=model.report'))
+        self.health(expected=7, ok=False)
+        self.unchanged_health()
+        self.health_adapter.write_text(original)
+        self.health(ok=True)
+
+        failure = "local f=assert(io.open('/proc/self/fd/3','wb'));f:write('{');f:close();os.exit(1)"
+        self.health_adapter.write_text(original.replace('local output=model.report', failure + '\nlocal output=model.report'))
+        self.health(expected=7, ok=False)
+        work, = self.native.lockdir.glob('.health-read-*')
+        self.assertEqual((work / 'result').read_bytes(), b'{')
+        self.health(expected=4)
+
+    def test_launcher_refusal_clears_only_the_current_empty_observation(self):
+        launcher = self.bin / 'setsid'
+        launcher.unlink()
+        launcher.write_text('#!/bin/sh\nexit 126\n')
+        launcher.chmod(0o700)
+        self.health(expected=7, ok=False)
+        self.unchanged_health()
+
     def stall(self):
         self.marker = self.base / 'health-worker-entered'
         self.health_adapter.write_text(self.health_adapter.read_text().replace('local output=model.report',
@@ -316,7 +339,7 @@ class Runtime(AccountFixture):
         self.assertLess(time.monotonic() - start, 10)
         self.assertTrue(self.marker.exists())
         self.assertIsNone(p.poll(), 'Probe killed an unrelated service process')
-        self.assertTrue(list(self.native.lockdir.glob('.health-read-*')))
+        self.unchanged_health()
 
     def test_caller_loss_keeps_locks_until_watchdog_own_family_is_quiet(self):
         import fcntl

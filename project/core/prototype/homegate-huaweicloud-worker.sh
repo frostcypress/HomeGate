@@ -12,7 +12,7 @@ account=$1;revision=$2;job=$3;mode=$4
 case "$account" in ''|*[!a-zA-Z0-9_-]*) exit 2;; esac
 [ "${#account}" -le 64 ] || exit 2
 case "$revision:$job" in *[!0-9:]*) exit 2;; esac
-[ "$revision" -ge 1 ] && [ "$revision" -le 64 ] && [ "${#job}" -le 9 ] && [ "$job" -ge 2 ] || exit 2
+[ "$revision" -ge 1 ] && [ "$revision" -le 96 ] && [ "${#job}" -le 9 ] && [ "$job" -ge 2 ] || exit 2
 case "$mode" in check|zones) ;; records) [ "$huaweicloud_records_enabled" = true ] || exit 2;; reconcile) [ "$huaweicloud_records_enabled" = true ] && [ "$huaweicloud_reconcile_enabled" = true ] || exit 2;; *) exit 2;; esac
 [ -p /proc/self/fd/0 ] || exit 1
 work=/var/run/homegate/.dns-check-$job

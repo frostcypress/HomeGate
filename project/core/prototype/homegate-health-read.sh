@@ -38,7 +38,25 @@ job=$$;work=$run/.health-read-$job
 mkdir "$work" || fail
 (set -C; : > "$work/result" && : > "$work/public") || fail
 private_dir "$work" && private_file "$work/result" && private_file "$work/public" || fail
-snapshot | setsid ash "$dir/homegate-service-observer-watchdog.sh" --health-status "$ticket" "$revision" "$job" 3>"$work/result" 8>&- 9>&- >/dev/null 2>/dev/null || fail
+observation_identity=$(stat -c '%d:%i' "$work" "$work/result" "$work/public") || fail
+observe_exit=0
+snapshot | setsid ash "$dir/homegate-service-observer-watchdog.sh" --health-status "$ticket" "$revision" "$job" 3>"$work/result" 8>&- 9>&- >/dev/null 2>/dev/null || observe_exit=$?
+if [ "$observe_exit" -ne 0 ]; then
+    # 125 proves the health watchdog's family is quiet. The native launcher
+    # returns 126 only if it refused before handing off to the watchdog.
+    case "$observe_exit" in
+        125|126)
+            locks_match && private_dir "$work" && private_file "$work/result" && private_file "$work/public" || fail
+            [ "$(stat -c '%d:%i' "$work" "$work/result" "$work/public")" = "$observation_identity" ] &&
+                [ "$(stat -c '%s' "$work/result" "$work/public")" = "$(printf '0\n0')" ] || fail
+            for entry in "$work"/* "$work"/.[!.]* "$work"/..?*; do
+                [ -e "$entry" ] || [ -L "$entry" ] || continue
+                case "$entry" in "$work/result"|"$work/public") ;; *) fail;; esac
+            done
+            rm -f "$work/result" "$work/public" && rmdir "$work" || fail;;
+    esac
+    fail
+fi
 locks_match || fail 4
 [ "$(configuration)" = "$context" ] || fail
 result=0

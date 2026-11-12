@@ -2,7 +2,7 @@
 local dir=arg[0]:match('^(.*)/[^/]+$');if not dir then os.exit(1) end
 local codec=assert(loadfile(dir..'/../../luci/lua/luasrc/model/homegate/backup.lua'))()
 local id=assert(loadfile(dir..'/ddns-plan.lua'))().id
-if arg[1]~='names' or arg[4] or not arg[2] or not arg[2]:match('^[1-9]%d*$') or tonumber(arg[2])>64 or not arg[3] then os.exit(1) end
+if arg[1]~='names' or arg[4] or not arg[2] or not arg[2]:match('^[1-9]%d*$') or tonumber(arg[2])>96 or not arg[3] then os.exit(1) end
 if arg[3]~='' and not id(arg[3]) then os.exit(1) end
 local snapshot=assert(loadfile(dir..'/private-snapshot.lua'))().read(io.stdin,codec)
 if not snapshot or snapshot.revision~=tonumber(arg[2]) then os.exit(1) end

@@ -48,7 +48,7 @@ read_meta() {
  case "$revision:$created:$deadline" in *[!0-9:]*) return 1;; esac
  case "$revision" in ''|0*) return 1;; esac
  case "$created" in ''|0?*) return 1;; esac;case "$deadline" in ''|0?*) return 1;; esac
- [ "${#revision}" -le 2 ] && [ "$revision" -le 64 ] && [ "${#created}" -le 9 ] && [ "${#deadline}" -le 9 ] && [ "$deadline" -eq "$((created+300))" ] || return 1
+ [ "${#revision}" -le 2 ] && [ "$revision" -le 96 ] && [ "${#created}" -le 9 ] && [ "${#deadline}" -le 9 ] && [ "$deadline" -eq "$((created+300))" ] || return 1
  for v in "$identity" "$generation" "$grant";do hex "$v" 64 || return 1;done
  [ "${#boot}" -eq 36 ] || return 1;case "$boot" in *[!0-9a-f-]*) return 1;; esac
 }

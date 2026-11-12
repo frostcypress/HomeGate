@@ -556,11 +556,19 @@ config wol_host 'host_a'
         self.api('configuration_api','production_copy_preview',s,{},expected=503)
         self.cfg('lifecycle_enable',s,consent='1');self.lifecycle_grant(s)
         (STATE/'require-imported-secret').touch()
-        self.cfg('schedule_serve',s,consent='1')
-        deadline=time.monotonic()+30
-        while time.monotonic()<deadline and not (STATE/'imported-secret-used').exists():time.sleep(.1)
-        self.assertTrue((STATE/'imported-secret-used').exists(),{'schedule':self.cfg('schedule_status',s),'transport_entered':(STATE/'provider-calls').exists()})
-        self.cfg('schedule_stop',s,consent='1')
+        # Keep the admitted provider request in flight until LuCI records
+        # the stop. Otherwise the scheduler may already be checking its control lock again.
+        (STATE/'provider-mode').write_text('hold')
+        entered=STATE/'provider-entered'
+        try:
+            self.cfg('schedule_serve',s,consent='1')
+            deadline=time.monotonic()+30
+            while time.monotonic()<deadline and not entered.exists():time.sleep(.1)
+            self.assertTrue(entered.exists(),'Imported provider request did not reach the held transport')
+            self.assertTrue((STATE/'imported-secret-used').exists())
+            self.cfg('schedule_stop',s,consent='1')
+        finally:
+            (STATE/'provider-release').touch()
         deadline=time.monotonic()+15;finished=False
         while time.monotonic()<deadline:
             # A read overlapping publication/owner exit may fail closed. Keep
@@ -575,7 +583,8 @@ config wol_host 'host_a'
             else:
                 self.assertTrue(value['ok']);report=value['report']
                 if report['status']=='finished':
-                    self.assertFalse(report['running']);finished=True;break
+                    self.assertFalse(report['running']);self.assertEqual(report['reason'],'stopped')
+                    finished=True;break
             time.sleep(.1)
         self.assertTrue(finished,'Schedule did not publish a genuine finished state within 15 seconds')
         self.cfg('schedule_reap',s,consent='1')

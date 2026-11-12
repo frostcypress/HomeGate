@@ -48,9 +48,8 @@ class Supervisor(unittest.TestCase):
   for pid in pids:
    p=Path('/proc')/pid/'stat'
    for _ in range(100):
-    if not p.exists():break
     try:state=p.read_text().rsplit(')',1)[1].split()[0]
-    except FileNotFoundError:break
+    except (FileNotFoundError,ProcessLookupError):break
     if state in ['Z','X']:break
     time.sleep(.01)
    else:self.fail('Owned child remains running: '+pid)

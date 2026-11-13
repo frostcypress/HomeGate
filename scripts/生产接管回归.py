@@ -422,6 +422,19 @@ class Native(web.Web):
         self.cli('service-plan-set','../x','-','-','open','--confirm',ok=False);self.verify_unchanged()
     def test_daemon_component_failure(self):
         import signal
+        def wait_healthy_status():
+            deadline=time.monotonic()+15;last=None
+            while time.monotonic()<deadline:
+                status=self.cli('status')
+                if status['service']['healthy']:
+                    self.assertTrue(status['ok']);self.assertTrue(status['service']['running'])
+                    return
+                self.assertEqual((status.get('ok'),status.get('state_unknown'),status.get('effect')),
+                                 (False,True,'none'),status)
+                last=status
+                self.assertIsNone(self.owner.poll(),status)
+                time.sleep(.1)
+            self.fail(('Live coordinator never returned healthy CLI status',last))
         class Handler(http.server.BaseHTTPRequestHandler):
             def do_GET(self):
                 body=b'NATIVE_COMPONENT_RECOVERY';self.send_response(200);self.send_header('Content-Length',str(len(body)));self.end_headers();self.wfile.write(body)
@@ -443,8 +456,7 @@ class Native(web.Web):
         store=Path('/etc/homegate/transactions');before={str(p.relative_to(store)):p.read_bytes() for p in store.rglob('*') if p.is_file()}
         source=Path('/etc/config/homegate').read_bytes();plan=Path('/etc/homegate/native-service-plan').read_bytes()
         self.start_owner();first=self.wait_service(lambda d:d['state']=='running',seconds=30)
-        status=self.cli('status')
-        self.assertTrue(status['service']['healthy'],status)
+        wait_healthy_status()
         self.assertTrue(self.cli('firewall-status')['active'])
         def request():
             conn=http.client.HTTPConnection('127.0.0.1',10080,timeout=5);conn.request('GET','/',headers={'Host':'example.test'});response=conn.getresponse();self.assertEqual(response.status,200);self.assertEqual(response.read(),b'NATIVE_COMPONENT_RECOVERY');conn.close()
@@ -459,7 +471,7 @@ class Native(web.Web):
         self.assertEqual(Path('/etc/config/homegate').read_bytes(),source);self.assertEqual(Path('/etc/homegate/native-service-plan').read_bytes(),plan);self.assertEqual({str(p.relative_to(store)):p.read_bytes() for p in store.rglob('*') if p.is_file()},before)
         self.action_result('component-crash-contained',master_identity_verified=True,coordinator_failed=True,managed_rules_removed=True,legacy_rules_and_canary_preserved=True,configuration_and_credentials_retained=True)
         self.start_owner();recovered=self.wait_service(lambda d:d['state']=='running',seconds=30);self.assertNotEqual(recovered['pid'],first['pid']);self.assertNotEqual((proxy/'owner').read_text().strip().split(':')[0],owner)
-        request();self.assertTrue(self.cli('status')['service']['healthy']);self.assertTrue(self.cli('firewall-status')['active']);self.assertIsNone(canary.poll())
+        request();wait_healthy_status();self.assertTrue(self.cli('firewall-status')['active']);self.assertIsNone(canary.poll())
         self.cli('service-stop','--confirm');self.owner.wait(timeout=20);self.assertEqual(self.owner.returncode,0);self.cli('service-quiescent')
         self.assertFalse((STATE/'provider-calls').exists());self.assertFalse((STATE/'acme-fixture.json').exists());self.assertEqual(Path('/etc/config/homegate').read_bytes(),source);self.assertEqual(Path('/etc/homegate/native-service-plan').read_bytes(),plan)
         self.assertEqual({str(p.relative_to(store)):p.read_bytes() for p in store.rglob('*') if p.is_file()},before)

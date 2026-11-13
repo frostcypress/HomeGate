@@ -349,6 +349,24 @@ class Web(luci.LuaLuCI):
         self.verify_unchanged()
 
 
+    def wait_schedule_state(self,session,predicate,seconds):
+        deadline=time.monotonic()+seconds
+        last=None
+        while time.monotonic()<deadline:
+            code,_,body=self.cgi(BASE+'/configuration_api/schedule_status',cookie=session[0])
+            self.assertNotIn(b'SECRET_SENTINEL',body)
+            self.assertIn(code,[200,503])
+            last=json.loads(body);report=last['report']
+            if code==503:
+                # A read may overlap publication or owner exit.
+                self.assertFalse(last['ok']);self.assertFalse(last['write_ready'])
+                self.assertEqual(report['phase'],'ddns-schedule');self.assertFalse(report['ok'])
+            else:
+                self.assertTrue(last['ok']);self.assertTrue(report['ok'])
+                if predicate(report):return report
+            time.sleep(.1)
+        self.fail(('Scheduler did not reach expected state',last))
+
     def test_continuous(self):
         run=Path('/var/run/homegate-engineering');work=run/'ddns-schedule'
         self.assertFalse(run.exists());s=self.login();self.prepare_account(s)
@@ -361,30 +379,20 @@ class Web(luci.LuaLuCI):
         init=STATE/'installed/etc/init.d/homegate-engineering'
         p=subprocess.run(['/bin/sh',str(init),'start','--confirm'],capture_output=True,timeout=15)
         self.assertEqual((p.returncode,p.stderr),(0,b''));self.assertTrue(json.loads(p.stdout)['continuous'])
-        deadline=time.monotonic()+30
-        while time.monotonic()<deadline:
-            status=self.cfg('schedule_status',s)['report']
-            if status['status']=='waiting' and status['ticks']==1:break
-            time.sleep(.1)
-        else:self.fail('Continuous mode did not reach waiting state')
+        status=self.wait_schedule_state(s,lambda d:d['status']=='waiting' and d['ticks']==1,30)
         self.assertTrue(status['running']);self.assertTrue(status['continuous']);self.assertEqual(status['admission_limit'],0)
         calls=(STATE/'provider-calls').read_bytes()
         self.api('configuration_api','schedule_serve',s,{'consent':'1'},expected=503)
         self.api('configuration_api','delete_rule',s,{'id':'ddns_a','consent':'1'},expected=503)
         self.cfg('schedule_stop',s,consent='1')
-        deadline=time.monotonic()+15
-        while time.monotonic()<deadline:
-            status=self.cfg('schedule_status',s)['report']
-            if status['status']=='finished':break
-            time.sleep(.1)
-        self.assertEqual(status['reason'],'stopped');self.assertEqual((STATE/'provider-calls').read_bytes(),calls)
+        status=self.wait_schedule_state(s,lambda d:d['status']=='finished',15)
+        self.assertEqual(status['reason'],'stopped');self.assertFalse(status['running'])
+        self.assertEqual((STATE/'provider-calls').read_bytes(),calls)
         self.cfg('schedule_reap',s,consent='1');self.assertFalse(work.exists())
         # The web entry shares the same explicit authority and cannot start at boot.
         self.cfg('schedule_serve',s,consent='1');self.cfg('schedule_stop',s,consent='1')
-        deadline=time.monotonic()+15
-        while time.monotonic()<deadline:
-            if self.cfg('schedule_status',s)['report']['status']=='finished':break
-            time.sleep(.1)
+        status=self.wait_schedule_state(s,lambda d:d['status']=='finished',15)
+        self.assertEqual(status['reason'],'stopped');self.assertFalse(status['running'])
         self.cfg('schedule_reap',s,consent='1');self.assertFalse(work.exists());self.verify_unchanged()
 
     def lifecycle_account(self):
@@ -569,24 +577,8 @@ config wol_host 'host_a'
             self.cfg('schedule_stop',s,consent='1')
         finally:
             (STATE/'provider-release').touch()
-        deadline=time.monotonic()+15;finished=False
-        while time.monotonic()<deadline:
-            # A read overlapping publication/owner exit may fail closed. Keep
-            # it unknown within the original deadline, never count as finished.
-            code,_,body=self.cgi(BASE+'/configuration_api/schedule_status',cookie=s[0])
-            self.assertNotIn(b'SECRET_SENTINEL',body);self.assertIn(code,[200,503])
-            value=json.loads(body)
-            if code==503:
-                self.assertFalse(value['ok']);self.assertFalse(value['write_ready'])
-                self.assertEqual(value['report']['phase'],'ddns-schedule')
-                self.assertFalse(value['report']['ok'])
-            else:
-                self.assertTrue(value['ok']);report=value['report']
-                if report['status']=='finished':
-                    self.assertFalse(report['running']);self.assertEqual(report['reason'],'stopped')
-                    finished=True;break
-            time.sleep(.1)
-        self.assertTrue(finished,'Schedule did not publish a genuine finished state within 15 seconds')
+        status=self.wait_schedule_state(s,lambda d:d['status']=='finished',15)
+        self.assertFalse(status['running']);self.assertEqual(status['reason'],'stopped')
         self.cfg('schedule_reap',s,consent='1')
         self.assertEqual(lock.read_bytes(),b'');self.verify_unchanged()
     def test_production_copy_sources(self):

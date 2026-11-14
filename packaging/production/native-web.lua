@@ -151,6 +151,7 @@ function cursor:set(pkg,name,key,value)
  if not write or pkg~='homegate' or type(key)~='string' or not key:match('^[a-zA-Z0-9_]+$')then return false end
  local s=find(pkg,name);if not s then return false end
  if type(value)=='string' and type(s.values[key])=='string' and value==masked(s.values[key])then value=s.values[key]end
+ if type(value)=='string' and value==s.values[key] then return true end
  s.values[key]=copy(value);changed=true;return true
 end
 function cursor:section(pkg,kind,name,values)
@@ -160,21 +161,29 @@ end
 function cursor:delete(pkg,name,key)
  if not write or pkg~='homegate'then return false end
  local s=find(pkg,name);if not s then return true end
- if key then s.values[key]=nil else local out={};for _,v in ipairs(load_document(pkg))do if v.name~=name then out[#out+1]=v end end;documents[pkg]=out end
+ if key then
+  if s.values[key]==nil then return true end
+  s.values[key]=nil
+ else local out={};for _,v in ipairs(load_document(pkg))do if v.name~=name then out[#out+1]=v end end;documents[pkg]=out end
  changed=true;return true
 end
 function cursor:revert(pkg)documents[pkg]=nil;changed=false;return true end
 function cursor:commit(pkg)
  if not write or pkg~='homegate'then return false end
- if not changed then return true end
+ if not changed then result.configuration_saved=true;return true end
  if fixture then
   fixture.commits=fixture.commits+1
   if fixture.fail_commit then return false end
   fixture.documents[pkg]=copy(documents[pkg]);changed=false;return true
  end
  local body=text(load_document(pkg))
- local status,status_code=decoded({'status'})
- if status_code==0 and status and status.service and status.service.running then
+ -- A write needs to know whether a coordinator owns the service. The full
+ -- health report reads configuration twice and can be busy during a job.
+ local owner,owner_code=call({'ash',base..'/native-service.sh','owner-state'})
+ if owner_code~=0 or (owner~='true\n' and owner~='false\n') then
+  result.failure_stage='runtime-quiescent';return false
+ end
+ if owner=='true\n' then
   local _,rc=core({'service-stop','--confirm'})
   if rc~=0 then result.failure_stage='runtime-stop';result.exit_code=rc;return false end
   local quiet=false
@@ -191,12 +200,37 @@ function cursor:commit(pkg)
  local raw,code=call({'ash',proto..'/homegate-config-prototype.sh','--persistent','editor-preview',tostring(revision)},body)
  local preview=json.parse(raw);if code~=0 or type(preview)~='table' or type(preview.confirmation)~='string'then result.failure_stage='editor-preview';result.exit_code=code;return false end
  local d,rc=decoded({'config-commit',preview.confirmation});if rc~=0 or not d or not d.ok then result.failure_stage='editor-publish';result.exit_code=rc;return false end
+ result.configuration_saved=true
  for id,pair in pairs(pending_imports)do
   local material,code=decoded({'cert-import-stdin',id},codec.json(pair))
   if code~=0 or not material or not material.ok then result.failure_stage='certificate-publication';result.uncertain=true;return false end
  end
  pending_imports={}
  changed=false;revision=d.configuration_revision or d.revision or revision+2;return true
+end
+local stage_messages={
+ ['runtime-stop']='现有服务未能停止，请检查运行状态。',
+ ['runtime-quiescent']='上一次服务操作尚未结束，请稍后再试。',
+ ['editor-preview']='配置校验未通过，请刷新页面核对当前配置。',
+ ['editor-publish']='配置提交未完成，请到插件维护检查恢复状态。',
+ ['legacy-certificate-adoption']='已有证书无法接管，请检查证书和私钥。',
+ ['certificate-publication']='证书更新未完成，请检查证书状态。',
+ ['runtime-enable']='服务启用检查未通过，请检查配置和恢复状态。',
+ ['runtime-disable']='服务停用检查未通过，请检查当前运行状态。',
+ ['runtime-boot-disable']='服务已停止，开机自启停用未确认。',
+ ['ddns-authorization']='DDNS 规则授权未完成，请检查规则和账号。',
+ ['runtime-plan']='服务启动计划未能保存，请检查已启用的公网规则、证书和访问策略。',
+ ['runtime-binding']='无法确认启动时要使用的配置版本。',
+}
+local function refused_stage(stage, code)
+ result.failure_stage=stage;result.exit_code=code
+ return '',code~=0 and code or 1
+end
+local function mark_service_apply(operation)
+ if fixture or request.route~='basic_apply' then return end
+ -- The write owner is still holding its lock. Publish only after the
+ -- configuration commit returned and before any service action starts.
+ lib.write(work..'/applying-'..operation,'')
 end
 local function words(command)
  command=command:gsub('%s+>%s*/dev/null%s+2>&1$',''):gsub('%s+2>/dev/null$','')
@@ -297,15 +331,20 @@ local function shell(command)
    local main=find('homegate','main')
    if not main then return '',1 end
    if main.values.enabled~='1'then
-    local _,rc=core({'service-stop','--confirm'});if rc~=0 then return '',rc end
-    local raw,code=core({'lifecycle-disable','--confirm'});if code==0 then capture('exec 8>&-; /etc/init.d/homegate disable')end;return raw,code
+    mark_service_apply('stop')
+    local _,rc=core({'service-stop','--confirm'});if rc~=0 then return refused_stage('runtime-stop',rc) end
+    local raw,code=core({'lifecycle-disable','--confirm'});if code~=0 then return refused_stage('runtime-disable',code) end
+    local _,boot_code=capture('exec 8>&-; /etc/init.d/homegate disable')
+    if boot_code~=0 then return refused_stage('runtime-boot-disable',boot_code) end
+    return raw,code
    end
-   local _,stop=core({'service-stop','--confirm'});if stop~=0 then return '',1 end
-   local _,quiet=core({'service-quiescent'});if quiet~=0 then return '',1 end
+   mark_service_apply('start')
+   local _,stop=core({'service-stop','--confirm'});if stop~=0 then return refused_stage('runtime-stop',stop) end
+   local _,quiet=core({'service-quiescent'});if quiet~=0 then return refused_stage('runtime-quiescent',quiet) end
    local ddns,certs,web={},{},{}
    for _,s in ipairs(load_document('homegate'))do
     if s.kind=='certificate' and fs.lstat('/etc/homegate/certs/'..s.name..'/fullchain.pem') and not fs.lstat('/etc/homegate/certs/'..s.name..'/current')then
-     local _,rc=core({'cert-adopt',s.name,'--confirm'});if rc~=0 then result.failure_stage='legacy-certificate-adoption';return '',1 end
+     local _,rc=core({'cert-adopt',s.name,'--confirm'});if rc~=0 then return refused_stage('legacy-certificate-adoption',rc) end
     end
     if s.values.enabled=='1'then
      if s.kind=='ddns_rule'then ddns[#ddns+1]=s.name
@@ -314,17 +353,17 @@ local function shell(command)
     end
    end
    for _,list in ipairs({ddns,certs,web})do table.sort(list)end
-   local _,enabled=core({'lifecycle-enable','--confirm'});if enabled~=0 then return '',1 end
+   local _,enabled=core({'lifecycle-enable','--confirm'});if enabled~=0 then return refused_stage('runtime-enable',enabled) end
    local grant,rc
    if #ddns==1 then grant,rc=decoded({'grant-preview',ddns[1]})
    elseif #ddns>1 then local raw;raw,rc=call({'ash',proto..'/homegate-ddns-authority.sh','preview-rules',table.concat(ddns,',')});grant=json.parse(raw)end
    if #ddns>0 then
-    if rc~=0 or not grant or not grant.confirmation then return '',1 end
-    local _,code=core({'grant-commit',grant.confirmation});if code~=0 then return '',1 end
-   elseif fs.lstat('/etc/homegate/transactions/ddns-authority')then local _,code=core({'grant-revoke','--confirm'});if code~=0 then return '',1 end end
+    if rc~=0 or not grant or not grant.confirmation then return refused_stage('ddns-authorization',rc) end
+    local _,code=core({'grant-commit',grant.confirmation});if code~=0 then return refused_stage('ddns-authorization',code) end
+   elseif fs.lstat('/etc/homegate/transactions/ddns-authority')then local _,code=core({'grant-revoke','--confirm'});if code~=0 then return refused_stage('ddns-authorization',code) end end
    local function selection(v)return #v>0 and table.concat(v,',') or '-'end
-   local _,plan=core({'service-plan-set',selection(ddns),selection(certs),selection(web),main.values.access_enabled=='1' and 'allow' or 'open','--confirm'});if plan~=0 then return '',1 end
-   local current=tonumber(lib.read('/etc/homegate/transactions/current',16));if not current then return '',1 end
+   local _,plan=core({'service-plan-set',selection(ddns),selection(certs),selection(web),main.values.access_enabled=='1' and 'allow' or 'open','--confirm'});if plan~=0 then return refused_stage('runtime-plan',plan) end
+   local current=tonumber(lib.read('/etc/homegate/transactions/current',16));if not current then return refused_stage('runtime-binding',7) end
    result.runtime_start={revision=current};return '',0
   end
   return capture('exec 8>&-; '..quote(argv[1])..' '..quote(argv[2]))
@@ -362,7 +401,9 @@ modules['luci.http']={formvalue=function(k)if k then return request.form[k]end;r
  redirect=function(v)
   if type(v)~='string' or #v>4096 or v:find('[\r\n%z]') or not v:match('^/cgi%-bin/luci/admin/services/homegate/[%w_/]+[?]?')then error('redirect')end
   result.redirect=v;if result.material_retained then result.error='证书材料已保留，尚未完成清理。请先在维护中核对，不要重复操作。';result.redirect=nil
-  elseif v:find('[?&]error=')then result.error=result.failure_stage=='runtime-confirmation-required' and '配置已保存。请在任务授权与运行操作中确认新范围后启动服务。' or 'HomeGate operation refused; configuration or retained operation requires attention'end
+  elseif v:find('[?&]error=')then
+   result.error=stage_messages[result.failure_stage] or '操作未完成，请检查当前配置及未完成的操作。'
+  end
   if result.redirect and not result.error and stopped_for_save and not result.runtime_start then
    local notice=modules['luci.http'].urlencode('配置已保存，任务已停止；应用后重新启动。');result.redirect=result.redirect:gsub('([?&]notice=)[^&]*',function(prefix)return prefix..notice end)
   end
@@ -371,7 +412,20 @@ modules['luci.http']={formvalue=function(k)if k then return request.form[k]end;r
  header=function(k,v)if k~='Content-Disposition' or #v>256 or v:find('[\r\n%z]')then error('header')end;result.headers[k]=v end,
  write=function(v)if type(v)~='string'then error('response')end;bytes=bytes+#v;if bytes>2097152 then error('response limit')end;result.body=(result.body or '')..v end}
 modules['luci.template']={render=function(name,data)
- if not name:match('^homegate/[a-z]+$')then error('template')end;result.template=name;result.data=public(data)
+ if not name:match('^homegate/[a-z]+$')then error('template')end
+ if name=='homegate/maintenance' and not fixture then
+  local store='/etc/homegate/transactions'
+  data.configuration_recovery_needed=fs.lstat(store..'/application')~=nil
+  local pointer=fs.lstat(store..'/current')
+  local current=pointer and pointer.type=='reg' and pointer.uid==0 and pointer.nlink==1 and
+   pointer.modedec==600 and pointer.size<=3 and fs.readfile(store..'/current',3)
+  local generation=current and current:match('^([1-9]%d?)\n$')
+  local path=generation and store..'/gen-'..generation
+  data.configuration_migration_needed=(not pointer or path and not fs.lstat(path..'/source.conf')) and
+   read_configuration_source()~=assert(fs.readfile(base..'/factory.config')) or false
+  data.configuration_migration_copied=path and fs.lstat(path..'/legacy.conf')~=nil or false
+ end
+ result.template=name;result.data=public(data)
 end}
 modules['nixio.fs']={chmod=function(path)if files[path]then return true end;return false end,stat=function(path)
  if fixture then return nil end
@@ -395,7 +449,7 @@ if not ok then
  elseif request.route=='config_reset' then
   message=effect_started and '恢复结果待核对，请检查当前配置和任务状态。' or '恢复默认配置失败，本次配置未提交。'
  end
- result={api_version=1,ok=false,error=message,failure_stage=failure_stage,error_site=tostring(err):match('%.lua:(%d+):'),uncertain=effect_started or nil}
+ result={api_version=1,ok=false,error=message,failure_stage=failure_stage,error_site=tostring(err):match('%.lua:(%d+):'),uncertain=effect_started or nil,configuration_saved=result.configuration_saved}
 end
 if result.body then result.body=masked(result.body)end
 if result.redirect then result.redirect=masked(result.redirect)end

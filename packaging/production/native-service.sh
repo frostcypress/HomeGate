@@ -13,7 +13,7 @@ codec=$base/native-service.lua;action=${1:-};stage=arguments
 trap 'code=$?; if [ "$action" = serve ] && [ "$code" != 0 ];then exit 1;fi' EXIT
 fail() { printf '{"api_version":1,"native":true,"ok":false,"phase":"native-service","effect":"none","write_ready":false,"failure_step":"%s","error":"Service unavailable; retained operations require attention"}\n' "$stage";exit "${1:-7}"; }
 [ "$(id -u)" = 0 ] || fail 7
-case "$action:$#" in serve:1|status:1|check:1|quiescent:1|admission:1|plan-certificates:1) ;;receipt:2) ;;stop:2|reap:2) [ "$2" = --confirm ] || fail 2;;plan-set:6) [ "$6" = --confirm ] || fail 2;;*) fail 2;;esac
+case "$action:$#" in serve:1|status:1|check:1|owner-state:1|quiescent:1|admission:1|plan-certificates:1) ;;receipt:2) ;;stop:2|reap:2) [ "$2" = --confirm ] || fail 2;;plan-set:6) [ "$6" = --confirm ] || fail 2;;*) fail 2;;esac
 exists() { [ -e "$1" ] || [ -L "$1" ]; }
 private_dir() { [ -d "$1" ] && [ ! -L "$1" ] && [ "$(stat -c '%u:%a' "$1")" = 0:700 ]; }
 private_file() { [ -f "$1" ] && [ ! -L "$1" ] && [ "$(stat -c '%u:%a:%h' "$1")" = 0:600:1 ] && [ "$(stat -c %s "$1")" -le "${2:-16384}" ]; }
@@ -67,12 +67,19 @@ if [ "$action" = receipt ];then
  printf '%s\n' "$receipt";exit 0
 fi
 if [ "$action" = status ] || [ "$action" = check ];then
- config=$(ash "$dir/homegate-cli.sh" status 9>&-);config_code=$?
- # Legacy health may report an inactive raw switch while the validated native
- # intent overlay is active. Recompute native health from both actual records.
- case "$config_code" in 0|1) ;;*) fail;;esac
+ stage=status-configuration
+ config=$(ash "$dir/homegate-health-read.sh" configuration-report 9>&-) || fail
+ # The native receipt and process identity supply the runtime observation.
+ stage=status-intent
  intent=$(ash "$dir/homegate-startup-active.sh" status 9>&-) || fail
- printf '%s\n' "$config" | lua "$codec" status "$intent" "$live" "$action";exit $?
+ stage=status-observation
+ report=$(printf '%s\n' "$config" | lua "$codec" status "$intent" "$live" "$action");result=$?
+ [ -n "$report" ] || fail
+ printf '%s\n' "$report";exit "$result"
+fi
+if [ "$action" = owner-state ];then
+ printf '%s\n' "$live"
+ exit 0
 fi
 if [ "$action" = quiescent ];then [ "$live" = false ] && quiet || fail 4;printf '{"api_version":1,"native":true,"ok":true,"phase":"native-service","quiescent":true,"effect":"none","write_ready":false}\n';exit 0;fi
 if [ "$action" = reap ];then

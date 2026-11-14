@@ -177,6 +177,7 @@
     "packaging/production/native-cli.lua",
     "packaging/production/native-cli.sh",
     "packaging/production/native-luci-cache.lua",
+    "packaging/production/native-operations.js",
     "packaging/production/native-package.lua",
     "packaging/production/native-package.sh",
     "packaging/production/native-public-listeners.lua",

@@ -6,7 +6,7 @@ export LC_ALL=C
 health_status_enabled=false
 fail() { printf '{"api_version":1,"prototype":true,"ok":false,"phase":"common-runtime","effect":"none","write_ready":false,"error":"Health diagnostic refused"}\n';exit "${1:-7}"; }
 [ "$#" -eq 1 ] && [ "$health_status_enabled" = true ] || fail 2
-action=$1;case "$action" in status|check) ;; *) fail 2;; esac
+action=$1;case "$action" in status|check|configuration-report) ;; *) fail 2;; esac
 PATH=/usr/sbin:/usr/bin:/sbin:/bin;export PATH
 unset IPKG_INSTROOT INIT_TRACE LUA_INIT LUA_PATH LUA_CPATH HOMEGATE_CONFIG_PROTO_STORE HOMEGATE_RUNTIME_STATE HOMEGATE_HOME_DIR
 exec 2>/dev/null
@@ -26,11 +26,21 @@ locks_match() {
     done
 }
 locks_match || fail 4
-ash "$dir/homegate-config-prototype.sh" --persistent writer-check >/dev/null 2>/dev/null
-state=$?;[ "$state" != 4 ] || fail 4
-for old in "$run/".health-read-*; do [ ! -e "$old" ] && [ ! -L "$old" ] || fail 4;done
+if [ "$action" != configuration-report ]; then
+    ash "$dir/homegate-config-prototype.sh" --persistent writer-check >/dev/null 2>/dev/null
+    state=$?;[ "$state" != 4 ] || fail 4
+fi
 revision=$(lua "$dir/cloudflare-codec.lua" context < "$store/current") || fail
-snapshot() { ash "$dir/homegate-config-prototype.sh" --persistent runtime-ddns-snapshot-read 3>&1 4>&- 5>&- 8>&- 9>&- >/dev/null 2>/dev/null; }
+snapshot_command=runtime-ddns-snapshot-read
+snapshot() { ash "$dir/homegate-config-prototype.sh" --persistent "$snapshot_command" 3>&1 4>&- 5>&- 8>&- 9>&- >/dev/null 2>/dev/null; }
+if [ "$action" = configuration-report ]; then
+    # The production coordinator verifies its own runtime receipt. Read only
+    # the bound configuration here, without creating a legacy observation.
+    snapshot_command=runtime-active-snapshot-read
+    snapshot | lua "$dir/homegate-health.lua" configuration-report "$revision" 3>&- 4>&- 5>&- 6>&- 7>&- 8>&- 9>&-
+    exit $?
+fi
+for old in "$run/".health-read-*; do [ ! -e "$old" ] && [ ! -L "$old" ] || fail 4;done
 configuration() { snapshot | lua "$dir/homegate-health.lua" configuration "$revision" 3>&- 4>&- 5>&- 6>&- 7>&- 8>&- 9>&-; }
 context=$(configuration) || fail
 ticket=$(lua "$dir/cloudflare-codec.lua" nonce < /proc/sys/kernel/random/uuid) || fail

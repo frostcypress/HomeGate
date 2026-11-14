@@ -61,6 +61,11 @@ def payload(root):
     files['etc/hotplug.d/iface/95-homegate']=(root/'packaging/production/95-homegate').read_bytes()
     files[BASE+'factory.config']=(root/'packaging/production/homegate.config').read_bytes()
     control=BASE+'ddns-control.sh'
+    intent_start=b'        if [ ! -e /etc/homegate/transactions/startup-intent ]'
+    intent_end=b'        exec ash "$dir/homegate-lifecycle-prepare.sh" record-apply "$desired" --confirm;;'
+    start=files[control].index(intent_start)
+    end=files[control].index(intent_end,start)+len(intent_end)
+    files[control]=files[control][:start]+b'        exec ash "$dir/homegate-lifecycle-prepare.sh" record-switch "$desired" --confirm;;'+files[control][end:]
     anchor=b'action=${1:-};shift || fail\n';assert anchor in files[control]
     files[control]=files[control].replace(anchor,anchor+b'''if [ -e /etc/homegate/package-state ] || [ -L /etc/homegate/package-state ] || [ -e /etc/.homegate-transition/hold ] || [ -L /etc/.homegate-transition/hold ];then
  case "$action" in config-status|config-export|*-status|*-quiescent|*-stop|*-reap|acme-job|acme-stop|acme-cleanup|firewall-cleanup) ;;*) fail 4;;esac
@@ -76,6 +81,13 @@ case "$action" in
  dns-provider-status|dns-zones|ddns-delete|ddns-status|ddns-sync|ddns-reset|ddns-reconcile|ddns-collect-receipt|ddns-collect-orphan|ddns-collect-work|ddns-retire-archive|grant-preview|grant-commit|grant-cancel|grant-revoke) session_tool=;;
 esac
 for tool in ash lua stat sha256sum flock fsync head $session_tool;do''')
+    recover = b'        result=$(ash "$engine" --persistent recover-application)'
+    assert files[control].count(recover) == 1
+    files[control] = files[control].replace(recover, b'''        lock=/var/run/homegate/frontend.lock
+        if [ ! -e "$lock" ] && [ ! -L "$lock" ]; then
+            ash "$dir/homegate-lifecycle-prepare.sh" recover-runtime >/dev/null || fail 7
+        fi
+''' + recover)
     config_engine = BASE+'project/core/prototype/homegate-config-prototype.sh'
     observer = b'setsid ash "$(dirname "$0")/homegate-service-observer-watchdog.sh" "$confirmation" 3>'
     assert files[config_engine].count(observer) == 1
@@ -139,31 +151,28 @@ if [ -e /etc/homegate/package-state ] || [ -L /etc/homegate/package-state ] || [
 fi
 ''',1)
     for name,raw in web_payload(root).items():files[native(name.encode()).decode()]=native(raw)
-    for name,path in [('controller.lua','usr/lib/lua/luci/controller/homegate.lua'),('overview.htm','usr/lib/lua/luci/view/homegate/overview.htm')]:
-        files[path]=native((root/'packaging/engineering/files'/name).read_bytes())
-    # The candidate UI must describe in-place adoption accurately. It never
-    # asserts the legacy source remains unchanged after explicit publication.
-    view='usr/lib/lua/luci/view/homegate/configuration.htm'
-    text=files[view].decode()
-    start=text.index('  <div class="cbi-section"><h3>复制现有 HomeGate 配置</h3>')
-    end=text.index('</div>',start)+len('</div>')
-    old=text[start:end]
-    # Retain the existing actual button IDs, not a second controller/form path.
-    import re
-    buttons=''.join(re.findall(r'<button\b.*?</button>',old,re.S))
-    text=text[:start]+'''  <div class="cbi-section"><h3>接管现有配置</h3>
-    <p>先初始化私有配置库，再预览现有配置与秘密。确认迁移保留完整私有原始备份并分离秘密；随后预览应用，确认后原子发布到 /etc/config/homegate。此候选入口不启动旧服务或新服务。来源变化须重新预览，未完成的发布使用续完或恢复。</p>
-'''+buttons+'</div>'+text[end:]
-    files[view]=text.encode()
-    js='www/luci-static/resources/homegate/configuration.js'
-    files[js]=files[js].replace(b"d.report.operation==='production-copy'",b"d.report.operation==='migration-source'").replace('确认复制生产配置'.encode(),'确认迁移源配置'.encode())
+    controller='usr/lib/lua/luci/controller/homegate.lua'
+    files[controller]=native((root/'packaging/engineering/files/controller.lua').read_bytes())
+    # The engineering editor is only shipped with the engineering package.
+    del files['usr/lib/lua/luci/view/homegate/configuration.htm']
+    del files['www/luci-static/resources/homegate/configuration.js']
     def change(name,old,new):
         raw=files[name];old=old.encode();assert old in raw,(name,old)
         files[name]=raw.replace(old,new.encode())
-    controller='usr/lib/lua/luci/controller/homegate.lua'
     files[controller]=files[controller].replace(b"call('action_overview'),_('HomeGate'),90",b"alias('admin','services','homegate','overview'),_('HomeGate'),56")
     files[controller]=files[controller].replace(b"call('configuration'),_('Configuration and Credentials'),20",b"call('configuration'),nil,90")
-    change(controller,"or value.ok~=true then return nil end", "or (action=='version' and (value.api_version~=1 or type(value.version)~='string') or action~='version' and value.ok~=true) then return nil end")
+    change(controller,"""function configuration()
+    local c=require('luci.dispatcher').context or {}
+    require('luci.template').render('homegate/configuration',{token=c.authtoken or ''})
+end""", """function configuration()
+    local d=require('luci.dispatcher')
+    require('luci.http').redirect(d.build_url('admin','services','homegate','maintenance'))
+end""")
+    change(controller,"call('configuration'),nil,90).leaf=true", """call('configuration'),nil,90).leaf=true
+    entry({'admin','services','homegate','advanced_configuration'},call('configuration')).leaf=true""")
+    start=files[controller].index(b'function action_overview()')
+    end=files[controller].index(b'\nend\n',start)+len(b'\nend\n')
+    files[controller]=files[controller][:start]+files[controller][end:]
     change(controller,"{'backup_export','wol_status'","{'service_status','backup_export','wol_status'")
     change(controller,"ipairs({'backup_preview'","ipairs({'service_start','service_stop','service_plan_set','backup_preview'")
     files[controller]+=b"\nfunction config_service_status()config('service_status')end\nfunction config_service_start()config('service_start')end\nfunction config_service_stop()config('service_stop')end\nfunction config_service_plan_set()config('service_plan_set')end\n"
@@ -185,10 +194,6 @@ fi
  service_start) if /etc/init.d/homegate start >/dev/null 2>&1;then raw='{"api_version":1,"native":true,"ok":true,"phase":"native-service","launch_requested":true}';else fail 4;fi;;
  service_plan_set) ddns=${payload%%:*};rest=${payload#*:};certs=${rest%%:*};rest=${rest#*:};web=${rest%%:*};policy=${rest#*:};raw=$(/usr/bin/homegate service-plan-set "$ddns" "$certs" "$web" "$policy" --confirm) || rc=$?;;
 ''')
-    change(js,"write=action!=='backup_export'","write=action!=='service_status'&&action!=='backup_export'")
-    change(js,'}());',(root/'packaging/production/service.js').read_text(encoding='utf-8')+'\n}());')
-    change(view,'  <div class="cbi-section"><h3>配置备份与恢复</h3>',(root/'packaging/production/service.htm').read_text(encoding='utf-8')+'\n  <div class="cbi-section"><h3>配置备份与恢复</h3>')
-    change(view,'此候选入口不启动旧服务或新服务。','迁移操作不会自动启动服务；确认任务后使用“启动服务”。')
     web_runtime(root,files)
     return files
 
@@ -198,6 +203,12 @@ def web_runtime(root,files):
     core=BASE+'project/core/prototype/homegate-config-prototype.sh'
     assert files[core].count(b'native_editor_enabled=false\n')==1
     files[core]=files[core].replace(b'native_editor_enabled=false\n',b'native_editor_enabled=true\n')
+    startup=BASE+'project/core/prototype/homegate-lifecycle-prepare.sh'
+    assert files[startup].count(b'native_startup_history_check=false\n')==1
+    files[startup]=files[startup].replace(b'native_startup_history_check=false\n',b'native_startup_history_check=true\n')
+    active=BASE+'project/core/prototype/homegate-startup-active.sh'
+    assert files[active].count(b'native_active_status=false\n')==1
+    files[active]=files[active].replace(b'native_active_status=false\n',b'native_active_status=true\n')
     key=BASE+'project/core/prototype/homegate-certificate.sh'
     assert files[key].count(b'native_certificate_maintenance_enabled=false\n')==1
     files[key]=files[key].replace(b'native_certificate_maintenance_enabled=false\n',b'native_certificate_maintenance_enabled=true\n')
@@ -282,7 +293,84 @@ fi
     for path in (root/'project/luci/lua/luasrc/view/homegate').glob('*.htm'):
         if path.stem in ['overview','basic','public','wol','maintenance','common']:
             raw=path.read_text(encoding='utf-8').replace('homegate/common','homegate_legacy/common')
+            if path.stem=='common':
+                raw=raw.replace('  form.submit();', '''  if (window.hgSubmitOperation && window.hgSubmitOperation(form)) form.remove();
+  else form.submit();''',1)
+                flash_selector=".hg-notice:not(.hg-notice-error):not(.hg-notice-pending)"
+                assert raw.count(flash_selector)==1
+                raw=raw.replace(flash_selector,flash_selector+':not(#hg-operation-status)')
+                raw=raw.replace('</style>', '''.hg-wrap #hg-operation-status[hidden] { display: none !important; }
+.hg-wrap #hg-operation-status:not([hidden]) + .hg-notice-pending { display: none !important; }
+</style>''',1)
+            else:
+                dirty_notice='<div class="hg-notice hg-notice-pending" id="hg-'
+                assert raw.count(dirty_notice)==1
+                raw=raw.replace(dirty_notice,'''<div id="hg-operation-status" class="hg-notice" role="status" aria-live="polite" hidden="hidden"
+ data-base="<%=url('admin/services/homegate')%>" data-token="<%=pcdata(token or '')%>"></div>
+'''+dirty_notice)
+                raw=raw.replace('<%+footer%>', '''<script src="<%=resource%>/homegate/native-operations.js"></script>
+<%+footer%>''',1)
+            if path.stem in ('overview','maintenance'):
+                form_id,dirty_id=('homegate-basic-form','hg-basic-dirty') if path.stem=='overview' else ('homegate-maintenance-form','hg-maintenance-dirty')
+                tracker=f"hgFormDirtyTracker('{form_id}','{dirty_id}')"
+                assert raw.count(tracker)==1
+                raw=raw.replace(tracker,f'window.hgOperationTracker={tracker}')
+            if path.stem=='overview':
+                start=raw.index("  var tStopped='<%:Stopped%>'")
+                end=raw.index('\n})();',start)
+                raw=raw[:start]+"""  var tStopped='<%:Stopped%>', tHealthy='<%:Healthy%>', tUnhealthy='<%:Unhealthy%>';
+  var tUnavailable='<%:Service status temporarily unavailable%>';
+  var requestNumber=0, networkRequested=false;
+  var retryDelays=[250, 500, 1000];
+  window.hgRefreshService = function() {
+    var request=++requestNumber;
+    function readStatus(attempt) {
+      hgGet('<%=url('admin/services/homegate/api/status')%>', function(s) {
+        if (request !== requestNumber) return;
+        var service=s && !s.state_unknown && s.service;
+        var known=service && typeof service.running === 'boolean' && typeof service.healthy === 'boolean';
+        if (!known && attempt < retryDelays.length) {
+          window.setTimeout(function() {
+            if (request === requestNumber) readStatus(attempt+1);
+          }, retryDelays[attempt]);
+          return;
+        }
+        var state=known ? (service.running ? (service.healthy ? tHealthy : tUnhealthy) : tStopped) : tUnavailable;
+        hgText('hg_service', state);
+        hgText('hg_pid', known && service.running && s.runtime && s.runtime.pid ? 'PID ' + s.runtime.pid : '-');
+        // These reads use the same non-blocking configuration locks.
+        if (networkRequested) return;
+        networkRequested=true;
+        hgGet('<%=url('admin/services/homegate/api/network')%>', function(n) {
+          var w=n && n.network && n.network.wan ? n.network.wan : {};
+          hgText('hg_ipv6', w.public_ipv6 || '-');
+        });
+      });
+    }
+    readStatus(0);
+  };
+  window.hgRefreshService();"""+raw[end:]
+            if path.stem=='maintenance':
+                preview='<div id="hg-config-preview"'
+                recovery='''<% if configuration_recovery_needed then %>
+  <form method="post" id="hg-recover-application" action="<%=url('admin/services/homegate/configuration_api/recover')%>">
+    <input type="hidden" name="token" value="<%=pcdata(token)%>" />
+    <input type="hidden" name="consent" value="1" />
+    <p>上一次配置应用未完成。恢复后可以重新修改配置。</p>
+    <button type="submit" class="cbi-button cbi-button-apply">恢复应用前配置</button>
+  </form>
+<% elseif configuration_migration_needed then %>
+  <form method="post" id="hg-migrate-configuration" data-copied="<%=configuration_migration_copied and '1' or '0'%>"
+      action="<%=url('admin/services/homegate/configuration_api')%>">
+    <p>检测到旧版配置。迁移会保留原始备份，完成后可在服务概览启用 HomeGate。</p>
+    <button type="submit" class="cbi-button cbi-button-apply"><%=configuration_migration_copied and '继续迁移' or '迁移旧版配置'%></button>
+  </form>
+<% end %>
+  '''
+                assert raw.count(preview)==1
+                raw=raw.replace(preview,recovery+preview)
             files['usr/lib/lua/luci/view/homegate_legacy/'+path.name]=raw.encode()
+    files['www/luci-static/resources/homegate/native-operations.js']=(root/'packaging/production/native-operations.js').read_bytes()
     for name,dest in [('native-web-http.lua','usr/lib/lua/luci/model/homegate/legacy.lua'),('native-web-pending.htm','usr/lib/lua/luci/view/homegate_legacy/pending.htm')]:
         files[dest]=(root/'packaging/production'/name).read_bytes()
     controller='usr/lib/lua/luci/controller/homegate.lua'

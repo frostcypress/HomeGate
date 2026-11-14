@@ -108,7 +108,7 @@ case "$action" in
   empty "$run/frontend-web.lock" || fail;exec 8>>"$run/frontend-web.lock"
   not_started(){ lua "$codec" not-started "$not_started_reason" > "$work/result.next" && fsync "$work/result.next" && mv "$work/result.next" "$work/result" && rm "$work/request" "$work/deadline" && fsync "$work" || fail;exit 0; }
   not_started_reason=busy
-  while ! flock -n 8;do now=$(lua "$clock" now) || fail;[ "$now" -lt "$deadline" ] || not_started;sleep .1 || sleep 1;done
+ while ! flock -n 8;do now=$(lua "$clock" now) || fail;[ "$now" -lt "$deadline" ] || not_started;pause 100 .1 || sleep 1;done
   not_started_reason=package-state
   held && not_started
   stopped=false;trap 'stopped=true' TERM INT
@@ -122,13 +122,14 @@ case "$action" in
     lua "$codec" error > "$work/interrupted";fsync "$work/interrupted";mv "$work/interrupted" "$work/result";fsync "$work"
     kill -KILL -- "-$$" 2>/dev/null;exit 1
    fi
-   sleep .1 || sleep 1
+  pause 100 .1 || sleep 1
   done
   wait "$child";code=$?
   if [ "$code" != 0 ] || [ ! -s "$work/result.next" ];then lua "$codec" error > "$work/result.next" || fail;fi
   publish_result(){ file "$work/result.next" && fsync "$work/result.next" && mv "$work/result.next" "$work/result" && fsync "$work/result" "$work"; }
   desired=$(lua "$codec" start-options "$value") || fail
   if [ -n "$desired" ];then
+   (set -C; : > "$work/starting") || fail
    # Publication/intent are sealed. Release only the extra admission fence;
    # existing source/plan/revision guards still bind every service action.
    exec 8>&-
@@ -138,7 +139,8 @@ case "$action" in
     # Only the Web owner's verified session is signalled. The coordinator
     # dispatched by procd is independent, so its outcome remains uncertain.
     trap '' TERM INT;kill -TERM -- "-$$" 2>/dev/null || :;sleep 1
-    lua "$codec" runtime-result "$value" false "$failure_stage" "$start_exit" "$receipt" </dev/null && publish_result
+   lua "$codec" runtime-result "$value" false "$failure_stage" "$start_exit" "$receipt" </dev/null && publish_result
+   if file "$work/starting";then rm "$work/starting";fsync "$work";fi
     kill -KILL -- "-$$" 2>/dev/null;exit 1
    }
    runtime_call(){
@@ -149,7 +151,7 @@ case "$action" in
     while kill -0 "$child" 2>/dev/null;do
      now=$(lua "$clock" now) || runtime_interrupted
      [ "$stopped" = false ] && [ "$now" -lt "$until_time" ] || runtime_interrupted
-     sleep .1 || sleep 1
+     pause 100 .1 || sleep 1
     done
     wait "$child";runtime_exit=$?
     now=$(lua "$clock" now) || return 1
@@ -196,7 +198,7 @@ case "$action" in
   publish_result || fail
   file "$work/deadline" && rm "$work/deadline" || fail
   file "$work/request" && rm "$work/request" || fail
-  for name in call-input call-output runtime-receipt;do if [ -e "$work/$name" ];then file "$work/$name" && rm "$work/$name" || fail;fi;done
+  for name in call-input call-output runtime-receipt starting applying-start applying-stop;do if [ -e "$work/$name" ];then file "$work/$name" && rm "$work/$name" || fail;fi;done
   exit 0;;
  *) fail 2;;
 esac

@@ -59,6 +59,12 @@ define Package/luci-app-homegate/postinst
 [ -n "$${IPKG_INSTROOT}" ] || exec lua /usr/libexec/homegate/native-luci-cache.lua invalidate
 exit 0
 endef
+define Package/luci-app-homegate/postrm
+#!/bin/sh
+[ -z "$${IPKG_INSTROOT:-}" ] || exit 0
+[ "$${PKG_UPGRADE:-0}" != 1 ] && [ "$${1:-}" != upgrade ] || exit 0
+[ ! -f /usr/libexec/homegate/native-luci-cache.lua ] || exec lua /usr/libexec/homegate/native-luci-cache.lua invalidate
+endef
 define Package/luci-i18n-homegate-zh-cn/install
 	$(INSTALL_DIR) $(1)/usr/lib/lua/luci/i18n
 	$(INSTALL_DATA) $(PKG_BUILD_DIR)/homegate.zh-cn.lmo $(1)/usr/lib/lua/luci/i18n/homegate.zh-cn.lmo

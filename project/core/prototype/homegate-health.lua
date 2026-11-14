@@ -25,13 +25,16 @@ if mode=='result' then
     if #raw<=8192 then checked,ok=model.validate(raw,shared.parse(raw),source_version,revision,context,codec.json) end
     if not checked then os.exit(7) end;io.write(checked);os.exit(action=='check' and not ok and 1 or 0)
 end
-if mode~='configuration' and mode~='run' then os.exit(7) end
-if (mode=='configuration' and arg[3]) or (mode=='run' and arg[4]) then os.exit(7) end
+if mode~='configuration' and mode~='configuration-report' and mode~='run' then os.exit(7) end
+if (mode~='run' and arg[3]) or (mode=='run' and arg[4]) then os.exit(7) end
 local snapshot=assert(loadfile(dir..'/private-snapshot.lua'))().read(io.stdin,codec)
 local raw=read('/etc/config/homegate',262144)
 local config=model.configuration(snapshot,raw,codec,assert(loadfile(dir..'/configuration-validation.lua'))(),
     assert(loadfile(dir..'/cloudflare-record-plan.lua'))(),revision)
 if mode=='configuration' then io.write(assert(model.context(config,codec.json))..'\n');return end
+if mode=='configuration-report' then
+    io.write(model.report(source_version,revision,config,{running=false},codec.json));return
+end
 local runtime_mode=arg[3];local probe
 if runtime_mode=='absent' then probe={running=false}
 elseif runtime_mode=='invalid' then probe={running=false,error_kind='runtime_state_unavailable'}

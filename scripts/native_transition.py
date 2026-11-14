@@ -94,7 +94,7 @@ def prepare_kit(root,packages,destination):
             if name==NAMES[0]:
                 hook_validation=verify_lifecycle_hooks(control,make,prerm_dispatcher=(feed/'tools/homegate-core.prerm').read_bytes())
             elif name==NAMES[1]:
-                verify_lifecycle_hooks(control,make,package=name,hooks=('postinst',))
+                verify_lifecycle_hooks(control,make,package=name,hooks=('postinst','postrm'))
             controls[name]=hashlib.sha256(control).hexdigest()
             actual={}
             with tarfile.open(fileobj=io.BytesIO(body),mode='r:*') as archive:

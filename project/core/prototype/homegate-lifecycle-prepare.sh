@@ -10,6 +10,7 @@ runtime_prepare_enabled=false
 lifecycle_startup_enabled=false
 lifecycle_intent_check_enabled=false
 lifecycle_intent_record_enabled=false
+native_startup_history_check=false
 phase=lifecycle-prepare
 startup=false
 source_only=false
@@ -77,22 +78,30 @@ startup_store_stamp() {
 }
 [ "$#" -ge 1 ] || fail 'Expected a lifecycle preparation command' 2
 case "$1" in
-    intent-check|record-save|record-resume|record-check|record-apply|record-cancel) [ "$#" -eq 3 ] && [ "$3" = --confirm ] || fail 'Explicit intent confirmation required' 2
+    intent-check|record-save|record-resume|record-check|record-apply|record-cancel|record-switch) [ "$#" -eq 3 ] && [ "$3" = --confirm ] || fail 'Explicit intent confirmation required' 2
         case "$2" in enabled|disabled) desired=$2;; *) fail 'Invalid requested state' 2;; esac;;
     *) [ "$#" -eq 1 ] || fail 'Expected one lifecycle preparation command' 2;;
 esac
 case "$1" in prepare) bootstrap_action=bootstrap;; resume) bootstrap_action=resume;;
+    recover-runtime) ;;
     startup) bootstrap_action=bootstrap;startup=true;phase=lifecycle-startup;;
     intent) startup=true;source_only=true;phase=lifecycle-source-intent;;
     intent-check) bootstrap_action=bootstrap;startup=true;intent_check=true;phase=lifecycle-intent-check;;
-    record-save|record-resume|record-check|record-apply|record-cancel) startup=true;intent_check=true;record_action=${1#record-};phase=lifecycle-intent-record;;
+    record-save|record-resume|record-check|record-apply|record-cancel|record-switch) startup=true;intent_check=true;record_action=${1#record-};phase=lifecycle-intent-record;;
     *) fail 'Unsupported lifecycle preparation command' 2;; esac
 [ "$runtime_prepare_enabled" = true ] || fail 'Lifecycle preparation is not ready' 2
 [ "$startup" = false ] || [ "$lifecycle_startup_enabled" = true ] || fail 'Startup preparation is not ready' 2
 [ "$intent_check" = false ] || [ "$lifecycle_intent_check_enabled" = true ] || fail 'Intent application preflight is not ready' 2
 [ "$record_action" = none ] || [ "$lifecycle_intent_record_enabled" = true ] || fail 'Intent record is not ready' 2
+[ "$record_action" != switch ] || [ "$native_startup_history_check" = true ] || fail 'Intent switch is not ready' 2
 owner=$(id -u) || fail 'Unable to identify lifecycle owner'
 [ "$owner" = 0 ] || fail 'Lifecycle preparation requires root'
+if [ "$1" = recover-runtime ]; then
+    private_dir /etc/homegate && private_dir /etc/homegate/transactions ||
+        fail 'Recovery requires an existing private store'
+    [ -f /etc/homegate/transactions/application ] &&
+        [ ! -L /etc/homegate/transactions/application ] || fail 'Recovery requires a retained application'
+fi
 if [ "$startup" = true ]; then
     exec 3>&- 4>&- 5>&- 6>&- 7>&- 8>&- 9>&-
     dir=$(CDPATH= cd "$(dirname "$0")" && pwd) || fail 'Unable to locate startup dependencies'
@@ -176,6 +185,10 @@ if present "$runtime/ddns-ui-jobs";then
     ash "$dir/homegate-ddns-job.sh" check-quiescent >/dev/null 2>/dev/null || fail 'Retained DDNS job requires attention' 4
 fi
 store=/etc/homegate/transactions
+if [ "$1" = recover-runtime ]; then
+    # The transaction engine will validate the retained state under its locks.
+    exit 0
+fi
 if [ "$record_action" = none ]; then
     ash "$dir/homegate-store-bootstrap-prototype.sh" "$bootstrap_action" >/dev/null 2>/dev/null
     result=$?
@@ -208,7 +221,14 @@ if [ "$startup" = true ]; then
     supervisor_binding || fail 'Startup supervisor identity changed'
     revision=$(lua "$dir/cloudflare-codec.lua" context < "$store/current") || fail 'Startup revision unavailable'
     store_stamp=$(startup_store_stamp) || fail 'Unsafe startup store binding'
-    snapshot() { ash "$dir/homegate-config-prototype.sh" --persistent runtime-startup-snapshot-read 3>&1 4>&- 5>&- 8>&- 9>&- >/dev/null 2>/dev/null; }
+    # Validate retained history once before changing the startup record.
+    # Repeated binding checks use the current source under the same locks.
+    snapshot_command=runtime-startup-snapshot-read
+    if [ "$native_startup_history_check" = true ] && [ "$record_action" != none ]; then
+        ash "$dir/homegate-config-prototype.sh" --persistent startup-history-check >/dev/null 2>/dev/null || fail 'Invalid generation history'
+        snapshot_command=runtime-active-snapshot-read
+    fi
+    snapshot() { ash "$dir/homegate-config-prototype.sh" --persistent "$snapshot_command" 3>&1 4>&- 5>&- 8>&- 9>&- >/dev/null 2>/dev/null; }
     validate_bound() { snapshot | lua "$dir/homegate-startup.lua" bound "$revision" 3>&- 4>&- 5>&- 6>&- 7>&- 8>&- 9>&-; }
     startup_recheck() {
         check_binding
@@ -224,7 +244,12 @@ if [ "$startup" = true ]; then
             [ "$(startup_source_stamp)" = "$source_stamp" ] || fail 'Intent application binding changed'
     }
     bound=$(validate_bound) || fail 'Startup requires a valid published ordinary source'
-    [ "$bound" = "$configuration" ] && [ "$(validate_bound)" = "$bound" ] || fail 'Startup configuration changed'
+    [ "$bound" = "$configuration" ] || fail 'Startup configuration changed'
+    # Record mutations revalidate in startup_recheck below while holding both
+    # locks. Other modes still repeat the bound sample here.
+    if [ "$native_startup_history_check" = false ] || [ "$record_action" = none ]; then
+        [ "$(validate_bound)" = "$bound" ] || fail 'Startup configuration changed'
+    fi
     check_binding
     supervisor_binding && startup_fences || fail 'Startup admission changed' 4
     [ "$(lua "$dir/cloudflare-codec.lua" context < "$store/current")" = "$revision" ] &&
@@ -250,6 +275,20 @@ if [ "$startup" = true ]; then
         }
         record_stamp() { stat -c '%d:%i:%u:%a:%h:%s' "$record_path" "$record_path/context"; }
         startup_recheck
+        if [ "$record_action" = switch ];then
+            if ! present "$record" && ! present "$record_stage";then
+                ! present "$store/.startup-active-next" || fail 'Active intent stage requires attention' 6
+                mkdir "$record_stage" || fail 'Unable to allocate intent stage'
+                record_path=$record_stage
+                (set -C; printf '%s\n' "$record_body" > "$record_path/context") || fail 'Unable to write intent record'
+                record_validate && fsync "$record_path/context" "$record_path" "$store" 2>/dev/null ||
+                    fail 'Intent record durability uncertain' 6
+                startup_recheck
+                record_validate && mv "$record_stage" "$record" && fsync "$store" 2>/dev/null ||
+                    fail 'Published intent record durability uncertain' 6
+            fi
+            record_action=apply
+        fi
         if [ "$record_action" = save ]; then
             ! present "$record" && ! present "$record_stage" || fail 'Intent record already requires attention' 4
             mkdir "$record_stage" || fail 'Unable to allocate intent stage'
@@ -289,7 +328,10 @@ if [ "$startup" = true ]; then
             else
                 # Revoke before publishing either switch state. The preparation
                 # fence stays until both revocation and active durability hold.
-                ash "$dir/homegate-ddns-authority.sh" cancel --confirm >/dev/null 2>/dev/null || fail 'Unable to cancel old grant confirmation' 4
+                if [ "$native_startup_history_check" = false ] || present "$store/ddns-authority-pending" ||
+                    present "$store/.ddns-authority-preview";then
+                    ash "$dir/homegate-ddns-authority.sh" cancel --confirm >/dev/null 2>/dev/null || fail 'Unable to cancel old grant confirmation' 4
+                fi
                 if present "$store/ddns-authority";then
                     ash "$dir/homegate-ddns-authority.sh" revoke --confirm >/dev/null 2>/dev/null || fail 'Unable to revoke previous DDNS authority' 4
                 fi

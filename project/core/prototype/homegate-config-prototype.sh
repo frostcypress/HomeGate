@@ -34,6 +34,7 @@ persistent_mode=false
 persistent_fence_present=false
 persistent_fence_pending=false
 projection_scratch=
+cold_projection_restore=false
 journal_active=false
 public_mode=false
 public_limit=1024
@@ -261,7 +262,7 @@ open_store() {
     if [ "$persistent_mode" = true ] && { [ -e "$store/startup-intent" ] || [ -L "$store/startup-intent" ] ||
         [ -e "$store/.startup-intent-next" ] || [ -L "$store/.startup-intent-next" ] ||
         [ -e "$store/.startup-active-next" ] || [ -L "$store/.startup-active-next" ]; }; then
-        case "$command" in status|export|editor-state-read|runtime-startup-snapshot-read) ;;
+        case "$command" in status|export|editor-state-read|runtime-startup-snapshot-read|runtime-active-snapshot-read|startup-history-check) ;;
             *) fail 'Startup intent requires explicit reconciliation' 4;; esac
     fi
     # Fence source/vault mutation under the same business locks used by proxy
@@ -271,14 +272,28 @@ open_store() {
             ash "$(dirname "$0")/homegate-proxy.sh" quiescent >/dev/null 2>/dev/null || fail 'Proxy must be quiescent before configuration changes' 4;;esac
     fi
     max_revision=0
-    for existing in "$store/gen-"*; do
+    scan_history=true
+    if [ "$persistent_mode:$native_editor_enabled" = true:true ]; then
+        case "$command" in
+            editor-state-read|runtime-active-snapshot-read|projection-publish|apply-finish-projection|restore-finish-projection) scan_history=false;;
+        esac
+    fi
+    if [ "$persistent_mode:$native_editor_enabled:$scan_history" = true:true:true ]; then
+        max_revision=$(lua "$codec" history "$store" 2>/dev/null) || fail 'Invalid generation history'
+        number "$max_revision" 0 "$history_capacity" && [ "$max_revision" = "$value" ] || fail 'Invalid history report'
+    else for existing in "$store/gen-"*; do
         [ -e "$existing" ] || [ -L "$existing" ] || continue
         index=${existing##*/gen-}
         number "$index" 1 "$history_capacity" && [ "$index" = "$value" ] || fail 'Invalid generation name'
         private_dir "$existing" || fail 'Unsafe generation directory'
-        [ "$persistent_mode" = false ] || validate_generation "$index"
+        # Current-source reads and continuation of an existing transaction
+        # verify the pointer, journal and fence references below. A new
+        # transaction checks all retained generations before allocation.
+        if [ "$persistent_mode:$scan_history" = true:true ] && [ "$command" != editor-state-read ]; then
+            validate_generation "$index"
+        fi
         [ "$index" -le "$max_revision" ] || max_revision=$index
-    done
+    done;fi
     if [ -e "$store/current" ] || [ -L "$store/current" ]; then
         read_one "$store/current" 3
         number "$one" 1 "$history_capacity" && [ "$one" = "$value" ] || fail 'Invalid current generation'
@@ -422,6 +437,10 @@ generation_manifest() {
     )
 }
 validate_generation() {
+    if [ "$persistent_mode:$native_editor_enabled" = true:true ]; then
+        validated_parent=$(lua "$codec" generation "$store" "$1" 2>/dev/null) || fail 'Invalid generation integrity'
+        return
+    fi
     checked_dir="$store/gen-$1"
     private_dir "$checked_dir" || fail 'Missing private generation'
     for item in "$checked_dir/"*; do
@@ -687,11 +706,19 @@ persistent_anchor_restore() {
 persistent_anchor_bind() {
     [ "$persistent_mode" = true ] || return
     clock_now
+    anchor_boot=$boot
+    cold_projection_restore=false
+    # Explicit rollback may validate the original boot binding without
+    # reauthorizing an old apply or a worker acknowledgement.
+    if [ "${1:-}:$journal_format" = restore:HGAPPLICATION3 ] && [ "$journal_intent_boot" != "$boot" ]; then
+        anchor_boot=$journal_intent_boot
+        cold_projection_restore=true
+    fi
     private_file "$store/application-anchor" && [ "$(stat -c %s "$store/application-anchor")" -le 512 ] || fail 'Missing bound recovery anchor' 7
     anchor_expected=$(journal_body_write prepared | sha256sum) || fail 'Unable to check bound recovery anchor' 7
     digest_file "$store/application-anchor"
     [ "$digest" = "${anchor_expected%% *}" ] || fail 'Recovery anchor does not match journal' 7
-    anchor_payload=$(printf '%s\n' HGRECOVERY1 "$store_identity" "$boot" "$digest")
+    anchor_payload=$(printf '%s\n' HGRECOVERY1 "$store_identity" "$anchor_boot" "$digest")
     anchor_checksum=$(printf '%s\n' "$anchor_payload" | sha256sum); anchor_checksum=${anchor_checksum%% *}
     anchor_expected=$(printf '%s\n' "$anchor_payload" "$anchor_checksum" | sha256sum) || fail 'Unable to check anchor identity' 7
     private_file "$store/application-anchor-meta" && [ "$(stat -c %s "$store/application-anchor-meta")" -le 256 ] || fail 'Missing bound recovery identity' 7
@@ -721,17 +748,20 @@ journal_begin() {
 journal_need() {
     [ "$journal_active" = true ] || fail 'No pending application' 5
     [ "$confirmation" = "$journal_token" ] || fail 'Application handle changed' 5
-    persistent_anchor_bind
+    persistent_anchor_bind "${1:-}"
 }
 intent_ack_need() {
     if [ "$journal_format" != HGAPPLICATION1 ] && [ "$application_result" = success ]; then
         case "$command:$journal_format" in apply-finish-intent:HGAPPLICATION2|apply-finish-projection:HGAPPLICATION3) expected_running=0;; restore-finish-intent:HGAPPLICATION2|restore-finish-projection:HGAPPLICATION3) expected_running=$journal_was_running;;
             *) fail 'Service observations are required' 5;; esac
+        if [ "$command" = restore-finish-projection ] && [ "$cold_projection_restore" = true ]; then expected_running=0; fi
         # Imported candidates are always disabled. Preserve boot links but do
         # not start a previously stopped service or activate imported settings.
         [ "$observed_boot_enabled" = "$journal_boot_enabled" ] && [ "$observed_running" = "$expected_running" ] || fail 'Service observations do not match intent' 7
         clock_now
-        [ "$boot" = "$journal_intent_boot" ] || fail 'Service intent requires cold-start reconciliation' 7
+        [ "$boot" = "$journal_intent_boot" ] ||
+            { [ "$command" = restore-finish-projection ] && [ "$cold_projection_restore" = true ]; } ||
+            fail 'Service intent requires cold-start reconciliation' 7
     else
         case "$command" in *-finish-intent|*-finish-projection) fail 'No bound service intent' 5;; esac
     fi
@@ -977,10 +1007,11 @@ credential_projection_lineage() {
     cp "$store/gen-$head_revision/source.conf" "$generation_dir/source.conf" || fail 'Unable to retain projection lineage' 7
 }
 projection_need() {
-    journal_need
+    journal_need "${1:-}"
     [ "$journal_format" = HGAPPLICATION3 ] || fail 'No bound source projection' 5
     clock_now
-    [ "$boot" = "$journal_intent_boot" ] || fail 'Source projection requires cold-start reconciliation' 7
+    [ "$boot" = "$journal_intent_boot" ] || [ "$cold_projection_restore" = true ] ||
+        fail 'Source projection requires cold-start reconciliation' 7
 }
 projection_file_state() {
     projection_source_check
@@ -991,7 +1022,7 @@ projection_file_state() {
         *) fail 'Configuration changed outside the source projection' 7;; esac
 }
 projection_publish() {
-    projection_need
+    projection_need "$projection_role"
     case "$projection_role:$journal_state:$head_revision" in
         "apply:applying:$journal_target") projection_desired="$store/gen-$journal_target/public.conf";;
         "restore:restoring:$journal_base") projection_desired="$store/gen-$journal_target/source.conf";;
@@ -1020,7 +1051,10 @@ projection_publish() {
 }
 projection_observe_finish() {
     [ "$owner" = 0 ] || fail 'Production projection requires root' 2
-    projection_need
+    case "$command" in
+        restore-finish-projection) projection_need restore;;
+        *) projection_need;;
+    esac
     production_source_lock
     projection_file_state
     case "$command:$journal_state:$head_revision" in
@@ -1164,6 +1198,10 @@ case "$command" in
         [ "$#" -eq 0 ] && [ "$persistent_mode" = true ] && [ "$ddns_authority_enabled" = true ] && [ "$production_writes_enabled" = true ] || fail 'Runtime DDNS source is not ready' 2;;
     runtime-startup-snapshot-read)
         [ "$#" -eq 0 ] && [ "$persistent_mode" = true ] && [ "$startup_admission_enabled" = true ] || fail 'Startup source is not ready' 2;;
+    runtime-active-snapshot-read)
+        [ "$#" -eq 0 ] && [ "$persistent_mode:$native_editor_enabled:$startup_admission_enabled" = true:true:true ] || fail 'Current source is not ready' 2;;
+    startup-history-check)
+        [ "$#" -eq 0 ] && [ "$persistent_mode:$native_editor_enabled:$startup_admission_enabled" = true:true:true ] || fail 'Startup history is not ready' 2;;
     snapshot-read) [ "$#" -eq 0 ] && [ "$public_mode" = true ] || fail 'Private reader requires full schema' 2;;
     recover-application) [ "$#" -eq 0 ] && [ "$public_mode" = true ] || fail 'Recovery requires full schema' 2;;
     recover-fence)
@@ -1211,7 +1249,7 @@ esac
 open_store
 [ "$production_copy_mode" = false ] || production_copy_lock
 case "$command" in
-    runtime-ddns-snapshot-read|runtime-ddns-recovery-snapshot-read|runtime-startup-snapshot-read)
+    runtime-ddns-snapshot-read|runtime-ddns-recovery-snapshot-read|runtime-startup-snapshot-read|runtime-active-snapshot-read)
         need_initialized
         runtime_generation="$store/gen-$head_revision"
         private_file "$runtime_generation/source.conf" || fail 'Runtime DDNS requires a published ordinary generation' 7
@@ -1256,7 +1294,7 @@ case "$command" in
             exit 0;; esac
         journal_restore >/dev/null
         service_transition;;
-    writer-check)
+    writer-check|startup-history-check)
         # open_store already verified readiness while all three locks are held.
         printf '{"api_version":1,"prototype":true,"ok":true,"scope":"persistent-writer-barrier","write_ready":true}\n'
         ;;
@@ -1354,7 +1392,8 @@ case "$command" in
         fi
         ;;
     restore-finish|restore-finish-intent|restore-finish-projection)
-        need_initialized; journal_need
+        need_initialized
+        if [ "$command" = restore-finish-projection ]; then journal_need restore; else journal_need; fi
         [ "$journal_state" = restoring ] && [ "$head_revision" = "$journal_base" ] || fail 'Recovery acknowledgement is stale' 5
         [ "$command" != restore-finish-projection ] || projection_observe_finish
         intent_ack_need
@@ -1366,7 +1405,19 @@ case "$command" in
     recover-application)
         need_initialized
         [ "$journal_active" = true ] || fail 'No pending application' 5
-        persistent_anchor_bind
+        persistent_anchor_bind restore
+        if [ "$persistent_mode" = true ] && [ "$cold_projection_restore" = true ]; then
+            confirmation=$journal_token
+            production_source_lock
+            sample_service
+            [ "$request_was_running:$request_boot_enabled" = "0:$journal_boot_enabled" ] ||
+                fail 'Cold recovery requires a stopped service with matching boot intent' 7
+            projection_file_state
+            case "$journal_state" in
+                applied) [ "$projection_seen_digest" = "$projection_target_digest" ] || fail 'Committed projection changed' 7;;
+                restored) [ "$projection_seen_digest" = "$projection_base_digest" ] || fail 'Restored projection changed' 7;;
+            esac
+        fi
         case "$journal_state" in applied|restored)
             journal_close
             printf '{"api_version":1,"prototype":true,"ok":true,"revision":%s,"application_pending":false,"worker_acknowledged":true}\n' "$head_revision";;

@@ -12,15 +12,17 @@ from production_runtime import payload,stage,stage_package,stage_installed
 spec=importlib.util.spec_from_file_location('production_web',ROOT/'scripts/工程网页回归.py')
 web=importlib.util.module_from_spec(spec);spec.loader.exec_module(web)
 rpc,luci,STATE=web.rpc,web.luci,web.STATE
-BASE='/cgi-bin/luci/admin/services/homegate';PAGE=BASE+'/configuration'
+BASE='/cgi-bin/luci/admin/services/homegate';PAGE=BASE+'/maintenance'
 NGINX=ROOT/'build/nginx';FIXTURE=ROOT/'build/nginx-fixture';PROXY=False;INSTALLED=None
 WOL=ROOT/'build/wol';WOL_FIXTURE=ROOT/'build/wol-fixture';ACTIONS=False
 ACTION_GROUPS=('cli_actions','web_access_actions','web_maintenance_actions')
-FIRMWARE_JOB_GROUPS=('migration','backup','rollback','recovery','web_owner_refusal','cli_ddns','cli_ddns_unknown','cli_ddns_batch','daemon_ddns','daemon_proxy',
+FIRMWARE_JOB_GROUPS=('migration','backup','rollback','recovery','cold_config_recovery','web_owner_refusal','cli_ddns','cli_ddns_unknown','cli_ddns_batch','daemon_ddns','daemon_proxy',
                      'cli_acme','cli_acme_unknown','daemon_acme','web_acme','web_unknown','web_certificate')
 
-def setup_state(s, *, bin_ubus=False, switchable_setsid=False):
+def setup_state(s, *, bin_ubus=False, switchable_setsid=False, cold_config=False):
     web.setup_state(s)
+    if cold_config:
+        shutil.copyfile('/proc/sys/kernel/random/boot_id', s/'boot-id')
     if switchable_setsid:
         launcher=s/'fixture-setsid'
         launcher.write_text('#!/bin/sh\nexec /usr/sbin/busybox setsid "$@"\n')
@@ -196,7 +198,15 @@ class Native(web.Web):
         self.assertNotEqual(probe.returncode,0,probe.stdout)
     def test_migration(self):
         self.disable_fixture_setsid()
-        source,_=self.production_fixture();legacy=source.read_bytes();s=self.login();self.cfg('prepare',s)
+        source,_=self.production_fixture();legacy=source.read_bytes();s=self.login()
+        for retired in ('configuration','advanced_configuration'):
+            code,headers,body=self.cgi(BASE+'/'+retired,cookie=s[0])
+            self.assertEqual(code,302,body[:300])
+            self.assertTrue(headers['location'].endswith('/maintenance'),headers)
+        code,_,body=self.cgi(PAGE,cookie=s[0])
+        self.assertEqual(code,200,body[:300])
+        self.assertIn(b'id="hg-migrate-configuration" data-copied="0"',body)
+        self.cfg('prepare',s)
         p=self.cfg('production_copy_preview',s)['report'];self.assertEqual(p['operation'],'migration-source')
         self.api('configuration_api','apply',s,{'confirmation':p['confirmation'],'consent':'1'},expected=503)
         source.write_bytes(legacy+b'\n')
@@ -204,11 +214,17 @@ class Native(web.Web):
         source.write_bytes(legacy)
         d=self.cfg('production_copy_commit',s,confirmation=p['confirmation'],consent='1')['report'];self.assertTrue(d['migration_copied'])
         self.assertEqual(source.read_bytes(),legacy)
+        code,_,body=self.cgi(PAGE,cookie=s[0])
+        self.assertEqual(code,200,body[:300])
+        self.assertIn(b'id="hg-migrate-configuration" data-copied="1"',body)
         store=Path('/etc/homegate/transactions');generation=store/('gen-'+(store/'current').read_text().strip())
         self.assertEqual((generation/'legacy.conf').read_bytes(),legacy)
         self.assertEqual((generation/'credentials/cloudflare.dns_a.secret').read_bytes(),b'SECRET_SENTINEL')
         self.publish(s);self.assertNotIn(b'SECRET_SENTINEL',source.read_bytes())
         self.assertEqual(source.read_bytes(),self.backup(s).encode());self.assertFalse((store/'ddns-authority').exists())
+        code,_,body=self.cgi(PAGE,cookie=s[0])
+        self.assertEqual(code,200,body[:300])
+        self.assertNotIn(b'id="hg-migrate-configuration"',body)
         for p in store.rglob('*'):self.assertEqual(p.stat().st_mode&0o777,0o700 if p.is_dir() else 0o600)
         self.assertEqual(self.cli('version')['version'],'1.3.0-r'+(ROOT/'RELEASE').read_text().strip())
         self.verify_unchanged()
@@ -239,6 +255,18 @@ class Native(web.Web):
         self.cfg('backup_preview',s,backup=large);self.cfg('cancel',s)
         candidate=original.replace('DNS account','<script>changed</script>')
         self.assertNotEqual(candidate,original)
+        changed=original.replace('DNS account','Externally edited account').encode()
+        self.assertNotEqual(changed,before)
+        stale=self.cfg('backup_preview',s,backup=candidate)['report']
+        source.write_bytes(changed)
+        try:
+            self.api('configuration_api','apply',s,{'confirmation':stale['confirmation'],'consent':'1'},expected=503)
+            self.assertEqual(source.read_bytes(),changed)
+            self.assertEqual(self.cli('config-status')['revision'],revision)
+            self.assertFalse(Path('/etc/homegate/transactions/application').exists())
+        finally:
+            source.write_bytes(before)
+        self.cfg('cancel',s)
         p=self.cfg('backup_preview',s,backup=candidate)['report'];self.assertEqual(source.read_bytes(),before)
         self.api('configuration_api','apply',s,{'confirmation':p['confirmation']},expected=503)
         self.cfg('apply',s,confirmation=p['confirmation'],consent='1')
@@ -275,11 +303,126 @@ class Native(web.Web):
         self.assertEqual(source.read_bytes(),old.encode());self.assertTrue(Path('/etc/homegate/transactions/application').exists())
         tool.unlink();tool.symlink_to('busybox')
         self.cfg('finish',s,confirmation=handle,consent='1');self.assertIn('Recover account',self.backup(s))
+        published=source.read_bytes()
         p=self.cfg('backup_preview',s,backup=old)
-        tool.unlink();tool.write_text('#!/usr/sbin/ash\ncase "$1" in /etc/config/.homegate-projection.*) exit 1;; esac\nexec /usr/sbin/busybox fsync "$@"\n');tool.chmod(0o755)
-        self.api('configuration_api','apply',s,{'confirmation':p['report']['confirmation'],'consent':'1'},expected=503)
-        tool.unlink();tool.symlink_to('busybox');self.cfg('recover',s,consent='1')
-        self.assertIn('Recover account',self.backup(s));self.assertFalse(Path('/etc/homegate/transactions/application').exists());self.verify_unchanged()
+        cat=STATE/'tools/cat'
+        cat.write_text("""#!/usr/sbin/ash
+case "$1" in
+    /etc/homegate/transactions/gen-*/public.conf)
+        output=$(/usr/bin/readlink "/proc/$$/fd/1") || exit 1
+        case "$output" in
+            /etc/config/.homegate-projection.*)
+                /usr/sbin/busybox head -c 16 "$1" || exit 1
+                exec /usr/sbin/busybox cat "$@" >/dev/full 2>/teststate/projection-write-error
+                ;;
+        esac
+        ;;
+esac
+exec /usr/sbin/busybox cat "$@"
+""")
+        cat.chmod(0o755)
+        store=Path('/etc/homegate/transactions')
+        try:
+            status,_,body=self.cgi(BASE+'/configuration_api/apply',cookie=s[0],verb='POST',fields={
+                'token':s[1],'confirmation':p['report']['confirmation'],'consent':'1'})
+            self.assertEqual(status,503)
+            self.assertIn('No space left on device',(STATE/'projection-write-error').read_text())
+            self.assertTrue(json.loads(body)['report']['application_pending'])
+            self.assertEqual(source.read_bytes(),published)
+            self.assertTrue((store/'application').is_file())
+            self.assertEqual(list(source.parent.glob('.homegate-projection.*')),[])
+        finally:
+            cat.unlink()
+        self.cfg('recover',s,consent='1')
+        self.assertEqual(source.read_bytes(),published)
+        self.assertEqual(self.backup(s).encode(),published)
+        self.assertFalse((store/'application').exists())
+        generation=store/('gen-'+(store/'current').read_text().strip())
+        self.assertEqual((generation/'credentials/cloudflare.dns_a.secret').read_bytes(),b'SECRET_SENTINEL')
+        retry=self.cfg('backup_preview',s,backup=old)['report']
+        self.cfg('apply',s,confirmation=retry['confirmation'],consent='1')
+        self.assertEqual(source.read_bytes(),old.encode())
+        self.assertEqual(self.backup(s),old)
+        self.verify_unchanged()
+    def test_cold_config_recovery(self):
+        self.disable_fixture_setsid()
+        session = self.configured()
+        source = Path('/etc/config/homegate')
+        store = Path('/etc/homegate/transactions')
+        journal = store/'application'
+        before = source.read_bytes()
+        baseline = (store/'current').read_bytes()
+        candidate = before.decode().replace('DNS account', 'Interrupted import')
+        preview = self.cfg('backup_preview', session, backup=candidate)['report']
+
+        # The projection was renamed, but its durability has not been confirmed.
+        sync = STATE/'tools/fsync'
+        sync.unlink()
+        sync.write_text("""#!/usr/sbin/ash
+case "$1:$2" in /etc/config/homegate:/etc/config) exit 1;; esac
+exec /usr/sbin/busybox fsync "$@"
+""")
+        sync.chmod(0o755)
+        try:
+            status, _, body = self.cgi(BASE+'/configuration_api/apply', cookie=session[0], verb='POST', fields={
+                'token': session[1], 'confirmation': preview['confirmation'], 'consent': '1'})
+            self.assertEqual(status, 503)
+            report = json.loads(body)['report']
+            self.assertTrue(report['application_pending'])
+            self.assertEqual(source.read_bytes(), candidate.encode())
+        finally:
+            sync.unlink()
+            sync.symlink_to('busybox')
+
+        retained = journal.read_bytes()
+        (STATE/'boot-id').write_text('aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee\n')
+        runtime = Path('/var/run/homegate')
+        runtime.rename(runtime.with_name('homegate-before-reboot'))
+        subprocess.run(['/etc/init.d/homegate', 'start'], check=True, timeout=20)
+        self.assertTrue((runtime/'frontend.lock').is_file())
+        self.assertFalse((STATE/'procd-api').exists())
+        self.assertEqual(source.read_bytes(), candidate.encode())
+        self.assertEqual(journal.read_bytes(), retained)
+        self.api('configuration_api', 'finish', session,
+                 {'confirmation': report['apply_handle'], 'consent': '1'}, expected=503)
+        self.assertEqual(journal.read_bytes(), retained)
+
+        foreign = candidate.replace('Interrupted import', 'Externally edited').encode()
+        source.write_bytes(foreign)
+        pointer = (store/'current').read_bytes()
+        self.api('configuration_api', 'recover', session, {'consent': '1'}, expected=503)
+        self.assertEqual(source.read_bytes(), foreign)
+        self.assertEqual((store/'current').read_bytes(), pointer)
+        self.assertEqual(journal.read_bytes(), retained)
+        source.write_bytes(candidate.encode())
+
+        anchor_meta = store/'application-anchor-meta'
+        binding = anchor_meta.read_bytes()
+        anchor_meta.write_bytes(binding.replace(b'HGRECOVERY1', b'HGRECOVERY2'))
+        self.api('configuration_api', 'recover', session, {'consent': '1'}, expected=503)
+        self.assertEqual((store/'current').read_bytes(), pointer)
+        self.assertEqual(journal.read_bytes(), retained)
+        anchor_meta.write_bytes(binding)
+
+        # A disabled service may never run its init start entry after reboot.
+        runtime.rename(runtime.with_name('homegate-after-refused-start'))
+        code, _, body = self.cgi(BASE+'/maintenance',cookie=session[0])
+        self.assertEqual(code,200);self.assertIn(b'id="hg-recover-application"',body)
+        self.cfg('recover', session, consent='1')
+        code, _, body = self.cgi(BASE+'/maintenance',cookie=session[0])
+        self.assertEqual(code,200);self.assertNotIn(b'id="hg-recover-application"',body)
+        self.assertEqual(source.read_bytes(), before)
+        self.assertEqual((store/'current').read_bytes(), baseline)
+        self.assertFalse(journal.exists())
+        self.assertEqual((store/('gen-'+baseline.decode().strip())/'credentials/cloudflare.dns_a.secret').read_bytes(),
+                         b'SECRET_SENTINEL')
+        self.assertFalse((STATE/'procd-api').exists())
+        self.assertFalse(Path('/etc/rc.d/S95homegate').exists())
+        self.assertFalse(self.cli('config-status')['application_pending'])
+        next_preview = self.cfg('backup_preview', session, backup=candidate)
+        self.assertTrue(next_preview['report']['confirmation'])
+        self.cfg('cancel', session)
+        self.verify_unchanged()
     def test_security(self):
         s=self.configured();source=Path('/etc/config/homegate');before=source.read_bytes();old=self.backup(s)
         self.api('configuration_api','backup_preview',None,{'backup':old},expected=403)
@@ -765,6 +908,21 @@ fi
             fcntl.flock(lease,fcntl.LOCK_EX)
             p=subprocess.run(['/usr/bin/homegate','status'],capture_output=True,timeout=8);d=json.loads(p.stdout);self.assertEqual(p.returncode,0);self.assertFalse(d['ok']);self.assertFalse(d['service']['healthy']);self.assertTrue(d['state_unknown'])
             p=subprocess.run(['/usr/bin/homegate','check'],capture_output=True,timeout=8);self.assertEqual(p.returncode,1);self.assertFalse(json.loads(p.stdout)['ok'])
+        lock=Path('/var/run/homegate/native-service.lock')
+        lock.touch(mode=0o600)
+        with lock.open('rb') as lease:
+            fcntl.flock(lease,fcntl.LOCK_EX)
+            # An owner lock alone cannot prove that the service is running.
+            p=subprocess.run(['/usr/bin/homegate','status'],capture_output=True,timeout=8)
+            d=json.loads(p.stdout)
+            fields(d,'status')
+            self.assertEqual(p.returncode,0)
+            self.assertFalse(d['ok'])
+            self.assertTrue(d['state_unknown'])
+            self.assertEqual(d['failure_step'],'status-observation')
+            p=subprocess.run(['/usr/bin/homegate','check'],capture_output=True,timeout=8)
+            self.assertEqual(p.returncode,1)
+            self.assertTrue(json.loads(p.stdout)['state_unknown'])
         for value in ['+00001024','00000000000000000000000000000000000001','20000']:
             self.assertEqual(self.cli('log-events',value)['events'],[])
         for value in ['0','20001','1e2','1.0','+','-1','0000','0x10',' 1']:
@@ -1088,7 +1246,7 @@ else:
             state=root/'running';state.write_text(str(running));blocked=root/'blocked'
             cli=root/'cli';cli.write_text('#!/usr/sbin/ash\ncase "$1" in status) printf \'{"api_version":1,"service":{"running":%s}}\\n\' "$(if [ "$(cat '+str(state)+')" = 1 ];then echo true;else echo false;fi)";;service-stop) [ ! -e '+str(blocked)+' ] || exit 4;printf 0 > '+str(state)+';;service-quiescent) [ "$(cat '+str(state)+')" = 0 ];;*) exit 0;;esac\n');cli.chmod(0o755)
             def mapped(raw):
-                pairs=[('/etc/.homegate-transition',str(root/'transition')),('/usr/lib/opkg/info',str(root/'info')),('/etc/homegate',str(data)),('/etc/config',str(config)),('/etc/rc.d',str(root/'etc/rc.d')),('/var/run/homegate',str(run)),('/var/log/homegate.log',str(root/'log/homegate.log')),('/etc/init.d/homegate',str(root/'etc/init.d/homegate')),('/usr/bin/homegate',str(cli)),('/usr/libexec/homegate/native-package.lua',str(root/'codec.lua'))]
+                pairs=[('/etc/.homegate-transition',str(root/'transition')),('/etc/.homegate-r',str(root/'etc/.homegate-r')),('/tmp/homegate-web-',str(root/'tmp/homegate-web-')),('/tmp/homegate-luci-',str(root/'tmp/homegate-luci-')),('/tmp/.uci',str(root/'tmp/.uci')),('/usr/lib/opkg/info',str(root/'info')),('/etc/homegate',str(data)),('/etc/config',str(config)),('/etc/rc.d',str(root/'etc/rc.d')),('/var/run/homegate',str(run)),('/var/log/homegate.log',str(root/'log/homegate.log')),('/etc/init.d/homegate',str(root/'etc/init.d/homegate')),('/usr/bin/homegate',str(cli)),('/usr/libexec/homegate/native-package.lua',str(root/'codec.lua'))]
                 for n,(old,new) in enumerate(pairs):raw=raw.replace(old,'@@FIXTURE_PATH_'+str(n)+'@@')
                 for n,(old,new) in enumerate(pairs):raw=raw.replace('@@FIXTURE_PATH_'+str(n)+'@@',new)
                 return raw
@@ -1098,8 +1256,18 @@ else:
             init=root/'etc/init.d/homegate';init.write_text('#!/usr/sbin/ash\n'+mapped((ROOT/'packaging/production/homegate.init').read_text())+'\nprocd_open_instance(){ :; };procd_set_param(){ :; };procd_close_instance(){ printf 1 > '+str(state)+'; };json_init(){ :; };json_add_string(){ :; };json_dump(){ echo "{}"; };ubus(){ [ "$6" = delete ] && printf "%s\\n" delete >> '+str(root/'procd-log')+'; };case "$1" in enable) enable;;disable) disable;;enabled) enabled;;start) start_service;;stop) stop_service;;package_stopped) package_stopped;;esac\n');init.chmod(0o755)
             def call(args,ok=True,env=None):
                 p=subprocess.run(args,capture_output=True,timeout=10,env=env);self.assertEqual(p.returncode==0,ok,(args,p.returncode,p.stderr[-250:]));return p
+            scratch=root/'tmp';(scratch/'.uci').mkdir(parents=True)
+            owned=[root/'etc/.homegate-r217-before-r218',scratch/('homegate-web-'+'a'*32),scratch/('homegate-luci-'+'b'*32),run.with_name('homegate-audit'),run.with_name('homegate-proxy-body')]
+            for path in owned:
+                path.mkdir(mode=0o700);(path/'fixture').write_text('private state')
+            for path in (config/'.homegate-projection.103',config/'homegate.opkg',config/'homegate-opkg',scratch/'.uci/homegate'):
+                path.write_text('private settings');path.chmod(0o600);owned.append(path)
+            foreign_checkpoint=root/'etc/.homegate-r217-before-r218-copy';foreign_checkpoint.mkdir(mode=0o700)
+            (foreign_checkpoint/'keep').write_text('keep')
+            checkpoint_link=root/'etc/.homegate-r310-before-r311';checkpoint_link.symlink_to(foreign_checkpoint)
             if boot:call([str(init),'enable'])
             call([str(hook),'prerm','upgrade'],env={**os.environ,'PKG_UPGRADE':'1'})
+            call([str(postrm),'upgrade']);self.assertTrue(all(path.exists() for path in owned))
             self.assertFalse(source.exists());self.assertEqual((data/'package-config').stat().st_ino,inode)
             source.write_bytes(factory);source.chmod(0o600);call([str(hook),'postinst'])
             self.assertEqual(source.stat().st_ino,inode);self.assertEqual(source.read_bytes(),b'PRIVATE_CONFIG_SENTINEL\n')
@@ -1130,6 +1298,7 @@ else:
             foreign=root/'foreign-lease';foreign.write_text('KEEP');foreign.chmod(0o600)
             call(['/usr/sbin/ash','-c','exec 9>>"$1"; flock -n 9; "$2" disable','sdk-default',str(foreign),str(init)],ok=False);self.assertEqual(foreign.read_text(),'KEEP')
             call([str(hook),'prerm','remove']);call([str(postrm),'remove']);self.assertFalse(data.exists());self.assertFalse(source.exists());self.assertFalse(transition.exists())
+            self.assertFalse(any(path.exists() for path in owned));self.assertTrue(checkpoint_link.is_symlink());self.assertEqual((foreign_checkpoint/'keep').read_text(),'keep')
         self.verify_unchanged()
 
     def web_request(self,route,form=None,write=False):
@@ -1139,6 +1308,18 @@ else:
             if INSTALLED:print('PACKAGE_ROUTE:'+json.dumps({'route':route,'write':write,'ok':result.get('ok'),'fields':sorted(result)}),flush=True)
             return result
         finally:p.unlink()
+    def maintenance_job(self,route,session,**fields):
+        sid,token=session
+        code,_,body=self.exchange(
+            path=BASE+'/'+route,verb='POST',
+            headers={'Cookie':'sysauth='+sid,'Content-Type':'application/x-www-form-urlencoded','Accept':'application/json'},
+            raw=urlencode({'token':token,**fields}).encode())
+        self.assertEqual(code,200,body[:300])
+        submitted=json.loads(body)
+        self.assertTrue(submitted['ok'] and submitted['pending'],submitted)
+        result=self.web_wait(submitted['job'],seconds=35)
+        self.assertTrue(result['ok'],result)
+        return result
     def web_wait(self,job,ack=True,seconds=18):
         start=time.monotonic()
         while time.monotonic()-start<seconds:
@@ -1214,9 +1395,13 @@ else:
         self.verify_unchanged()
     def test_web_http(self):
         s=self.configured();sid,token=s
+        code,headers,_=self.cgi(BASE+'/configuration',cookie=sid)
+        self.assertEqual(code,302);self.assertTrue(headers['location'].endswith(BASE+'/maintenance'),headers)
         for route in ['overview','public','wol','maintenance']:
             code,_,body=self.cgi(BASE+'/'+route,cookie=sid);self.assertEqual(code,200,(route,body[:300]));self.assertNotIn(b'SECRET_SENTINEL',body)
             self.assertIn(b'<form',body,(route,body[:200]))
+            self.assertIn(b'/homegate/native-operations.js',body)
+            self.assertNotIn(b'hg-recover-application',body)
             if route=='overview':
                 self.assertIn(b'id="homegate-basic-form"',body)
                 self.assertIn(b'id="hg_service"',body)
@@ -1234,11 +1419,83 @@ else:
         print('NATIVE_WEB_RESULT:'+json.dumps(result),flush=True)
         code,_,body=self.cgi(BASE+'/compat_job/'+job,cookie=sid);self.assertEqual(code,200);self.assertFalse(json.loads(body)['pending'])
         code,_,_=self.cgi(BASE+'/compat_ack/'+job,cookie=sid,verb='POST',fields={'token':token});self.assertEqual(code,200)
-        before=Path('/etc/config/homegate').read_bytes()
-        code,_,body=self.exchange(path=BASE+'/config_import',verb='POST',headers={'Cookie':'sysauth='+sid,'Content-Type':'application/x-www-form-urlencoded','Accept':'application/json'},raw=urlencode({'token':token,'config_payload':self.backup(s)}).encode())
-        self.assertEqual(code,200,body[:300]);submitted=json.loads(body);self.assertTrue(submitted['pending'])
-        result=self.web_wait(submitted['job']);self.assertTrue(result['ok'],result);preview=json.loads(result['body']);self.assertTrue(preview['ok']);self.assertTrue(preview['can_commit']);self.assertEqual(Path('/etc/config/homegate').read_bytes(),before)
-        print('NATIVE_WEB_PREVIEW:'+json.dumps(preview),flush=True)
+        source=Path('/etc/config/homegate');before=source.read_bytes()
+        exported=self.maintenance_job('config_export',s)
+        self.assertEqual(exported['headers']['Content-Disposition'],'attachment; filename="homegate-config-backup.conf"')
+        self.assertIn('# secrets: omitted',exported['body'])
+        self.assertNotIn('SECRET_SENTINEL',exported['body'])
+        candidate=exported['body'].replace('DNS account','Imported through maintenance')
+        self.assertNotEqual(candidate,exported['body'])
+        preview=json.loads(self.maintenance_job('config_import',s,config_payload=candidate,mode='check')['body'])
+        self.assertTrue(preview['ok'] and preview['can_commit'],preview)
+        self.assertTrue(preview['changes'])
+        self.assertEqual(source.read_bytes(),before)
+        rejected=json.loads(self.maintenance_job('config_import',s,config_payload=candidate,mode='restore',
+                             confirmation='invalid')['body'])
+        self.assertFalse(rejected['ok'])
+        self.assertEqual(source.read_bytes(),before)
+        restored=json.loads(self.maintenance_job('config_import',s,config_payload=candidate,mode='restore',
+                             confirmation=preview['confirmation'])['body'])
+        self.assertTrue(restored['ok'] and restored['restored'],restored)
+        self.assertFalse(restored['services_enabled'])
+        self.assertIn(b'Imported through maintenance',source.read_bytes())
+        self.assertNotIn(b'SECRET_SENTINEL',source.read_bytes())
+        store=Path('/etc/homegate/transactions')
+        generation=store/('gen-'+(store/'current').read_text().strip())
+        self.assertEqual((generation/'credentials/cloudflare.dns_a.secret').read_bytes(),b'SECRET_SENTINEL')
+        self.assertFalse(self.cli('status')['service']['running'])
+        before=source.read_bytes()
+        # A damaged historical manifest must not affect page reads. A write
+        # still performs the original full history check before publishing.
+        pointer=(store/'current').read_bytes()
+        old=store/'gen-1'/'manifest';raw=old.read_bytes();old.write_bytes(b'bad checksum\n')
+        try:
+            code,_,body=self.cgi(BASE+'/overview',cookie=sid)
+            self.assertEqual(code,200,body[:300]);self.assertIn(b'hg_service',body)
+            rejected=self.web_request('basic_apply',{'mode':'save','https_port':'446'},True)
+            self.assertFalse(self.web_wait(rejected['job'])['ok'])
+            self.assertEqual((store/'current').read_bytes(),pointer)
+            self.assertEqual(Path('/etc/config/homegate').read_bytes(),before)
+        finally:
+            old.write_bytes(raw)
+        # Interrupt an import submitted by the maintenance form after rename.
+        # Use the recovery form rendered by the same page to roll it back.
+        candidate=source.read_text().replace('Imported through maintenance','Interrupted maintenance import')
+        preview=json.loads(self.maintenance_job('config_import',s,config_payload=candidate,mode='check')['body'])
+        self.assertTrue(preview['ok'],preview)
+        sync=STATE/'tools/fsync'
+        sync.unlink()
+        sync.write_text("""#!/usr/sbin/ash
+case "$1:$2" in /etc/config/homegate:/etc/config) exit 1;; esac
+exec /usr/sbin/busybox fsync "$@"
+""")
+        sync.chmod(0o755)
+        try:
+            report=json.loads(self.maintenance_job('config_import',s,config_payload=candidate,mode='restore',
+                              confirmation=preview['confirmation'])['body'])
+            self.assertFalse(report['ok'])
+            self.assertIn(b'Interrupted maintenance import',source.read_bytes())
+            self.assertTrue((store/'application').is_file())
+        finally:
+            sync.unlink()
+            sync.symlink_to('busybox')
+        code,_,body=self.cgi(BASE+'/maintenance',cookie=sid)
+        self.assertEqual(code,200,body[:300])
+        form=re.search(rb'<form[^>]+id="hg-recover-application"[^>]+action="([^"]+)"[^>]*>(.*?)</form>',body,re.S)
+        self.assertIsNotNone(form)
+        recovery_fields={key.decode():value.decode() for key,value in re.findall(rb'name="([^"]+)" value="([^"]*)"',form[2])}
+        self.assertEqual(recovery_fields,{'token':token,'consent':'1'})
+        code,_,body=self.cgi(form[1].decode(),cookie=sid,verb='POST',fields=recovery_fields)
+        self.assertEqual(code,200,body[:300])
+        self.assertTrue(json.loads(body)['ok'])
+        self.assertEqual(source.read_bytes(),before)
+        self.assertEqual((store/'current').read_bytes(),pointer)
+        self.assertEqual((generation/'credentials/cloudflare.dns_a.secret').read_bytes(),b'SECRET_SENTINEL')
+        self.assertFalse((store/'application').exists())
+        self.assertFalse(self.cli('status')['service']['running'])
+        code,_,body=self.cgi(BASE+'/maintenance',cookie=sid)
+        self.assertEqual(code,200,body[:300])
+        self.assertNotIn(b'id="hg-recover-application"',body)
         self.verify_unchanged()
     def test_web_security(self):
         self.configured();p=Path('/tmp/web-invalid');before=Path('/etc/config/homegate').read_bytes()
@@ -1321,6 +1578,53 @@ else:
         d=self.cli('web-job',job);self.assertTrue(d['pending']);self.assertTrue(d['recovery_required']);self.assertFalse(d['owner_running'])
         self.assertFalse(self.cli('web-job-ack',job)['ok']);self.assertFalse((root/'result').exists())
 
+    def test_web_save_then_disable(self):
+        s=self.configured()
+        store=Path('/etc/homegate/transactions')
+        head=int((store/'current').read_text())
+        for revision in range(head+1,87):
+            shutil.copytree(store/f'gen-{head}',store/f'gen-{revision}')
+        def timed_apply(fields, label):
+            before=time.monotonic()
+            job=self.web_request('basic_apply',fields,True)['job']
+            result=self.web_wait(job,seconds=120)
+            print('APPLY_TIMING:'+json.dumps({'action':label,'seconds':round(time.monotonic()-before,2),
+                                             'ok':result['ok']}),flush=True)
+            return result
+        # Production status uses the native coordinator. Fail the test if a
+        # save or status check still invokes the legacy observation launcher.
+        lua=STATE/'tools/lua'
+        original_lua=lua.read_text()
+        lua.write_text(original_lua.replace('#!/bin/sh\n', '''#!/bin/sh
+case "$1:$2" in */native-web-session.lua:observe-config-health) touch /teststate/legacy-health-called; exit 126;; esac
+if [ "${1##*/}:$2:${3:-}" = worker-process.lua:pause:50 ]; then
+    /usr/bin/lua5.1 /teststate/lua-runner.lua "$@" || exit $?
+    touch /teststate/observer-short-pause
+    exit 0
+fi
+''',1))
+        try:
+            result=self.web_wait(self.web_request('basic_apply',{'enabled':'1','mode':'save'},True)['job'],seconds=25)
+            self.assertTrue(result['ok'] and result['configuration_saved'],result)
+            status=self.cli('status');self.assertFalse(status['service']['running'])
+            result=timed_apply({'mode':'apply'},'disable-after-save')
+            self.assertTrue(result['ok'],result)
+            self.assertFalse(self.cli('lifecycle-status')['main_enabled'])
+            response=self.web_request('api/status')
+            status=json.loads(response['body'])
+            self.assertTrue(status['ok'],status)
+            self.assertFalse(status['service']['running'])
+            self.assertFalse(status['service']['enabled'])
+            self.assertFalse(status.get('state_unknown',False))
+            self.assertFalse(list(Path('/var/run/homegate').glob('.health-read-*')))
+            self.assertFalse((STATE/'legacy-health-called').exists())
+            self.assertEqual(subprocess.run(['/etc/init.d/homegate','enabled'],timeout=5).returncode,1)
+            self.assertTrue(timed_apply({'mode':'apply','enabled':'1'},'enable')['runtime_applied'])
+            self.assertTrue(timed_apply({'mode':'apply'},'disable-while-running')['ok'])
+            self.assertTrue((STATE/'observer-short-pause').exists(), 'Service observer fell back to whole-second polling')
+        finally:
+            lua.write_text(original_lua)
+        self.verify_unchanged()
     def test_web_apply(self):
         s=self.configured()
         receipt=Path('/var/run/homegate/native-service.json')
@@ -1369,6 +1673,13 @@ esac
             import re
             code,_,body=self.cgi(BASE+'/basic_apply',cookie=s[0],verb='POST',fields={'token':s[1],'enabled':'1','mode':'apply','https_port':'447'});self.assertEqual(code,200)
             job=re.search(rb"var id='([0-9a-f]{32})'",body).group(1).decode()
+            limit=time.monotonic()+30
+            while True:
+                pending=self.cli('web-job-status',job)
+                if pending.get('configuration_saved'):
+                    self.assertTrue(pending['pending']);break
+                self.assertTrue(pending['pending'] and time.monotonic()<limit,pending)
+                time.sleep(.2)
             result=self.web_wait(job,seconds=45);self.assertTrue(result['ok'],result);self.assertTrue(result['runtime_applied'])
             self.assertTrue((STATE/'web-aged-clock').exists())
             self.assertEqual((STATE/'web-start-calls').read_text().splitlines(),['start'])
@@ -1449,6 +1760,19 @@ case "$parent" in *HGWEBEXIT*) touch /teststate/web-stop-slept;; esac
         p=self.cfg('backup_preview',s,backup=candidate)['report'];self.cfg('apply',s,confirmation=p['confirmation'],consent='1')
         form={'mode':'save','public_service_count':'1','public_service_1_domain':'example.test','public_service_1_target':'http://127.0.0.1:'+str(server.server_port),'public_service_1_provider':'cloudflare','public_service_1_enabled':'1','public_service_1_https':'0'}
         result=self.web_wait(self.web_request('public_apply',form,True)['job']);self.assertTrue(result['ok'],result)
+        result=self.web_wait(self.web_request('basic_apply',{'enabled':'1','mode':'save'},True)['job']);self.assertTrue(result['ok'],result)
+        source=Path('/etc/config/homegate');before=source.read_bytes()
+        self.assertEqual(self.web_request('overview')['data']['main']['enabled'],'1')
+        # A failed startup plan must preserve the already saved settings and
+        # identify the failed stage, including when Apply has no new edits.
+        plan=Path('/etc/homegate/native-service-plan');plan.symlink_to(STATE/'foreign-private')
+        try:
+            result=self.web_wait(self.web_request('basic_apply',{'enabled':'1','mode':'apply'},True)['job'],seconds=45)
+            self.assertFalse(result['ok'],result);self.assertTrue(result['configuration_saved'],result)
+            self.assertEqual(result['failure_stage'],'runtime-plan',result)
+            self.assertIn('启动计划',result['error']);self.assertEqual(source.read_bytes(),before)
+        finally:
+            plan.unlink()
         result=self.web_wait(self.web_request('basic_apply',{'enabled':'1','mode':'apply'},True)['job'],seconds=30);self.assertTrue(result['ok'],result)
         conn=http.client.HTTPConnection('127.0.0.1',10080,timeout=5);conn.request('GET','/',headers={'Host':'example.test'});response=conn.getresponse();self.assertEqual(response.status,200);self.assertEqual(response.read(),b'LEGACY_WEB_NATIVE_PROXY');conn.close()
         self.cli('service-stop','--confirm');self.wait_service(lambda d:d['state']=='stopped');self.cli('service-quiescent');self.verify_unchanged()
@@ -1560,7 +1884,7 @@ class Deployment(unittest.TestCase):
                 dependencies=('homegate-core (= '+version+')' if part=='web' else
                               'homegate-core (= '+version+'), luci-app-homegate (= '+version+')' if part=='translation' else 'busybox')
                 control=[('control',('Package: '+name+'\nVersion: '+version+'\nArchitecture: all\nDepends: '+dependencies+'\n').encode(),0o644)]
-                hooks={'core':('preinst','prerm','postinst','postrm'),'web':('postinst',)}
+                hooks={'core':('preinst','prerm','postinst','postrm'),'web':('postinst','postrm')}
                 for hook in hooks.get(part,()):
                     definition=make.split(f'define Package/{name}/{hook}\n',1)[1].split('\nendef',1)[0]
                     body_bytes=(definition.replace('$$','$').strip()+'\n').encode()
@@ -1649,7 +1973,7 @@ class Deployment(unittest.TestCase):
 
 def main():
     global NGINX,FIXTURE,PROXY,INSTALLED,WOL,WOL_FIXTURE,ACTIONS
-    p=argparse.ArgumentParser();p.add_argument('--runtime-dir',type=Path,default=ROOT/'build/rpcd');p.add_argument('--http-runtime-dir',type=Path,default=ROOT/'build/uhttpd');p.add_argument('--luci-runtime-dir',type=Path,default=ROOT/'build/luci');p.add_argument('--nginx-runtime-dir',type=Path,default=NGINX);p.add_argument('--nginx-fixture-dir',type=Path,default=FIXTURE);p.add_argument('--wol-runtime-dir',type=Path,default=WOL);p.add_argument('--wol-fixture-dir',type=Path,default=WOL_FIXTURE);p.add_argument('--installed-root',type=Path);p.add_argument('--inside-net');p.add_argument('--inside-uid');p.add_argument('--group',choices=['deployment','migration','backup','rollback','recovery','security','diagnostics','daemon','daemon_ddns','daemon_source','daemon_security','daemon_web','daemon_acme','daemon_acme_unknown','daemon_proxy','package_source','cli_compat','cli_acme','cli_ca_logs','cli_acme_unknown','cli_acme_all','transition_source','transition_identity','web_forms','web_http','web_security','web_public','web_certificate','web_acme','web_unknown','web_admission','web_apply','cert_adopt','cert_ownership','cli_arity','web_owner_refusal','cert_purge_resume','web_reapply','web_apply_ddns','web_apply_proxy','cert_adopt_acme','cli_reports','cli_selftest','cli_ddns','cli_ddns_unknown','cli_ddns_batch','cli_queue','cli_actions','web_access_actions','web_maintenance_actions','cli_firewall','daemon_component_failure']);a=p.parse_args()
+    p=argparse.ArgumentParser();p.add_argument('--runtime-dir',type=Path,default=ROOT/'build/rpcd');p.add_argument('--http-runtime-dir',type=Path,default=ROOT/'build/uhttpd');p.add_argument('--luci-runtime-dir',type=Path,default=ROOT/'build/luci');p.add_argument('--nginx-runtime-dir',type=Path,default=NGINX);p.add_argument('--nginx-fixture-dir',type=Path,default=FIXTURE);p.add_argument('--wol-runtime-dir',type=Path,default=WOL);p.add_argument('--wol-fixture-dir',type=Path,default=WOL_FIXTURE);p.add_argument('--installed-root',type=Path);p.add_argument('--inside-net');p.add_argument('--inside-uid');p.add_argument('--group',choices=['deployment','migration','backup','rollback','recovery','cold_config_recovery','security','diagnostics','daemon','daemon_ddns','daemon_source','daemon_security','daemon_web','daemon_acme','daemon_acme_unknown','daemon_proxy','package_source','cli_compat','cli_acme','cli_ca_logs','cli_acme_unknown','cli_acme_all','transition_source','transition_identity','web_forms','web_http','web_security','web_public','web_certificate','web_acme','web_unknown','web_admission','web_apply','web_save_then_disable','cert_adopt','cert_ownership','cli_arity','web_owner_refusal','cert_purge_resume','web_reapply','web_apply_ddns','web_apply_proxy','cert_adopt_acme','cli_reports','cli_selftest','cli_ddns','cli_ddns_unknown','cli_ddns_batch','cli_queue','cli_actions','web_access_actions','web_maintenance_actions','cli_firewall','daemon_component_failure']);a=p.parse_args()
     NGINX=a.nginx_runtime_dir.resolve();FIXTURE=a.nginx_fixture_dir.resolve();PROXY=a.group in ['daemon_proxy','web_apply_proxy','cli_firewall','daemon_component_failure'];INSTALLED=a.installed_root.resolve() if a.installed_root else None;WOL=a.wol_runtime_dir.resolve();WOL_FIXTURE=a.wol_fixture_dir.resolve();ACTIONS=a.group in ACTION_GROUPS
     if a.group=='deployment':return 0 if unittest.TextTestRunner(verbosity=2).run(unittest.defaultTestLoader.loadTestsFromTestCase(Deployment)).wasSuccessful() else 1
     rpc.WORK,luci.HTTP,luci.LUA=a.runtime_dir.resolve(),a.http_runtime_dir.resolve(),a.luci_runtime_dir.resolve();web.BASE,web.PAGE,luci.BASE,luci.PAGE=BASE,PAGE,BASE,PAGE
@@ -1662,7 +1986,7 @@ def main():
                     assert hashlib.sha256(Path('/'+name).read_bytes()).hexdigest()==h,name
             print('PACKAGE_EXECUTION:'+json.dumps({'installed_root':str(INSTALLED),'verified_files':len(receipt['files_sha256']),'SDK_translation_bytes_verified':True,'AArch64_dependency_binaries_executed':False}),flush=True)
         return 0 if unittest.TextTestRunner(verbosity=2).run(unittest.TestSuite([Native('test_'+a.group)])).wasSuccessful() else 1
-    for group in [a.group] if a.group else ['migration','backup','rollback','recovery','security','diagnostics','daemon','daemon_ddns','daemon_source','daemon_security','daemon_web','daemon_acme','daemon_acme_unknown','daemon_proxy','package_source','cli_compat','cli_acme','cli_ca_logs','cli_acme_unknown','cli_acme_all','transition_source','transition_identity','web_forms','web_http','web_security','web_public','web_certificate','web_acme','web_unknown','web_admission','web_apply','cert_adopt','cert_ownership','cli_arity','web_owner_refusal','cert_purge_resume','web_reapply','web_apply_ddns','web_apply_proxy','cert_adopt_acme','cli_reports','cli_selftest','cli_ddns','cli_ddns_unknown','cli_ddns_batch','cli_queue','cli_actions','web_access_actions','web_maintenance_actions','cli_firewall','daemon_component_failure']:
+    for group in [a.group] if a.group else ['migration','backup','rollback','recovery','cold_config_recovery','security','diagnostics','daemon','daemon_ddns','daemon_source','daemon_security','daemon_web','daemon_acme','daemon_acme_unknown','daemon_proxy','package_source','cli_compat','cli_acme','cli_ca_logs','cli_acme_unknown','cli_acme_all','transition_source','transition_identity','web_forms','web_http','web_security','web_public','web_certificate','web_acme','web_unknown','web_admission','web_apply','web_save_then_disable','cert_adopt','cert_ownership','cli_arity','web_owner_refusal','cert_purge_resume','web_reapply','web_apply_ddns','web_apply_proxy','cert_adopt_acme','cli_reports','cli_selftest','cli_ddns','cli_ddns_unknown','cli_ddns_batch','cli_queue','cli_actions','web_access_actions','web_maintenance_actions','cli_firewall','daemon_component_failure']:
         PROXY=group in ['daemon_proxy','web_apply_proxy','cli_firewall','daemon_component_failure']
         ACTIONS=group in ACTION_GROUPS
         if ACTIONS:
@@ -1672,9 +1996,9 @@ def main():
             spec=importlib.util.spec_from_file_location('native_nginx',ROOT/'scripts/prepare-nginx.py');runtime=importlib.util.module_from_spec(spec);spec.loader.exec_module(runtime);runtime.validate_runtime(NGINX)
             runtime.validate_fixture(FIXTURE)
         result=rpc.isolated(rpc.WORK,guest_script=Path(__file__).resolve(),extra_ro=((luci.HTTP,luci.LUA,NGINX,FIXTURE) if PROXY else (luci.HTTP,luci.LUA))+((INSTALLED,) if INSTALLED else ())+((WOL,WOL_FIXTURE) if ACTIONS else ()),
-          extra_mounts=lambda s:(((s/'luci-library',luci.LUA/'prefix/lib/lua/luci'),) if INSTALLED else ())+((Path('/etc/ssl'),'/etc/ssl'),(Path('/usr/bin'),'/fixture-host-bin'),(s/'usr-bin','/usr/bin'),(s/'controllers',luci.LUA/'prefix/lib/lua/luci/controller'),(s/'models',luci.LUA/'prefix/lib/lua/luci/model'),(s/'libexec','/usr/libexec'),(s/'tools','/usr/sbin'),(s/'curl-fixture','/usr/bin/curl'))+(((s/'i18n',luci.LUA/'prefix/lib/lua/luci/i18n'),) if INSTALLED else ())+(((s/'wol-sys-net','/sys/class/net'),) if ACTIONS else ()),
+          extra_mounts=lambda s:(((s/'luci-library',luci.LUA/'prefix/lib/lua/luci'),) if INSTALLED else ())+((Path('/etc/ssl'),'/etc/ssl'),(Path('/usr/bin'),'/fixture-host-bin'),(s/'usr-bin','/usr/bin'),(s/'controllers',luci.LUA/'prefix/lib/lua/luci/controller'),(s/'models',luci.LUA/'prefix/lib/lua/luci/model'),(s/'libexec','/usr/libexec'),(s/'tools','/usr/sbin'),(s/'curl-fixture','/usr/bin/curl'))+(((s/'i18n',luci.LUA/'prefix/lib/lua/luci/i18n'),) if INSTALLED else ())+(((s/'wol-sys-net','/sys/class/net'),) if ACTIONS else ())+(((s/'boot-id','/proc/sys/kernel/random/boot_id'),) if group=='cold_config_recovery' else ()),
           extra_rw_mounts=lambda s:((s/'etc/rc.d','/etc/rc.d'),(s/'var-log','/var/log'),(s/'etc/.homegate-transition','/etc/.homegate-transition'),(s/'etc/homegate','/etc/homegate'),(s/'etc/homegate-engineering','/etc/homegate-engineering'),(s/'etc/config','/etc/config')),
-          state_setup=lambda s: setup_state(s,bin_ubus=group in ('web_maintenance_actions','web_apply','cli_compat')+FIRMWARE_JOB_GROUPS,switchable_setsid=group in ('cli_compat','cli_actions')+FIRMWARE_JOB_GROUPS),guest_args=['--http-runtime-dir',str(luci.HTTP),'--luci-runtime-dir',str(luci.LUA),'--nginx-runtime-dir',str(NGINX),'--nginx-fixture-dir',str(FIXTURE),'--wol-runtime-dir',str(WOL),'--wol-fixture-dir',str(WOL_FIXTURE),'--group',group]+(['--installed-root',str(INSTALLED)] if INSTALLED else []))
+          state_setup=lambda s: setup_state(s,bin_ubus=group in ('web_maintenance_actions','web_apply','web_save_then_disable','cli_compat')+FIRMWARE_JOB_GROUPS,switchable_setsid=group in ('cli_compat','cli_actions')+FIRMWARE_JOB_GROUPS,cold_config=group=='cold_config_recovery'),guest_args=['--http-runtime-dir',str(luci.HTTP),'--luci-runtime-dir',str(luci.LUA),'--nginx-runtime-dir',str(NGINX),'--nginx-fixture-dir',str(FIXTURE),'--wol-runtime-dir',str(WOL),'--wol-fixture-dir',str(WOL_FIXTURE),'--group',group]+(['--installed-root',str(INSTALLED)] if INSTALLED else []))
         if result:return result
     return 0
 if __name__=='__main__':sys.exit(main())

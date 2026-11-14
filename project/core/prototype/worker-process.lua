@@ -68,7 +68,7 @@ elseif arg[1]=="now" and not arg[2] then
     local body=read("/proc/uptime",128); local s=body and body:match("^(%d+)%.")
     if not s or #s>9 then fail() end; io.write(s,"\n")
 elseif arg[1]=="pause" and not arg[3] then
-    local ns=({["10"]=10000000,["100"]=100000000,["300"]=300000000})[arg[2]]
+    local ns=({["10"]=10000000,["50"]=50000000,["100"]=100000000,["300"]=300000000})[arg[2]]
     if not ns then fail() end
     local ok,nx=pcall(require,"nixio")
     if not ok or type(nx)~="table" or type(nx.nanosleep)~="function" or nx.nanosleep(0,ns)~=true then fail() end

@@ -5,6 +5,7 @@ umask 077
 PATH=/usr/sbin:/usr/bin:/sbin:/bin;export PATH LC_ALL=C
 unset IPKG_INSTROOT INIT_TRACE LUA_INIT LUA_PATH LUA_CPATH HOMEGATE_CONFIG_PROTO_STORE
 startup_active_enabled=false
+native_active_status=false
 fail() { printf '{"api_version":1,"prototype":true,"ok":false,"phase":"lifecycle-active","effect":"none","write_ready":false,"error":"Applied intent unavailable; inspect retained state"}\n';exit "${2:-7}"; }
 [ "$startup_active_enabled" = true ] && [ "$#" -eq 1 ] || fail gate 2
 action=$1;case "$action" in check|status) ;; *) fail command 2;; esac
@@ -45,7 +46,9 @@ stamp() {
 source_stamp=$(stamp /etc/config/homegate) || fail source
 store_stamp=$(stamp "$store/identity" && stamp "$store/gen-$revision/manifest") || fail generation
 configuration=$(lua "$dir/homegate-startup.lua" source < /etc/config/homegate) || fail source
-snapshot() { ash "$dir/homegate-config-prototype.sh" --persistent runtime-startup-snapshot-read 3>&1 4>&- 5>&- 8>&- 9>&- >/dev/null 2>/dev/null; }
+snapshot_command=runtime-startup-snapshot-read
+if [ "$native_active_status:$action" = true:status ];then snapshot_command=runtime-active-snapshot-read;fi
+snapshot() { ash "$dir/homegate-config-prototype.sh" --persistent "$snapshot_command" 3>&1 4>&- 5>&- 8>&- 9>&- >/dev/null 2>/dev/null; }
 startup_record_expected
 startup_record_file "$active" && [ "$(stamp /etc/config/homegate)" = "$source_stamp" ] &&
  [ "$(stamp "$store/identity" && stamp "$store/gen-$revision/manifest")" = "$store_stamp" ] &&

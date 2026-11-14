@@ -115,6 +115,7 @@ elseif mode=='status'then
  if fs.lstat('/var/run/homegate/native-service.json')then d=report(read('/var/run/homegate/native-service.json',16384)) end
  if d.phase and (d.phase~='native-service' or type(d.running)~='boolean' or type(d.healthy)~='boolean' or type(d.state)~='string' or d.version~=version())then fail()end
  local running=live and d.running and identity(d) or false
+ if live and not running then fail() end
  local enabled=config.service.enabled
  local configured=config.service.configured
  if intent.known==true then

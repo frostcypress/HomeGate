@@ -75,7 +75,17 @@ elseif mode=='submit'then
 elseif mode=='status' or mode=='ack'then
  local token=arg[2];if not id(token) or not dir(root) or not dir(root..'/'..token)then fail()end
  local path=root..'/'..token;local live=arg[3]=='true'
- if not fs.lstat(path..'/result')then if mode=='ack'then fail()end;io.write(codec.json({ok=true,job=token,pending=true,owner_running=live,recovery_required=not live and fs.lstat(path..'/owner.lock')~=nil}),'\n');return end
+ if not fs.lstat(path..'/result')then
+  if mode=='ack'then fail()end
+  local phase=live and fs.lstat(path..'/starting')
+  local starting=phase and phase.type=='reg' and phase.uid==0 and phase.nlink==1 and phase.modedec==600 and phase.size==0
+  local function marker(name)
+   local a=live and fs.lstat(path..'/'..name)
+   return a and a.type=='reg' and a.uid==0 and a.nlink==1 and a.modedec==600 and a.size==0
+  end
+  local applying=marker('applying-stop') and 'stop' or marker('applying-start') and 'start' or nil
+  io.write(codec.json({ok=true,job=token,pending=true,owner_running=live,configuration_saved=(applying or starting) and true or nil,applying_service=applying or nil,recovery_required=not live and fs.lstat(path..'/owner.lock')~=nil}),'\n');return
+ end
  local result=strict(read(path..'/result',2097152));if type(result)~='table' or type(result.ok)~='boolean' or result.api_version~=1 then fail()end
  if live then io.write(codec.json({ok=true,job=token,pending=true}),'\n');return end
  if mode=='ack'then

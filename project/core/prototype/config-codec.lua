@@ -35,12 +35,110 @@ local function allowed(doc)
     end
     return slots
 end
+local function history(store, owner, capacity, selected)
+    local fs=require("nixio.fs")
+    local function stat(path, kind, mode)
+        local entry=fs.lstat(path)
+        if not entry or entry.type~=kind or entry.uid~=owner or entry.modedec~=mode
+            or (kind=="reg" and entry.nlink~=1) then fail() end
+        return entry
+    end
+    local function file(path, maximum)
+        local entry=stat(path,"reg",600)
+        if entry.size<1 or entry.size>maximum then fail() end
+        local bytes=read(path)
+        if #bytes~=entry.size then fail() end
+        return bytes
+    end
+    local function quote(value) return "'"..value:gsub("'","'\\''").."'" end
+    local paths, expected, argument_bytes={},{},0
+    local function verify()
+        if #paths==0 then return end
+        local command="cd "..quote(store).." && sha256sum "..table.concat(paths," ").." 2>/dev/null"
+        local proc=assert(io.popen(command,"r"))
+        local wanted=table.concat(expected)
+        local actual=proc:read(#wanted+1)
+        if not proc:close() or actual~=wanted then fail() end
+        paths,expected,argument_bytes={},{},0
+    end
+    local max_revision, selected_parent=0,nil
+    local function validate(name)
+        local revision=tonumber(name:match("^gen%-([1-9]%d?)$"))
+        if not revision or revision>capacity then fail() end
+        local path=store.."/"..name
+        stat(path,"dir",700)
+        local source_files, seen={},{}
+        for entry in assert(fs.dir(path)) do
+            if entry=="source.conf" or entry=="legacy.conf" then
+                file(path.."/"..entry,262144)
+                source_files[#source_files+1]=entry
+            elseif entry~="." and entry~=".." and entry~="public.conf" and entry~="parent"
+                and entry~="manifest" and entry~="credentials" and entry:sub(1,1)~="." then fail() end
+        end
+        local public=file(path.."/public.conf",262144)
+        if codec.canonical(public)~=public then fail() end
+        local parent_bytes=file(path.."/parent",3)
+        local parent=tonumber(parent_bytes:match("^(%d+)\n$"))
+        if not parent or parent>=revision or parent_bytes~=tostring(parent).."\n" then fail() end
+        local vault=path.."/credentials"
+        stat(vault,"dir",700)
+        for _,slot in ipairs(allowed(codec.parse(public))) do seen[slot]=true end
+        local credentials={}
+        for slot in assert(fs.dir(vault)) do
+            if slot:sub(1,1)~="." then
+                if not seen[slot] or #credentials>=192 then fail() end
+                local account=slot:match("^[a-z]+%.([a-zA-Z0-9_-]+)%.[a-z_]+$")
+                if not account or #account>64 then fail() end
+                file(vault.."/"..slot,4096)
+                credentials[#credentials+1]="credentials/"..slot
+            end
+        end
+        table.sort(source_files)
+        table.sort(credentials)
+        local names={"public.conf","parent"}
+        for _,entry in ipairs(source_files) do names[#names+1]=entry end
+        for _,entry in ipairs(credentials) do names[#names+1]=entry end
+        local manifest=file(path.."/manifest",65536)
+        -- The store is locked by the caller. Hash files selected above,
+        -- using the original manifest order and bounded SHA-256 batches.
+        local offset=1
+        for _,entry in ipairs(names) do
+            local digest=manifest:sub(offset,offset+63)
+            local suffix="  "..entry.."\n"
+            if #digest~=64 or digest:find("[^0-9a-f]")
+                or manifest:sub(offset+64,offset+63+#suffix)~=suffix then fail() end
+            offset=offset+64+#suffix
+            local relative=name.."/"..entry
+            local argument=quote(relative)
+            if argument_bytes+#argument+1>32768 then verify() end
+            paths[#paths+1]=argument
+            expected[#expected+1]=digest.."  "..relative.."\n"
+            argument_bytes=argument_bytes+#argument+1
+        end
+        if offset~=#manifest+1 then fail() end
+        max_revision=math.max(max_revision,revision)
+        return parent
+    end
+    if selected then
+        selected_parent=validate('gen-'..selected)
+    else
+        for name in assert(fs.dir(store)) do
+            if name:sub(1,4)=="gen-" then validate(name) end
+        end
+    end
+    verify()
+    io.write(selected_parent or max_revision,"\n")
+end
 if arg[1]=="normalize" and not arg[2] then
     local body=codec.canonical(read())
     if not body then fail() end
     io.write(body)
 elseif arg[1]=="allowed" and arg[2] and not arg[3] then
     for _,slot in ipairs(allowed(parsed(arg[2]))) do io.write(slot,"\n") end
+elseif arg[1]=="history" and arg[2]=="/etc/homegate/transactions" and not arg[3] then
+    history(arg[2],0,96)
+elseif arg[1]=="generation" and arg[2]=="/etc/homegate/transactions" and arg[3] and not arg[4] then
+    history(arg[2],0,96,arg[3])
 elseif arg[1]=="snapshot" and arg[2] and arg[3] and not arg[4] then
     local body=read(arg[2].."/public.conf")
     local doc=codec.parse(body)

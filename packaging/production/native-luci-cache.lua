@@ -13,7 +13,11 @@ local function run()
  local modules='/tmp/luci-modulecache';local m=fs.lstat(modules)
  if m then
   assert(m.type=='dir' and m.uid==0 and (m.modedec==700 or m.modedec==755),'unsafe module cache')
-  for _,name in ipairs({'luci.controller.homegate','luci.model.homegate.legacy'})do
+  for _,name in ipairs({
+   'luci.controller.homegate','luci.controller.homegate_ddns',
+   'luci.model.homegate.backup','luci.model.homegate.configuration','luci.model.homegate.ddns',
+   'luci.model.homegate.legacy','luci.model.homegate.writer',
+  })do
    local encoded=name:gsub('.',function(c)return string.format('%02X',string.byte(c))end)
    add(modules..'/'..encoded);add(modules..'/'..encoded:lower());add(modules..'/'..name)
   end

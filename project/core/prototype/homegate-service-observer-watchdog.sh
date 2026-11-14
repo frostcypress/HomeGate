@@ -135,10 +135,14 @@ info=$(lua "$process" info "$$" "$1" 2>/dev/null) || exit 1
 old_ifs=$IFS; IFS=:; set -- $info; IFS=$old_ifs
 [ "$#" -eq 6 ] && [ "$3" = "$$" ] && [ "$4" = "$$" ] && [ "$6" = 1 ] || exit 1
 poll_delay=0.05
+sleep_poll() { sleep "$poll_delay" 2>/dev/null; }
 if ! sleep 0.001 >/dev/null 2>&1; then
     # Some firmware builds support only integer sleep arguments.
     sleep 0 >/dev/null 2>&1 || exit 1
     poll_delay=1
+    if lua "$process" pause 10 >/dev/null 2>&1; then
+        sleep_poll() { lua "$process" pause 50 2>/dev/null; }
+    fi
 fi
 kill -0 "$$" >/dev/null 2>&1 || exit 1
 # Missing executables/modules are unknown, never "disabled" or "stopped".
@@ -216,13 +220,13 @@ while :; do
     [ "$stop_requested" = false ] || stop_family
     now=$(lua "$process" now 2>/dev/null) || stop_family
     [ "$now" -lt "$deadline" ] || stop_family
-    sleep "$poll_delay" 2>/dev/null || stop_family
+    sleep_poll || stop_family
 done
 [ "$stop_requested" = false ] || stop_family
 result=0; wait "$worker" || result=$?
 members=$(lua "$process" group "$$" "$$" 2>/dev/null) || stop_family
 [ "$members" = 0 ] || stop_family
-sleep "$poll_delay" 2>/dev/null || stop_family
+sleep_poll || stop_family
 members=$(lua "$process" group "$$" "$$" 2>/dev/null) || stop_family
 [ "$members" = 0 ] || stop_family
 if [ "$action" = health-status ] && [ "$result" -ne 0 ]; then exit 125; fi

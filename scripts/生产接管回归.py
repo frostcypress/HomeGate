@@ -1090,9 +1090,20 @@ fi
         self.assertEqual(retained['revision'],revision)
         self.assertEqual(source.read_bytes(),before)
         refusal.unlink()
-        done=self.web_wait(self.web_request('config_reset',{},True)['job'],seconds=50);self.assertTrue(done['ok'],done)
+        # Explicitly exercise the whole-second fallback when neither the
+        # shell nor nixio provides a short pause to the service observer.
+        lua=STATE/'tools/lua';original_lua=lua.read_text()
+        sleep_calls=STATE/'integer-sleep-calls'
+        sleep_calls.unlink(missing_ok=True)
+        lua.write_text(original_lua.replace('#!/bin/sh\n', '''#!/bin/sh
+case "${1##*/}:$2:${3:-}" in worker-process.lua:pause:10) exit 1;; esac
+''',1))
+        try:
+            done=self.web_wait(self.web_request('config_reset',{},True)['job'],seconds=50);self.assertTrue(done['ok'],done)
+        finally:
+            lua.write_text(original_lua)
         self.assertEqual(self.web_request('overview')['data']['main']['enabled'],'0');self.assertFalse(self.cli('status')['service']['running'])
-        self.assertIn('1',(STATE/'integer-sleep-calls').read_text().splitlines())
+        self.assertIn('1',sleep_calls.read_text().splitlines())
         self.action_result('config-reset',completed=True,bin_ubus_only=True,root_group_rc_common_775=True,integer_sleep_only=True,failed_observation_retained_preview=True,default_switch_restored=True,empty_coordinator_running=False);self.verify_unchanged()
     def test_cli_acme(self):
         s=self.acme_setup();self.seed_unpublished_generation(63)

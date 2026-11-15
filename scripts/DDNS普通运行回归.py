@@ -22,7 +22,9 @@ class Static(unittest.TestCase):
         required={'runtime-ddns-snapshot-read','runtime-ddns-recovery-snapshot-read'}
         aliases=[set(p.split('|')) for p in re.findall(r'(?m)^    ([a-z0-9_-]+(?:\|[a-z0-9_-]+)*)\)$',s)]
         shared=[p for p in aliases if required<=p]
-        self.assertEqual(shared,[required|{'runtime-startup-snapshot-read'}])
+        self.assertEqual(shared,[required|{'runtime-startup-snapshot-read','runtime-active-snapshot-read'}])
+        active_gate=s.split('    runtime-active-snapshot-read)\n',1)[1].splitlines()[0]
+        self.assertIn('[ "$#" -eq 0 ] && [ "$persistent_mode:$native_editor_enabled:$startup_admission_enabled" = true:true:true ]',active_gate)
         s=(PROTO/'homegate-cloudflare-read.sh').read_text();self.assertIn('[ "$mode" = reconcile ] && [ "$persistent_reconcile" = true ]',s)
         self.assertIn('check-rule "$ddns_rule"',s);self.assertIn('check-runtime',s)
     def test_distinct_origin_and_rebuilt_private_intent(self):

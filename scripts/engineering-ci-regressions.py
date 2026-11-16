@@ -18,10 +18,22 @@ spec.loader.exec_module(dispatch)
 
 
 def choices(name):
-    tree = ast.parse((ROOT/'scripts'/name).read_text())
-    for node in ast.walk(tree):
+    tree = ast.parse((ROOT/'scripts'/name).read_text(encoding='utf-8'))
+    main = next(node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == 'main')
+    assignments = {
+        stmt.targets[0].id: stmt.value for stmt in main.body
+        if isinstance(stmt, ast.Assign) and len(stmt.targets) == 1 and isinstance(stmt.targets[0], ast.Name)
+    }
+    for node in ast.walk(main):
         if isinstance(node, ast.Call) and node.args and isinstance(node.args[0], ast.Constant) and node.args[0].value == '--group':
-            return next(ast.literal_eval(x.value) for x in node.keywords if x.arg == 'choices')
+            expression = next(keyword.value for keyword in node.keywords if keyword.arg == 'choices')
+            groups = []
+            for item in expression.elts:
+                if isinstance(item, ast.Starred):
+                    groups.extend(ast.literal_eval(assignments[item.value.id]))
+                else:
+                    groups.append(ast.literal_eval(item))
+            return groups
     raise AssertionError('Missing real parser choices')
 
 

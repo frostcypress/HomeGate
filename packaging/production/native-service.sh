@@ -13,7 +13,7 @@ codec=$base/native-service.lua;action=${1:-};stage=arguments
 trap 'code=$?; if [ "$action" = serve ] && [ "$code" != 0 ];then exit 1;fi' EXIT
 fail() { printf '{"api_version":1,"native":true,"ok":false,"phase":"native-service","effect":"none","write_ready":false,"failure_step":"%s","error":"Service unavailable; retained operations require attention"}\n' "$stage";exit "${1:-7}"; }
 [ "$(id -u)" = 0 ] || fail 7
-case "$action:$#" in serve:1|status:1|check:1|owner-state:1|quiescent:1|admission:1|plan-certificates:1) ;;receipt:2) ;;stop:2|reap:2) [ "$2" = --confirm ] || fail 2;;plan-set:6) [ "$6" = --confirm ] || fail 2;;*) fail 2;;esac
+case "$action:$#" in serve:1|status:1|check:1|overview-status:1|owner-state:1|quiescent:1|admission:1|plan-certificates:1) ;;receipt:2|receipt:3) ;;stop:2|reap:2) [ "$2" = --confirm ] || fail 2;;plan-set:6) [ "$6" = --confirm ] || fail 2;;*) fail 2;;esac
 exists() { [ -e "$1" ] || [ -L "$1" ]; }
 private_dir() { [ -d "$1" ] && [ ! -L "$1" ] && [ "$(stat -c '%u:%a' "$1")" = 0:700 ]; }
 private_file() { [ -f "$1" ] && [ ! -L "$1" ] && [ "$(stat -c '%u:%a:%h' "$1")" = 0:600:1 ] && [ "$(stat -c %s "$1")" -le "${2:-16384}" ]; }
@@ -25,11 +25,21 @@ stamp() {
  for file in /etc/config/homegate "$store/current" "$store/identity" "$store/startup-active";do private_file "$file" 262144 && stat -c '%d:%i:%u:%a:%h:%s' "$file" && sha256sum "$file" || return 1;done
 }
 plan_stamp() { if exists /etc/homegate/native-service-plan;then private_file /etc/homegate/native-service-plan && sha256sum /etc/homegate/native-service-plan;else printf 'absent\n';fi; }
-intent_guard() {
+service_locks() {
  for file in "$run/frontend.lock" "$store/.supervisor.lock";do private_file "$file" 0 || return 1;done
  exec 6>>"$run/frontend.lock" 7>>"$store/.supervisor.lock"
- if ! { bound 6 "$run/frontend.lock" && bound 7 "$store/.supervisor.lock" && flock -n 6 && flock -n 7; };then exec 6>&- 7>&-;return 3;fi
- ash "$dir/homegate-startup-active.sh" check 9>&- >/dev/null;result=$?
+ if ! { bound 6 "$run/frontend.lock" && bound 7 "$store/.supervisor.lock"; };then exec 6>&- 7>&-;return 1;fi
+ flock -n 6 && flock -n 7;result=$?
+ if [ "$result" != 0 ];then
+  exec 6>&- 7>&-
+  [ "$result" = 1 ] && return 3
+  return 1
+ fi
+ if ! { bound 6 "$run/frontend.lock" && bound 7 "$store/.supervisor.lock"; };then exec 6>&- 7>&-;return 1;fi
+}
+intent_guard() {
+ service_locks || return $?
+ ash "$dir/homegate-startup-active.sh" check-current 9>&- >/dev/null;result=$?
  exec 6>&- 7>&-;return "$result"
 }
 if [ "$action" = plan-certificates ];then
@@ -58,13 +68,22 @@ if [ "$action" = receipt ];then
  # The coordinator already admitted the immutable source under FD6/7. Its
  # running receipt follows real component checks. Verify that exact binding
  # and process again without competing with the admitted provider batch.
- [ "$live" = true ] && ! exists "$run/native-service.stop" || exit 3
+ ! exists "$run/native-service.stop" || exit 3
+ [ "$live" = true ] || [ "$#" = 3 ] || exit 3
  before=$(stamp && plan_stamp) || fail
  digest=$(printf '%s\n' "$before" | sha256sum) || fail
- receipt=$(lua "$codec" web-running "$2" "${digest%% *}");code=$?
- [ "$code" = 0 ] || exit "$code"
+ if [ "$#" = 3 ];then
+  receipt=$(lua "$codec" web-running "$2" "${digest%% *}" "$3" "$live");code=$?
+ else
+  receipt=$(lua "$codec" web-running "$2" "${digest%% *}");code=$?
+ fi
+ case "$code:$live:$#" in 0:true:*|1:false:3) ;;0:false:*) exit 3;;*) exit "$code";;esac
  [ "$(stamp && plan_stamp)" = "$before" ] || fail
- printf '%s\n' "$receipt";exit 0
+ ! exists "$run/native-service.stop" || exit 3
+ printf '%s\n' "$receipt";exit "$code"
+fi
+if [ "$action" = overview-status ];then
+ exec lua "$codec" overview-status "$live"
 fi
 if [ "$action" = status ] || [ "$action" = check ];then
  stage=status-configuration
@@ -111,9 +130,7 @@ if exists /etc/homegate/package-state;then
  [ "$action" = admission ] && private_file /etc/homegate/package-state 64 &&
  [ "$(head -n 2 /etc/homegate/package-state)" = "$(printf 'HGPKG1\nready')" ] || fail 4
 fi
-stage=intent;intent=$(ash "$dir/homegate-startup-active.sh" status) || fail 4
-printf '%s\n' "$intent" | lua "$codec" ready intent || fail 4
-stage=writer;ash "$dir/homegate-config-prototype.sh" --persistent writer-check >/dev/null || fail 4
+stage=intent;ash "$dir/homegate-startup-active.sh" admit >/dev/null || fail 4
 if [ "$action" = admission ];then quiet || fail 4;exit 0;fi
 if [ "$action" = plan-set ];then
  [ "$live" = false ] && quiet || fail 4
@@ -151,19 +168,20 @@ stage=admission;intent_guard && [ "$(stamp && plan_stamp)" = "$binding" ] || fai
 receipt=$run/native-service.json;next_receipt=$receipt.next
 published_status=;published_report=
 emit() {
+ complete=${3:-false}
  case "$1" in failed|restart_required) final_state=$1;final_reason=$2;;esac
  # Keep the published receipt when its state, bytes and private metadata agree.
- if [ "$published_status" = "$1:$2" ] && ! exists "$next_receipt" &&
+ if [ "$published_status" = "$1:$2:$complete" ] && ! exists "$next_receipt" &&
     [ -f "$receipt" ] && [ ! -L "$receipt" ] &&
     [ "$(stat -c '%u:%a:%h:%s' "$receipt")" = "0:600:1:$((${#published_report}+1))" ] &&
     IFS= read -r existing_report < "$receipt" && [ "$existing_report" = "$published_report" ];then
   return 0
  fi
  for file in "$receipt" "$next_receipt";do ! exists "$file" || private_file "$file" || return 1;done
- lua "$codec" emit "$1" "$$" "$birth" "$revision" "$2" "$binding_digest" 9>&- > "$next_receipt" &&
+ lua "$codec" emit "$1" "$$" "$birth" "$revision" "$2" "$binding_digest" "$complete" 9>&- > "$next_receipt" &&
  IFS= read -r report < "$next_receipt" && fsync "$next_receipt" &&
  mv -f "$next_receipt" "$receipt" && fsync "$receipt" "$run" || return 1
- published_status=$1:$2;published_report=$report
+ published_status=$1:$2:$complete;published_report=$report
 }
 stopping=false;reload=false;job=;ddns_started=false;proxy_started=false;final_state=stopped;final_reason=known
 trap 'stopping=true' TERM INT
@@ -172,22 +190,47 @@ trap ':' USR1
 shutdown() {
  trap - EXIT;emit stopping requested >/dev/null || :
  [ -z "$job" ] || entry acme-stop "$job" --confirm >/dev/null || :
- for item in homegate-access-region.sh homegate-proxy.sh homegate-acme-schedule.sh homegate-ddns-schedule.sh;do component "$item" stop --confirm >/dev/null || :;done
+ pending_stops='homegate-access-region.sh homegate-proxy.sh homegate-acme-schedule.sh homegate-ddns-schedule.sh'
  tries=0
  while [ "$tries" -lt 15 ];do
-  if quiet;then emit "$final_state" "$final_reason" >/dev/null;return $?;fi
+  remaining=
+  for item in $pending_stops;do
+   component "$item" stop --confirm >/dev/null || remaining="$remaining $item"
+  done
+  pending_stops=$remaining
+  if quiet;then emit "$final_state" "$final_reason" true >/dev/null;return $?;fi
   tries=$((tries+1));sleep 1 9>&- || return 1
  done
- emit failed stop_unknown >/dev/null;return 1
+ if [ "$final_state" = stopped ];then emit failed stop_unknown >/dev/null
+ else emit "$final_state" "$final_reason" >/dev/null;fi
+ return 1
 }
 trap 'code=$?; shutdown || code=4; [ "$code" = 0 ] || code=1;exit "$code"' EXIT
 emit starting admission || fail
 start_ddns() {
  [ -n "$ddns" ] || return 0
- authorized=$(ash "$dir/homegate-ddns-authority.sh" check 9>&- | lua "$dir/homegate-ddns-batch.lua" names "$revision" 9>&-) || return 1
  expected_authorized=$(printf '%s\n' "$ddns" | tr ' ' '\n') || return 1
- [ "$authorized" = "$expected_authorized" ] || return 1
- entry schedule-serve --confirm >/dev/null || return 1;ddns_started=true
+ now=$(lua "$dir/worker-process.lua" now 9>&-) || return 1
+ start_until=$((now+25))
+ while :;do
+  # No retry may remove an admitted or interrupted lease. Each attempt
+  # rechecks the same authority and the worker owns a separate launch lock.
+  [ "$stopping" = false ] && ! exists "$run/native-service.stop" && ! exists "$run/ddns-schedule" || return 1
+  [ "$(stamp && plan_stamp)" = "$binding" ] || return 1
+  authorized=$(
+   service_locks || exit $?
+   ash "$dir/homegate-ddns-authority.sh" check 9>&-
+  )
+  auth_result=$?
+  if [ "$auth_result" = 0 ];then
+   authorized=$(printf '%s\n' "$authorized" | lua "$dir/homegate-ddns-batch.lua" names "$revision" 9>&-) || return 1
+   [ "$authorized" = "$expected_authorized" ] || return 1
+   if entry schedule-serve --confirm >/dev/null;then ddns_started=true;return 0;fi
+  elif [ "$auth_result" != 3 ];then return 1
+  fi
+  now=$(lua "$dir/worker-process.lua" now 9>&-) || return 1
+  [ "$now" -lt "$start_until" ] && sleep 1 9>&- || return 1
+ done
 }
 pause_ddns() {
  [ "$ddns_started" = true ] || return 0
@@ -198,8 +241,20 @@ pause_ddns() {
   tries=$((tries+1));sleep 1 9>&- || return 1
  done;return 1
 }
-if [ -z "$certificates" ];then start_ddns || { emit failed authorization_required;exit 4; };fi
-last_check=0;scan_due=true
+component_running() {
+ state=$(entry "$1") && printf '%s\n' "$state" | lua "$codec" ready running 9>&-
+}
+watch_component() {
+ # A receipt may be replaced while a status reader opens and validates it.
+ # Require a repeat failure before stopping healthy sibling components.
+ for delay in 200 400;do
+  if component_running "$1";then return 0;fi
+  lua "$dir/worker-process.lua" pause "$delay" 9>&- || sleep 1 9>&- || return 1
+ done
+ component_running "$1"
+}
+if [ -z "$certificates" ] && [ -z "$web" ];then start_ddns || { emit failed authorization_required;exit 4; };fi
+next_check=0
 while :;do
  if [ "$stopping" = true ] || exists "$run/native-service.stop";then
   ! exists "$run/native-service.stop" || private_file "$run/native-service.stop" 0 || fail
@@ -213,16 +268,23 @@ while :;do
  if [ -n "$job" ];then
   state=$(entry acme-job "$job") || { emit failed certificate_unknown;exit 7; }
   printf '%s\n' "$state" | lua "$codec" ready job 9>&-;code=$?
-  if [ "$code" = 0 ];then job=;scan_due=true
+  if [ "$code" = 0 ];then job=;next_check=0
   elif [ "$code" != 3 ];then emit failed certificate_failed;exit 7;fi
  fi
  if [ -n "$certificates" ] && [ -z "$job" ];then
   now=$(lua "$dir/worker-process.lua" now 9>&-) || fail
-  if [ "$scan_due" = true ] || [ "$((now-last_check))" -ge 60 ];then
-   last_check=$now;scan_due=false
-   pause_ddns || { emit failed ddns_pause_unknown;exit 4; }
+  if [ "$now" -ge "$next_check" ];then
+   next_check=$((now+60))
    for certificate in $certificates;do
-    material=$(ash "$dir/homegate-certificate.sh" status "$certificate" 9>&-) || { emit failed certificate_unavailable;exit 7; }
+    # Take a read under the same ordered locks as DDNS and the firewall.
+    # A busy reader reschedules the scan without stopping the DDNS lease.
+    material=$(
+     service_locks || exit $?
+     ash "$dir/homegate-certificate.sh" admission-status-internal "$certificate" --confirm 9>&-
+    )
+    code=$?
+    if [ "$code" = 3 ];then next_check=$((now+5));break;fi
+    [ "$code" = 0 ] || { emit failed certificate_unavailable;exit 7; }
     printf '%s\n' "$material" | lua "$codec" ready due 9>&-;code=$?
     if [ "$code" = 3 ];then continue;fi
     [ "$code" = 0 ] || { emit failed certificate_unknown;exit 7; }
@@ -233,12 +295,11 @@ while :;do
    done
   fi
  fi
- if [ -z "$job" ] && [ "$ddns_started" = false ];then start_ddns || { emit failed ddns_resume_failed;exit 4; };fi
  if [ -z "$job" ] && [ -n "$web" ] && [ "$proxy_started" = false ];then
   proxy_poll_delay=0.1
   if ! sleep 0.001 9>&- >/dev/null 2>&1;then proxy_poll_delay=1;fi
   entry proxy-start "$web" "$policy" --confirm >/dev/null || { emit failed proxy_start_failed;exit 7; };proxy_started=true
-  clock=$(lua "$dir/worker-process.lua" now 9>&-) || fail;ready_until=$((clock+8))
+  clock=$(lua "$dir/worker-process.lua" now 9>&-) || fail;ready_until=$((clock+20))
   while :;do
    state=$(entry proxy-status) || { emit failed proxy_unavailable;exit 7; }
    printf '%s\n' "$state" | lua "$codec" ready running 9>&-;code=$?
@@ -249,8 +310,10 @@ while :;do
   done
   if [ "$auto_firewall" = true ];then entry firewall-apply --confirm >/dev/null || { emit failed firewall_apply_failed;exit 7; };fi
  fi
- if [ "$ddns_started" = true ];then state=$(entry schedule-status) && printf '%s\n' "$state" | lua "$codec" ready running 9>&- || { emit failed ddns_stopped;exit 7; };fi
- if [ "$proxy_started" = true ];then state=$(entry proxy-status) && printf '%s\n' "$state" | lua "$codec" ready running 9>&- || { emit failed proxy_stopped;exit 7; };fi
+ # Proxy and firewall admission acquire the same locks as the first DDNS batch.
+ if [ -z "$job" ] && [ "$ddns_started" = false ];then start_ddns || { emit failed ddns_resume_failed;exit 4; };fi
+ if [ "$ddns_started" = true ];then watch_component schedule-status || { emit failed ddns_stopped;exit 7; };fi
+ if [ "$proxy_started" = true ];then watch_component proxy-status || { emit failed proxy_stopped;exit 7; };fi
  if [ -n "$job" ];then emit renewing certificate;else emit running ready;fi || fail
  sleep 1 9>&- || fail
 done

@@ -15,7 +15,7 @@ function M.lease(d)
     local continuous=type(d)=='table' and d.continuous==true
     if type(d)=='table' and d.continuous~=nil and not continuous then return false end
     return keys(d,continuous and 12 or 11,{continuous=true,schema=true,identity=true,generation=true,grant=true,revision=true,boot=true,pid=true,birth=true,token=true,started=true,deadline=true}) and
-        d.schema=='HGDDNSSCHEDULE1' and hex(d.identity,64) and hex(d.generation,64) and hex(d.grant,64) and integer(d.revision,1,96) and
+        d.schema=='HGDDNSSCHEDULE1' and hex(d.identity,64) and hex(d.generation,64) and hex(d.grant,64) and integer(d.revision,1,999999999) and
         type(d.boot)=='string' and #d.boot==36 and d.boot:match('^[0-9a-f-]+$') and digits(d.pid,9) and tonumber(d.pid)>=2 and digits(d.birth,20) and hex(d.token,32) and
         integer(d.started,0,999999099) and d.deadline==(continuous and 0 or d.started+M.budget)
 end
@@ -42,13 +42,15 @@ function M.decision(rows)
     if wait then return 'wait',wait end
     return 'idle',0
 end
-function M.batch(raw,d,revision,rc,names,json)
+function M.batch(raw,d,revision,rc,names,json,closeouts)
     if type(d)~='table' or type(d.rules)~='table' or #d.rules>#names or d.configuration_revision~=tonumber(revision) or
         d.api_version~=1 or d.prototype~=true or d.phase~='ddns-batch' or d.ok~=(rc=='0') or type(d.sampled)~='boolean' or d.write_ready~=false or
         (d.effect~='none' and d.effect~='confirmed' and d.effect~='unknown') then return nil end
     local rows,aggregate={},'none'
+    local all_closed=true
     for i,row in ipairs(d.rules) do
-        if not keys(row,7,{rule=true,provider=true,status=true,effect=true,error_kind=true,retryable=true,retry_in=true}) or row.rule~=names[i] or not providers[row.provider] or not statuses[row.status] or
+        local closed=type(row)=='table' and row.closeout=='retired' and closeouts and row.effect=='confirmed'
+        if not keys(row,closed and 8 or 7,{rule=true,provider=true,status=true,effect=true,error_kind=true,retryable=true,retry_in=true,closeout=closed}) or row.rule~=names[i] or not providers[row.provider] or not statuses[row.status] or
             not kinds[row.error_kind] or type(row.retryable)~='boolean' or not integer(row.retry_in,0,999999999) or
             (row.effect~='none' and row.effect~='confirmed' and row.effect~='unknown') then return nil end
         if row.status=='created' or row.status=='updated' or row.status=='unchanged' then
@@ -61,7 +63,9 @@ function M.batch(raw,d,revision,rc,names,json)
             elseif row.retry_in~=0 then return nil end
         end
         if row.effect=='unknown' then aggregate='unknown' elseif row.effect=='confirmed' and aggregate~='unknown' then aggregate='confirmed' end
+        if row.effect=='confirmed' and not closed then all_closed=false end
         rows[i]=string.format('{"rule":"%s","provider":"%s","status":"%s","effect":"%s","error_kind":"%s","retryable":%s,"retry_in":%d}',row.rule,row.provider,row.status,row.effect,row.error_kind,tostring(row.retryable),row.retry_in)
+        if closed then rows[i]=rows[i]:sub(1,-2)..',"closeout":"retired"}' end
     end
     local error=d.error~=nil
     if error then if d.error~='DDNS batch is unavailable' or rc=='0' or rc=='1' then return nil end
@@ -73,6 +77,6 @@ function M.batch(raw,d,revision,rc,names,json)
         expected=string.format('{"api_version":1,"prototype":true,"ok":false,"phase":"ddns-batch","effect":"%s","sampled":%s,"write_ready":false,"rules":[%s],"error":"DDNS batch is unavailable"}\n',d.effect,tostring(d.sampled),table.concat(rows,','))
     end
     if raw~=expected then return nil end
-    return d.effect
+    return d.effect=='confirmed' and all_closed and not error and 'closed' or d.effect
 end
 return M

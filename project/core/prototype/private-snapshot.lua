@@ -12,7 +12,7 @@ function M.parse(body,codec)
     end
     local function number(max)
         local finish=body:find("\n",pos,true)
-        if not finish or finish-pos>7 then error(error_message) end
+        if not finish or finish-pos>9 then error(error_message) end
         local value=body:sub(pos,finish-1); pos=finish+1
         if not value:match("^%d+$") or (#value>1 and value:sub(1,1)=="0") then error(error_message) end
         local n=tonumber(value)
@@ -21,7 +21,7 @@ function M.parse(body,codec)
     end
     local ok,result=pcall(function()
         if bytes(11)~="HGPRIVATE1\n" then error(error_message) end
-        local revision=number(96)
+        local revision=number(999999999)
         if revision<1 then error(error_message) end
         local size=number(262144); local count=number(192)
         local public=bytes(size)

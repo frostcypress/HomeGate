@@ -342,8 +342,7 @@ function M.private_configuration(body)
     if not doc then
         -- Ordinary publication is already canonical public data; its private
         -- slots remain in the separately validated generation, never in UCI.
-        if M.canonical(body)~=body then return nil end
-        doc=M.parse(body); if not doc then return nil end
+        doc=M.parse_canonical(body); if not doc then return nil end
         slots={};switches={};public_projection=true
         for _,s in ipairs(doc) do
             local row={kind=s.kind}
@@ -381,6 +380,10 @@ local function serialize(doc)
         end
     end
     return table.concat(out,"\n").."\n"
+end
+function M.parse_canonical(body)
+    local doc=M.parse(body)
+    if doc and serialize(doc)==body then return doc end
 end
 -- Canonical public bytes used by the isolated transaction store as well as
 -- LuCI. Reparse the generated document so expansion cannot bypass file limits.

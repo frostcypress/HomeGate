@@ -167,6 +167,7 @@ case "$action" in
    done
    if [ "$ready" = true ] && ! held;then
     failure_stage=runtime-start
+    previous_owner=$(lua "$base/native-service.lua" web-previous-owner 9>&-) || previous_owner=
     now=$(lua "$clock" now) || fail
     if runtime_call "$((now+30))" /etc/init.d/homegate start >/dev/null;then
      start_exit=$runtime_exit
@@ -175,13 +176,18 @@ case "$action" in
      now=$(lua "$clock" now) || fail
      receipt_deadline=$((now+60))
      (set -C;: > "$work/runtime-receipt") || fail
-     while runtime_call "$receipt_deadline" ash "$base/native-service.sh" receipt "$desired" > "$work/runtime-receipt";do
+     short_retries=3
+     while runtime_call "$receipt_deadline" ash "$base/native-service.sh" receipt "$desired" ${previous_owner:+"$previous_owner"} > "$work/runtime-receipt";do
       receipt=$runtime_exit
       if [ "$receipt" = 0 ];then
        status=$(cat "$work/runtime-receipt") || fail
        if printf '%s\n' "$status" | lua "$base/native-service.lua" web-ready "$desired" 9>&-;then running=true;break;fi
       fi
-      [ "$receipt" != 1 ] || break
+      if [ "$receipt" = 1 ];then status=$(cat "$work/runtime-receipt") || fail;break;fi
+      if [ "$short_retries" -gt 0 ];then
+       short_retries=$((short_retries-1))
+       pause 300 .3 && continue
+      fi
       sleep 1 || break
      done
     fi

@@ -45,6 +45,8 @@ if [ "${1:-}" = --persistent ]; then
 elif [ "${1:-}" = --public-uci ]; then
     public_mode=true; public_limit=262144; credential_limit=192; shift
 fi
+revision_limit=$history_capacity
+if [ "$persistent_mode:$native_editor_enabled" = true:true ]; then revision_limit=999999999; fi
 if [ "$persistent_mode" = true ]; then
     PATH=/usr/sbin:/usr/bin:/sbin:/bin
     export PATH
@@ -140,10 +142,12 @@ persistent_open() {
     [ "$identity_body" = "$(printf '%s\n' "$identity_payload" "$identity_expected")" ] || fail 'Invalid store identity framing' 7
     private_file "$store/.lock" && private_file "$store/.supervisor.lock" || fail 'Persistent locks require lifecycle initialization' 7
     private_dir /var/run/homegate && private_file /var/run/homegate/frontend.lock || fail 'Unsafe shared writer lock' 7
-    if [ "$(stat -Lc '%d:%i:%u:%a:%h' /proc/self/fd/6 2>/dev/null)" != "$(stat -c '%d:%i:%u:%a:%h' /var/run/homegate/frontend.lock)" ]; then
-        exec 6>>/var/run/homegate/frontend.lock || fail 'Unable to open shared writer lock' 7
+    if [ "$command" != editor-state-read ]; then
+        if [ "$(stat -Lc '%d:%i:%u:%a:%h' /proc/self/fd/6 2>/dev/null)" != "$(stat -c '%d:%i:%u:%a:%h' /var/run/homegate/frontend.lock)" ]; then
+            exec 6>>/var/run/homegate/frontend.lock || fail 'Unable to open shared writer lock' 7
+        fi
+        flock -n 6 || fail 'Shared writer is busy' 4
     fi
-    flock -n 6 || fail 'Shared writer is busy' 4
     if [ -e "$store/bootstrap-pending" ] || [ -L "$store/bootstrap-pending" ]; then
         private_file "$store/bootstrap-pending" && [ "$(stat -c %s "$store/bootstrap-pending")" -le 64 ] || fail 'Unsafe bootstrap barrier' 7
         pending_expected=$(printf '%s\n' HGBOOTSTRAP-PENDING1 "$store_identity" | sha256sum) || fail 'Unable to check bootstrap barrier' 7
@@ -174,8 +178,8 @@ persistent_fence_read() {
     if IFS= read -r extra <&8; then fail 'Unexpected persistent fence data' 7; fi
     exec 8<&-
     [ "$fence_format:$fence_identity" = "HGWRITEFENCE1:$store_identity" ] || fail 'Persistent fence identity mismatch' 7
-    number "$fence_base" 1 "$history_capacity" && [ "$fence_base" = "$value" ] || fail 'Invalid fence baseline' 7
-    number "$fence_target" 1 "$history_capacity" && [ "$fence_target" = "$value" ] && [ "$fence_target" -gt "$fence_base" ] || fail 'Invalid fence candidate' 7
+    number "$fence_base" 1 "$revision_limit" && [ "$fence_base" = "$value" ] || fail 'Invalid fence baseline' 7
+    number "$fence_target" 1 "$revision_limit" && [ "$fence_target" = "$value" ] && [ "$fence_target" -gt "$fence_base" ] || fail 'Invalid fence candidate' 7
     [ "${#fence_token}" -eq 32 ] || fail 'Invalid fence handle' 7
     case "$fence_token" in *[!0-9a-f]*) fail 'Invalid fence handle' 7;; esac
     case "$fence_state" in active|settled-applied|settled-restored) ;; *) fail 'Invalid fence state' 7;; esac
@@ -272,35 +276,50 @@ open_store() {
             ash "$(dirname "$0")/homegate-proxy.sh" quiescent >/dev/null 2>/dev/null || fail 'Proxy must be quiescent before configuration changes' 4;;esac
     fi
     max_revision=0
+    history_count=0
+    history_floor=0
     scan_history=true
     if [ "$persistent_mode:$native_editor_enabled" = true:true ]; then
         case "$command" in
-            editor-state-read|runtime-active-snapshot-read|projection-publish|apply-finish-projection|restore-finish-projection) scan_history=false;;
+            runtime-active-snapshot-read|projection-publish|apply-finish-projection|restore-finish-projection) scan_history=false;;
         esac
     fi
     if [ "$persistent_mode:$native_editor_enabled:$scan_history" = true:true:true ]; then
-        max_revision=$(lua "$codec" history "$store" 2>/dev/null) || fail 'Invalid generation history'
-        number "$max_revision" 0 "$history_capacity" && [ "$max_revision" = "$value" ] || fail 'Invalid history report'
+        layout=$(lua "$codec" history "$store" layout 2>/dev/null) || fail 'Invalid generation history'
+        max_revision=${layout%% *}
+        layout_tail=${layout#* }
+        history_count=${layout_tail%% *}
+        history_revisions=${layout_tail#* }
+        number "$max_revision" 0 "$revision_limit" && [ "$max_revision" = "$value" ] || fail 'Invalid history report'
+        number "$history_count" 0 "$history_capacity" || fail 'Invalid history size'
+    elif [ "$persistent_mode:$native_editor_enabled" = true:true ]; then
+        # Check all directory names and ownership in one process. The pointer,
+        # journal and fence generations still receive content checks below.
+        max_revision=$(lua "$codec" history "$store" inventory 2>/dev/null) || fail 'Invalid generation inventory'
+        number "$max_revision" 0 "$revision_limit" && [ "$max_revision" = "$value" ] || fail 'Invalid history report'
     else for existing in "$store/gen-"*; do
         [ -e "$existing" ] || [ -L "$existing" ] || continue
         index=${existing##*/gen-}
-        number "$index" 1 "$history_capacity" && [ "$index" = "$value" ] || fail 'Invalid generation name'
+        number "$index" 1 "$revision_limit" && [ "$index" = "$value" ] || fail 'Invalid generation name'
         private_dir "$existing" || fail 'Unsafe generation directory'
-        # Current-source reads and continuation of an existing transaction
-        # verify the pointer, journal and fence references below. A new
-        # transaction checks all retained generations before allocation.
-        if [ "$persistent_mode:$scan_history" = true:true ] && [ "$command" != editor-state-read ]; then
+        if [ "$persistent_mode" = true ]; then
             validate_generation "$index"
         fi
         [ "$index" -le "$max_revision" ] || max_revision=$index
     done;fi
+    if [ "$revision_limit" -eq "$history_capacity" ]; then history_count=$max_revision; fi
     if [ -e "$store/current" ] || [ -L "$store/current" ]; then
-        read_one "$store/current" 3
-        number "$one" 1 "$history_capacity" && [ "$one" = "$value" ] || fail 'Invalid current generation'
+        read_one "$store/current" 10
+        number "$one" 1 "$revision_limit" && [ "$one" = "$value" ] || fail 'Invalid current generation'
         head_revision=$value
         validate_generation "$head_revision"
     elif [ "$max_revision" -ne 0 ]; then
         fail 'Interrupted initialization requires explicit recovery'
+    fi
+    if [ "$revision_limit" -gt "$history_capacity" ] && { [ -e "$store/history-floor" ] || [ -L "$store/history-floor" ]; }; then
+        read_one "$store/history-floor" 10
+        number "$one" 1 "$((max_revision - 1))" && [ "$one" = "$value" ] || fail 'Invalid history retention boundary' 7
+        history_floor=$value
     fi
     persistent_fence_read
     journal_read
@@ -450,8 +469,8 @@ validate_generation() {
             *) fail 'Unexpected generation entry';; esac
     done
     public_valid "$checked_dir/public.conf"
-    read_one "$checked_dir/parent" 3
-    number "$one" 0 "$((history_capacity - 1))" && [ "$one" = "$value" ] && [ "$value" -lt "$1" ] || fail 'Invalid generation ancestry'
+    read_one "$checked_dir/parent" 10
+    number "$one" 0 "$((revision_limit - 1))" && [ "$one" = "$value" ] && [ "$value" -lt "$1" ] || fail 'Invalid generation ancestry'
     validated_parent=$value
     vault_valid "$checked_dir/credentials"
     private_file "$checked_dir/manifest" || fail 'Unsafe integrity manifest'
@@ -461,8 +480,57 @@ validate_generation() {
     [ "$(cat "$checked_dir/manifest")" = "$expected_manifest" ] || fail 'Generation integrity mismatch'
     [ "$(stat -c %s "$checked_dir/manifest")" -eq "$((${#expected_manifest} + 1))" ] || fail 'Invalid integrity framing'
 }
+remove_retired_generation() {
+    retired="$store/.history-retired"
+    if [ -e "$retired" ] || [ -L "$retired" ]; then
+        private_dir "$retired" && [ "$history_floor" -gt 0 ] || fail 'Invalid retired history directory' 7
+        fsync "$store" && rm -rf "$retired" && fsync "$store" || fail 'Unable to finish retiring configuration history' 7
+    fi
+}
+retain_history_room() {
+    remove_retired_generation
+    floor_next="$store/.history-floor-next"
+    if [ -e "$floor_next" ] || [ -L "$floor_next" ]; then
+        private_file "$floor_next" && rm -f "$floor_next" || fail 'Invalid staged history boundary' 7
+    fi
+    [ "$history_count" -ge "$history_capacity" ] || return 0
+    # The store and supervisor locks exclude other readers/writers of these
+    # references. Active recovery and unknown DNS work were fenced above.
+    pinned=" $head_revision $max_revision ${fence_base:-} ${fence_target:-} ${copy_source:-} "
+    for reference in "$store/pending:4" "$store/startup-active:3"; do
+        path=${reference%:*}
+        if [ -e "$path" ] || [ -L "$path" ]; then
+            private_file "$path" && [ "$(stat -c %s "$path")" -le "$((public_limit + 512))" ] || fail 'Unsafe history reference' 7
+            revision=$(sed -n "${reference##*:}p" "$path") || fail 'Unable to read history reference' 7
+            number "$revision" 0 "$revision_limit" && [ "$value" = "$revision" ] || fail 'Invalid history reference' 7
+            pinned="$pinned$revision "
+        fi
+    done
+    if [ -d "$store/dns-settled" ]; then
+        # archive-check already authenticated this manifest under the same locks.
+        slot=$(cat "$store/dns-settled/current") || fail 'Unable to read DNS archive pointer' 7
+        case "$slot" in 1|2) ;; *) fail 'Invalid DNS archive pointer' 7;; esac
+        revision=$(sed -n '5p' "$store/dns-settled/slot-$slot/manifest") || fail 'Unable to read DNS archive generation' 7
+        number "$revision" 1 "$revision_limit" && [ "$value" = "$revision" ] || fail 'Invalid DNS archive generation' 7
+        pinned="$pinned$revision "
+    fi
+    for oldest in $history_revisions; do
+        case "$pinned" in *" $oldest "*) continue;; esac
+        if [ "$oldest" -gt "$history_floor" ]; then
+            (set -C; printf '%s\n' "$oldest" > "$floor_next") &&
+                fsync "$floor_next" && mv -f "$floor_next" "$store/history-floor" || fail 'Unable to write history retention boundary' 7
+            history_floor=$oldest
+        fi
+        # Publish the boundary before removing a generation from the chain.
+        fsync "$store/history-floor" "$store" && mv "$store/gen-$oldest" "$store/.history-retired" || fail 'Unable to retire configuration history' 7
+        remove_retired_generation
+        return 0
+    done
+    fail 'Configuration history is retained by active references' 4
+}
 begin_generation() {
-    [ "$max_revision" -lt "$history_capacity" ] || fail 'Prototype history capacity reached' 4
+    [ "$max_revision" -lt "$revision_limit" ] || fail 'Prototype history capacity reached' 4
+    if [ "$revision_limit" -gt "$history_capacity" ]; then retain_history_room; fi
     new_revision=$((max_revision + 1))
     candidate_dir="$store/gen-$new_revision"
     mkdir "$candidate_dir" 2>/dev/null || fail 'Unable to allocate generation'
@@ -596,8 +664,8 @@ journal_read() {
         [ "${#journal_checksum}" -eq 64 ] || fail 'Invalid service intent checksum'
         case "$journal_checksum" in *[!0-9a-f]*) fail 'Invalid service intent checksum';; esac
     fi
-    number "$journal_base" 1 "$history_capacity" && [ "$journal_base" = "$value" ] || fail 'Invalid application baseline'
-    number "$journal_target" 1 "$history_capacity" && [ "$journal_target" = "$value" ] &&
+    number "$journal_base" 1 "$revision_limit" && [ "$journal_base" = "$value" ] || fail 'Invalid application baseline'
+    number "$journal_target" 1 "$revision_limit" && [ "$journal_target" = "$value" ] &&
         [ "$journal_target" -gt "$journal_base" ] || fail 'Invalid application candidate'
     case "$journal_state" in prepared|applying|restoring|applied|restored) ;; *) fail 'Invalid application journal phase';; esac
     [ "${#journal_token}" -eq 32 ] || fail 'Invalid application handle'
@@ -873,18 +941,18 @@ plan_read() {
     number "$(stat -c %s "$store/pending")" 1 "$((public_limit + 512))" || fail 'Invalid preview size'
     {
         IFS= read -r plan_base && IFS= read -r plan_token && IFS= read -r plan_kind && IFS= read -r plan_source || fail 'Invalid preview header'
-        number "$plan_base" 1 "$history_capacity" && [ "$plan_base" = "$value" ] || fail 'Invalid preview base'
+        number "$plan_base" 1 "$revision_limit" && [ "$plan_base" = "$value" ] || fail 'Invalid preview base'
         [ "$plan_base" = "$head_revision" ] && [ "$plan_token" = "$confirmation" ] || fail 'Expired confirmation' 5
-        case "$plan_kind" in editor) [ "$persistent_mode:$native_editor_enabled" = true:true ] && number "$plan_source" 1 "$history_capacity" || fail 'Invalid editor preview';;
+        case "$plan_kind" in editor) [ "$persistent_mode:$native_editor_enabled" = true:true ] && number "$plan_source" 1 "$revision_limit" || fail 'Invalid editor preview';;
             import) [ "$plan_source" = 0 ] || fail 'Invalid import preview';;
-            rollback) number "$plan_source" 1 "$history_capacity" && [ "$plan_source" = "$value" ] || fail 'Invalid rollback preview';;
-            migration) [ "$public_mode" = true ] && [ "$head_revision" = 1 ] && number "$plan_source" 2 "$history_capacity" && [ "$plan_source" = "$value" ] || fail 'Invalid migration preview';;
+            rollback) number "$plan_source" 1 "$revision_limit" && [ "$plan_source" = "$value" ] || fail 'Invalid rollback preview';;
+            migration) [ "$public_mode" = true ] && [ "$head_revision" = 1 ] && number "$plan_source" 2 "$revision_limit" && [ "$plan_source" = "$value" ] || fail 'Invalid migration preview';;
             migration-source)
                 [ "$persistent_mode" = true ] && [ "$lifecycle_migration_enabled" = true ] && [ "$head_revision" = 1 ] &&
-                    number "$plan_source" 2 "$history_capacity" && [ "$plan_source" = "$value" ] || fail 'Invalid lifecycle migration preview' 7;;
+                    number "$plan_source" 2 "$revision_limit" && [ "$plan_source" = "$value" ] || fail 'Invalid lifecycle migration preview' 7;;
             production-copy)
                 [ "$persistent_mode:$production_copy_mode:$production_copy_enabled" = true:true:true ] && [ "$head_revision" = 1 ] &&
-                    number "$plan_source" 2 "$history_capacity" && [ "$plan_source" = "$value" ] || fail 'Invalid production copy preview' 7;;
+                    number "$plan_source" 2 "$revision_limit" && [ "$plan_source" = "$value" ] || fail 'Invalid production copy preview' 7;;
             *) fail 'Invalid preview operation';; esac
         if [ "$public_mode" = true ]; then
             IFS= read -r created && IFS= read -r deadline && IFS= read -r plan_boot && IFS= read -r plan_baseline && IFS= read -r plan_digest || fail 'Incomplete public UCI plan'
@@ -918,6 +986,7 @@ plan_read() {
 ancestor() {
     walker=$head_revision
     while [ "$walker" -ne 0 ]; do
+        if [ "$walker" -le "$history_floor" ] && [ ! -e "$store/gen-$walker" ] && [ ! -L "$store/gen-$walker" ]; then return 1; fi
         [ "$walker" != "$1" ] || return 0
         validate_generation "$walker"
         walker=$validated_parent
@@ -1175,7 +1244,7 @@ case "$command" in
         projection_role=restore;;
     init|status|export|preview|cancel) [ "$#" -eq 0 ] || fail 'Unexpected arguments' 2;;
     editor-state-read) [ "$#" = 0 ] && [ "$persistent_mode:$native_editor_enabled" = true:true ] || fail 'Native editor reader is not ready' 2;;
-    editor-preview) [ "$#" = 1 ] && [ "$persistent_mode:$native_editor_enabled" = true:true ] && number "$1" 1 "$history_capacity" || fail 'Native editor is not ready' 2;editor_base=$1;;
+    editor-preview) [ "$#" = 1 ] && [ "$persistent_mode:$native_editor_enabled" = true:true ] && number "$1" 1 "$revision_limit" || fail 'Native editor is not ready' 2;editor_base=$1;;
     writer-check) [ "$#" -eq 0 ] && [ "$persistent_mode" = true ] || fail 'Writer check requires persistent namespace' 2;;
     dns-recovery-check|dns-recovery-snapshot-read)
         [ "$#" -eq 0 ] && [ "$persistent_mode" = true ] && [ "$dns_recovery_read_enabled" = true ] || fail 'DNS recovery reader is not ready' 2;;
@@ -1206,7 +1275,7 @@ case "$command" in
     recover-application) [ "$#" -eq 0 ] && [ "$public_mode" = true ] || fail 'Recovery requires full schema' 2;;
     recover-fence)
         [ "$#" -eq 0 ] && [ "$persistent_mode" = true ] && [ "$orphan_recovery_enabled" = true ] || fail 'Orphan recovery is not ready' 2;;
-    rollback-preview) [ "$#" -eq 1 ] && number "$1" 1 "$history_capacity" && [ "$1" = "$value" ] || fail 'Expected generation number' 2;;
+    rollback-preview) [ "$#" -eq 1 ] && number "$1" 1 "$revision_limit" && [ "$1" = "$value" ] || fail 'Expected generation number' 2;;
     commit-apply-projection|commit-apply-observed)
         [ "$public_mode" = true ] && [ "$#" -eq 1 ] && [ "${#1}" -eq 32 ] || fail 'Expected confirmation handle' 2
         case "$1" in *[!0-9a-f]*) fail 'Invalid confirmation handle' 2;; esac
@@ -1246,6 +1315,28 @@ case "$command" in
         credential_name="$1.$2.$3";;
     *) fail 'Unsupported prototype command' 2;;
 esac
+if [ "$command" = editor-state-read ]; then
+    # The current generation is immutable. Bind the private snapshot to one
+    # pointer and manifest so reads can continue during a DDNS write.
+    [ -p /proc/self/fd/3 ] || fail 'Private editor requires inherited pipe' 7
+    owner=$(id -u) || fail 'Unable to identify owner'
+    persistent_open
+    read_one "$store/current" 10
+    number "$one" 1 "$revision_limit" && [ "$one" = "$value" ] || fail 'Invalid current generation'
+    head_revision=$value;generation="$store/gen-$head_revision"
+    editor_binding() {
+        private_file "$store/current" && private_file "$generation/manifest" &&
+            [ "$(cat "$store/current")" = "$head_revision" ] &&
+            stat -c '%d:%i:%s' "$store/current" "$generation" && sha256sum "$generation/manifest"
+    }
+    before=$(editor_binding) || fail 'Editor baseline changed' 4
+    lua "$codec" history "$store" inventory >/dev/null 2>/dev/null || fail 'Invalid generation inventory'
+    validate_generation "$head_revision"
+    snapshot=$(lua "$codec" editor-state "$generation" "$head_revision" 3>&1 2>/dev/null) || fail 'Private editor reader failed' 7
+    [ "$(editor_binding)" = "$before" ] || fail 'Editor baseline changed' 4
+    printf '%s\n' "$snapshot" >&3
+    exit 0
+fi
 open_store
 [ "$production_copy_mode" = false ] || production_copy_lock
 case "$command" in
@@ -1321,16 +1412,11 @@ case "$command" in
         scope=main-public-v1; [ "$public_mode" = false ] || scope=public-uci-v1
         application_phase=none; [ "$journal_active" = false ] || application_phase=$journal_state
         intent_bound=false; [ "$journal_format" = HGAPPLICATION1 ] || intent_bound=true
-        printf '{"api_version":1,"prototype":true,"ok":true,"revision":%s,"preview_present":%s,"service_enabled":false,"history_capacity":%s,"history_remaining":%s,"credential_capacity":%s,"scope":"%s","application_pending":%s,"application_phase":"%s","workers_pending":%s,"service_intent_bound":%s,"persistent_namespace":%s,"persistent_fence_pending":%s}\n' "$head_revision" "$preview" "$history_capacity" "$((history_capacity - max_revision))" "$credential_limit" "$scope" "$journal_active" "$application_phase" "$workers_pending" "$intent_bound" "$persistent_mode" "$persistent_fence_pending"
+        printf '{"api_version":1,"prototype":true,"ok":true,"revision":%s,"preview_present":%s,"service_enabled":false,"history_capacity":%s,"history_remaining":%s,"credential_capacity":%s,"scope":"%s","application_pending":%s,"application_phase":"%s","workers_pending":%s,"service_intent_bound":%s,"persistent_namespace":%s,"persistent_fence_pending":%s}\n' "$head_revision" "$preview" "$history_capacity" "$((history_capacity - history_count))" "$credential_limit" "$scope" "$journal_active" "$application_phase" "$workers_pending" "$intent_bound" "$persistent_mode" "$persistent_fence_pending"
         ;;
     export)
         need_initialized
         cat "$store/gen-$head_revision/public.conf" || fail 'Unable to export public config'
-        ;;
-    editor-state-read)
-        need_initialized
-        [ -p /proc/self/fd/3 ] || fail 'Private editor requires inherited pipe' 7
-        lua "$codec" editor-state "$store/gen-$head_revision" "$head_revision" 2>/dev/null || fail 'Private editor reader failed' 7
         ;;
     editor-preview)
         need_initialized

@@ -31,16 +31,21 @@ if arg[1]=='parent' then
     if role=='state' or role=='closeout' then root=parent
     elseif role=='read' then
         root=process(parent)
-        command(parent,{dir..'/homegate-ddns-state.sh','batch-sync-internal',rule,root,'--confirm'})
     else fail() end
     local raw=read('/proc/'..root..'/cmdline',8192)
-    local confirmation=raw:match('%z(%-%-confirm%-closeouts)%z$') and '--confirm-closeouts' or '--confirm'
-    if role=='closeout' and confirmation~='--confirm-closeouts' then fail() end
-    command(root,{dir..'/homegate-ddns-batch.sh','sync',confirmation});_,birth=process(root)
+    local manual=raw:match('%z%-%-confirm%-rule%z'..rule:gsub('%-','%%-')..'%z$')~=nil
+    if role=='read' then
+        command(parent,{dir..'/homegate-ddns-state.sh',manual and 'batch-sync-manual' or 'batch-sync-internal',rule,root,'--confirm'})
+    end
+    local confirmation=manual and '--confirm-rule' or raw:match('%z%-%-confirm%-closeouts%z$') and '--confirm-closeouts' or '--confirm'
+    if role=='closeout' and confirmation=='--confirm' then fail() end
+    local expected={dir..'/homegate-ddns-batch.sh','sync',confirmation}
+    if manual then expected[#expected+1]=rule end
+    command(root,expected);_,birth=process(root)
     io.write(root..':'..birth..'\n');return
 end
 local revision=arg[2]
-if not number(revision,96) then fail() end
+if not number(revision,999999999) then fail() end
 if arg[1]=='names' then
     if arg[3] then fail() end
     local raw=io.stdin:read(65537) or '';local d=shared.parse(raw)

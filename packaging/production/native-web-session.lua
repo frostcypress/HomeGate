@@ -62,7 +62,7 @@ else
   program,args=core..'homegate-proxy-validation.sh',{mode,value}
  elseif action~='owner' then
   local revision,job=arg[3],arg[4]
-  if not number_arg(revision,2,1) or tonumber(revision)>96 or not number_arg(job,9,2) then refuse() end
+  if not number_arg(revision,9,1) or tonumber(revision)>999999999 or not number_arg(job,9,2) then refuse() end
   if action=='observe-config-health' then
    args={'--health-status',value,revision,job}
   elseif action=='observe-network' then

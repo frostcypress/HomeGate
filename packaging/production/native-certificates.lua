@@ -2,8 +2,7 @@
 -- A durable inventory precedes quarantine; partial removal resumes that inventory.
 local base=assert(arg[0]:match('^(.*)/[^/]+$'));local fs=require('nixio.fs');local nx=require('nixio');require('nixio.util')
 local json=require('luci.jsonc');local codec=assert(loadfile(base..'/project/luci/lua/luasrc/model/homegate/backup.lua'))()
-local id=arg[2];assert(arg[1]=='purge' and type(id)=='string' and #id<=64 and id:match('^[a-zA-Z0-9_-]+$') and not arg[3])
-local root='/etc/homegate/certs';local source=root..'/'..id;local trash=root..'/.purge-'..id;local journal=root..'/.purge-'..id..'.json'
+local root='/etc/homegate/certs'
 local function quote(s)return "'"..s:gsub("'","'\\''").."'"end
 local function sync(p)assert(os.execute('fsync '..quote(p)..' 2>/dev/null')==0)end
 local function dir(p)local a=assert(fs.lstat(p));assert(a.type=='dir' and a.uid==0 and a.modedec==700);return a end
@@ -13,6 +12,48 @@ local function read(p,public)
 end
 local function hash(p)local f=assert(io.popen('sha256sum '..quote(p)..' 2>/dev/null','r'));local raw=f:read(1024);assert(f:close());local h=raw and raw:match('^([0-9a-f]+)  ');assert(h and #h==64);return h end
 local function pair(n)return #n==37 and n:match('^pair%-[0-9a-f]+$')end
+local function cert_id(id)return type(id)=='string' and #id<=64 and id:match('^[a-zA-Z0-9_-]+$')end
+if ...=='observe'then
+ -- Published pairs are immutable. Read only sealed display metadata and
+ -- check the selector again after reading, including during certificate swaps.
+ return function(id,values)
+  assert(cert_id(id));dir('/etc/homegate')
+  local row={id=id,exists=false,valid=false,identity_valid=false,days=0,renew=false,
+    name=values.name,source=values.source,environment=values.environment,domains=values.domains,ca=values.ca,enabled=values.enabled=='1'}
+  local path=root..'/'..id
+  if fs.lstat(root)then dir(root)else return row end
+  if fs.lstat(path)then dir(path)else return row end
+  local pointer=path..'/current'
+  if not fs.lstat(pointer)then return row end
+  local current,st=read(pointer)
+  local generation=current:sub(1,-2)
+  assert(current:sub(-1)=='\n' and pair(generation))
+  local location=path..'/'..generation
+  dir(location)
+  local manifest=read(location..'/manifest')
+  local material={}
+  for _,name in ipairs({'scope.json','result.json'})do
+   local p=location..'/'..name
+   material[name]=assert(json.parse((read(p))))
+   assert(manifest:find('\n'..hash(p)..'  '..name..'\n',1,true))
+  end
+  local after,a=read(pointer)
+  assert(after==current and a.dev==st.dev and a.ino==st.ino)
+  local scope,result=material['scope.json'],material['result.json']
+  assert(scope.id==id and result.certificate==id and result.identity_valid==true and result.key_matches==true)
+  assert(type(result.expires_epoch)=='number' and type(result.not_before_epoch)=='number')
+  local domains={};for _,name in ipairs(values.domains)do domains[#domains+1]=name end;table.sort(domains)
+  local matches=values.source==scope.source and values.environment==scope.environment and
+    codec.json(domains)==codec.json(scope.domains) and codec.json(domains)==codec.json(result.domains)
+  local now=os.time()
+  row.exists=true;row.identity_valid=matches;row.valid=matches and now>=result.not_before_epoch and now<result.expires_epoch
+  row.expires=result.expires;row.days=math.floor((result.expires_epoch-now)/86400)
+  row.renew=row.days<=(tonumber(values.renew_days) or 5)
+  return row
+ end
+end
+local id=arg[2];assert(arg[1]=='purge' and cert_id(id) and not arg[3])
+local source=root..'/'..id;local trash=root..'/.purge-'..id;local journal=root..'/.purge-'..id..'.json'
 local leaf={['fullchain.pem']=true,['privkey.pem']=true,['scope.json']=true,['result.json']=true,manifest=true}
 local flat={current=true,['legacy-adopted']=true,['fullchain.pem']=true,['privkey.pem']=true}
 local function path_ok(p)local d,n=p:match('^([^/]+)/([^/]+)$');return d and pair(d) and leaf[n] or not p:find('/',1,true) and flat[p]end

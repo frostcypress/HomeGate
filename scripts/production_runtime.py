@@ -28,6 +28,11 @@ def payload(root):
         'homegate-recovery-read.sh':['recovery_status_enabled','ddns_recovery_read_enabled'],
         'homegate-recovery-worker.sh':['recovery_status_enabled','ddns_recovery_read_enabled'],
         'homegate-service-observer-watchdog.sh':['network_resolve_enabled','health_status_enabled','recovery_status_enabled','ddns_recovery_read_enabled'],
+        'homegate-ddns-schedule.sh':['ddns_schedule_closeout_enabled'],
+        'homegate-ddns-batch.sh':['ddns_batch_closeout_enabled'],
+        'homegate-ddns-batch-results.sh':['ddns_batch_closeout_enabled'],
+        'homegate-ddns-authority.sh':['native_ddns_authority_reads'],
+        'homegate-proxy.sh':['native_proxy_reads'],
     }
     for name,gates in readonly.items():
         key=BASE+'project/core/prototype/'+name
@@ -219,6 +224,7 @@ def web_runtime(root,files):
     files[BASE+'strict-web-json.lua']=("local json=require('luci.jsonc')\n"+parser.replace('#body>65536','#body>2097152')+'return parse\n').encode()
     contract=json.loads((root/'docs/核心CLI合同.json').read_text(encoding='utf-8'))
     routes=contract['routes'] if 'routes' in contract else contract['web_routes']
+    routes.update({'api/overview_status': {'write':False}, 'api/overview_ipv6': {'write':False}})
     files[BASE+'legacy-routes.json']=(json.dumps(routes,ensure_ascii=False,separators=(',',':'))+'\n').encode()
     files[BASE+'legacy-controller.lua']=(root/'project/luci/lua/luasrc/controller/homegate.lua').read_bytes()
     # Private preview reuses the production PEM/key/date/SAN validator verbatim.
@@ -319,37 +325,45 @@ fi
                 start=raw.index("  var tStopped='<%:Stopped%>'")
                 end=raw.index('\n})();',start)
                 raw=raw[:start]+"""  var tStopped='<%:Stopped%>', tHealthy='<%:Healthy%>', tUnhealthy='<%:Unhealthy%>';
-  var tUnavailable='<%:Service status temporarily unavailable%>';
-  var requestNumber=0, networkRequested=false;
+  var tStarting='<%:Starting...%>', tStopping='<%:Stopping...%>', tUnavailable='<%:Service status temporarily unavailable%>';
+  var requestNumber=0;
   var retryDelays=[250, 500, 1000];
+  window.hgServiceTransition = function(action) {
+    ++requestNumber;
+    hgText('hg_service', action === 'stop' ? tStopping : tStarting);
+    if (action !== 'stop') hgText('hg_pid', '-');
+  };
   window.hgRefreshService = function() {
     var request=++requestNumber;
     function readStatus(attempt) {
-      hgGet('<%=url('admin/services/homegate/api/status')%>', function(s) {
+      hgGet('<%=url('admin/services/homegate/api/overview_status')%>', function(s) {
         if (request !== requestNumber) return;
-        var service=s && !s.state_unknown && s.service;
-        var known=service && typeof service.running === 'boolean' && typeof service.healthy === 'boolean';
+        var service=s && s.ok && s.service;
+        var known=service && typeof service.running === 'boolean';
         if (!known && attempt < retryDelays.length) {
           window.setTimeout(function() {
             if (request === requestNumber) readStatus(attempt+1);
           }, retryDelays[attempt]);
           return;
         }
-        var state=known ? (service.running ? (service.healthy ? tHealthy : tUnhealthy) : tStopped) : tUnavailable;
+        var state=known ? tStopped : tUnavailable;
+        if (known && service.running) {
+          var phase=s.coordinator && s.coordinator.state;
+          state=phase === 'starting' ? tStarting : phase === 'stopping' ? tStopping :
+            service.healthy ? tHealthy : tUnhealthy;
+        }
         hgText('hg_service', state);
-        hgText('hg_pid', known && service.running && s.runtime && s.runtime.pid ? 'PID ' + s.runtime.pid : '-');
-        // These reads use the same non-blocking configuration locks.
-        if (networkRequested) return;
-        networkRequested=true;
-        hgGet('<%=url('admin/services/homegate/api/network')%>', function(n) {
-          var w=n && n.network && n.network.wan ? n.network.wan : {};
-          hgText('hg_ipv6', w.public_ipv6 || '-');
-        });
+        var pid=known && service.running && s.runtime && s.runtime.pid;
+        hgText('hg_pid', typeof pid === 'number' && pid > 1 ? 'PID ' + pid : '-');
       });
     }
     readStatus(0);
   };
-  window.hgRefreshService();"""+raw[end:]
+  window.hgRefreshService();
+  hgGet('<%=url('admin/services/homegate/api/overview_ipv6')%>', function(n) {
+    var address=n && n.ok && n.public_ipv6;
+    hgText('hg_ipv6', address || (n && n.ok ? '<%:No public IPv6 address%>' : '<%:IPv6 status temporarily unavailable%>'));
+  });"""+raw[end:]
             if path.stem=='maintenance':
                 preview='<div id="hg-config-preview"'
                 recovery='''<% if configuration_recovery_needed then %>

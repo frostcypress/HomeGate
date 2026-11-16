@@ -48,6 +48,12 @@ end
 local function decoded(args,input)
  local raw,code=core(args,input);return json.parse(raw),code
 end
+local function uptime()
+ local f=original_io.open('/proc/uptime','rb')
+ if not f then return nil end
+ local raw=f:read(128) or '';f:close()
+ return tonumber(raw:match('^(%d+%.%d+) '))
+end
 local function validate_pair(cert,key)
  local job=work:match('/([0-9a-f]+)$');if not write or not job or #job~=32 then return '',1 end
  local raw,rc=call({'ash',base..'/native-web-cert-preview.sh',job},codec.json({certificate_pem=cert,private_key_pem=key}))
@@ -187,11 +193,24 @@ function cursor:commit(pkg)
   local _,rc=core({'service-stop','--confirm'})
   if rc~=0 then result.failure_stage='runtime-stop';result.exit_code=rc;return false end
   local quiet=false
-  -- Use whole-second sleeps on firmware without fractional sleep support.
-  for attempt=1,21 do
-   local _,code=core({'service-quiescent'})
-   if code==0 then quiet=true;break end
-   if attempt<21 then call({'sleep','1'},nil,1)end
+  local started=uptime()
+  if started then
+   local short_retries=3
+   repeat
+    local _,code=core({'service-quiescent'})
+    if code==0 then quiet=true;break end
+    local now=uptime()
+    if not now or now-started>=20 then break end
+    local pause=-1
+    if short_retries>0 then
+     short_retries=short_retries-1
+     _,pause=call({'lua',proto..'/worker-process.lua','pause','300'},nil,1)
+    end
+    if pause~=0 then
+     _,pause=call({'sleep','1'},nil,1)
+     if pause~=0 then break end
+    end
+   until false
   end
   if not quiet then result.failure_stage='runtime-stop';return false end
   stopped_for_save=true;result.runtime_stopped_for_save=true
@@ -221,10 +240,32 @@ local stage_messages={
  ['ddns-authorization']='DDNS 规则授权未完成，请检查规则和账号。',
  ['runtime-plan']='服务启动计划未能保存，请检查已启用的公网规则、证书和访问策略。',
  ['runtime-binding']='无法确认启动时要使用的配置版本。',
+ ['dns-busy']='后台正在处理 DNS 或证书任务，请稍后再试。',
+ ['ddns-sync']='DDNS 同步未完成，请检查 DNS 账户和插件日志。',
+ ['ddns-backoff']='DNS 服务暂时无法更新，请等待下一次自动同步。',
+ ['ddns-unknown']='DDNS 更新结果待核对，请检查插件日志。',
+ ['acme-admission']='续期未能启动，请检查插件日志和证书任务。',
+ ['acme-failed']='证书续期失败，请检查插件日志。',
+ ['acme-unknown']='证书续期结果待核对，请检查插件日志。',
 }
 local function refused_stage(stage, code)
  result.failure_stage=stage;result.exit_code=code
  return '',code~=0 and code or 1
+end
+local function wait_ms(ms)
+ local _,rc=call({'lua',proto..'/worker-process.lua','pause',tostring(ms)},nil,32)
+ if rc~=0 then call({'sleep','1'},nil,32) end
+end
+local function dns_action(args)
+ local until_time=uptime()
+ if until_time then until_time=until_time+12 end
+ while true do
+  local raw,rc=call(args)
+  local now=uptime()
+  -- Exit 8 is reserved for pre-admission lock contention, before any write.
+  if rc~=8 or not until_time or not now or now>=until_time then return raw,rc end
+  wait_ms(500)
+ end
 end
 local function mark_service_apply(operation)
  if fixture or request.route~='basic_apply' then return end
@@ -303,25 +344,47 @@ local function shell(command)
    if rc~=0 or not d or not d.ok then return raw,1 end
    pending_imports[argv[2]]={certificate_pem=cert,private_key_pem=key};return raw,0
   end
+  if action=='dns-zones'then
+   local raw,rc=call({'ash',base..'/native-cli-core.sh',action,argv[2]})
+   if rc==4 then
+    return codec.json({api_version=1,ok=false,phase='dns-provider',error_kind='busy',retryable=true,zones={}}),rc
+   end
+   return raw,rc
+  end
+  if action=='ddns-sync'then
+   if not write or #argv~=2 then return '',1 end
+   effect_started=true
+   local raw,rc=dns_action({'ash',proto..'/homegate-ddns-batch.sh','sync','--confirm-rule',argv[2]})
+   local d=json.parse(raw)
+   if rc==0 and d and d.ok then return raw,0 end
+   local row=d and d.rules and d.rules[1]
+   if d and (d.effect=='unknown' or d.effect=='confirmed') then
+    result.uncertain=true;return refused_stage('ddns-unknown',rc)
+   end
+   return refused_stage(rc==8 and 'dns-busy' or row and row.status=='retry_wait' and 'ddns-backoff' or 'ddns-sync',rc)
+  end
   if action=='cert-renew'then
    if not write or #argv~=2 then return '',1 end
    local job=work:match('/([0-9a-f]+)$');if not job or #job~=32 then return '',1 end
    local deadline=tonumber(lib.read(work..'/deadline',16));if not deadline then return '',1 end
    effect_started=true;result.native_job=job
-   local d,rc=decoded({'acme-issue',argv[2],job,'--confirm'});if rc~=0 or not d or not d.ok then return codec.json(d or {ok=false,job=job}),1 end
+   local raw,rc=dns_action({'ash',proto..'/homegate-acme-job.sh','issue-live',argv[2],job,'--confirm'})
+   local d=json.parse(raw)
+   if rc~=0 or not d or not d.ok then return refused_stage(rc==8 and 'dns-busy' or 'acme-admission',rc) end
    while true do
     local status,code=decoded({'acme-job',job})
-    if code~=0 or not status then result.uncertain=true;return codec.json({ok=false,job=job}),1 end
+    if code~=0 or not status then result.uncertain=true;return refused_stage('acme-unknown',code) end
     if status.pending==false then
      local success=status.ok and status.cleanup_required==false and (status.state=='issued' or status.state=='skipped')
-     if not success and (status.cleanup_required or status.state=='unknown')then result.uncertain=true end
-     return codec.json(status),success and 0 or 1
+     if success then return codec.json(status),0 end
+     if status.cleanup_required or status.state=='unknown'then result.uncertain=true end
+     return refused_stage(result.uncertain and 'acme-unknown' or 'acme-failed',code)
     end
     local now,nrc=call({'lua',proto..'/worker-process.lua','now'},nil,32)
     if nrc~=0 or not tonumber(now) or tonumber(now)>=deadline-15 then
-     core({'acme-stop',job,'--confirm'});result.uncertain=true;return codec.json({ok=false,job=job,error='Certificate task retained for inspection'}),1
+     core({'acme-stop',job,'--confirm'});result.uncertain=true;return refused_stage('acme-unknown',1)
     end
-    call({'sleep','.2'},nil,1)
+    wait_ms(200)
    end
   end
   return core(argv)
@@ -418,8 +481,8 @@ modules['luci.template']={render=function(name,data)
   data.configuration_recovery_needed=fs.lstat(store..'/application')~=nil
   local pointer=fs.lstat(store..'/current')
   local current=pointer and pointer.type=='reg' and pointer.uid==0 and pointer.nlink==1 and
-   pointer.modedec==600 and pointer.size<=3 and fs.readfile(store..'/current',3)
-  local generation=current and current:match('^([1-9]%d?)\n$')
+   pointer.modedec==600 and pointer.size<=10 and fs.readfile(store..'/current',10)
+  local generation=current and current:match('^([1-9]%d*)\n$')
   local path=generation and store..'/gen-'..generation
   data.configuration_migration_needed=(not pointer or path and not fs.lstat(path..'/source.conf')) and
    read_configuration_source()~=assert(fs.readfile(base..'/factory.config')) or false
@@ -438,6 +501,35 @@ local env={_M=nil,module=function()end,package={seeall=true},require=function(na
  io={open=virtual_file},os={time=os.time,date=os.date,remove=function(p)if files[p]then files[p]=nil;return true end;return false end},math=math,string=string,table=table,tonumber=tonumber,tostring=tostring,type=type,pairs=pairs,ipairs=ipairs,next=next,assert=assert,error=error,pcall=pcall,select=select,unpack=unpack,_=function(s)return s end}
 env._M=env
 local ok,err=pcall(function()
+ if request.route=='api/overview_status' or request.route=='api/overview_ipv6' then
+  local command=request.route=='api/overview_status' and {'ash',base..'/native-service.sh','overview-status'}
+   or {'lua',proto..'/homegate-network.lua','overview-wan'}
+  local raw,code=call(command,nil,8192)
+  local data=code==0 and json.parse(raw)
+  result.body=type(data)=='table' and raw or '{"ok":false}'
+  result.headers['Content-Type']='application/json'
+  result.ok=true
+  return
+ end
+ if request.route=='api/certs' and not fixture then
+  local doc=load_document('homegate')
+  local certificates={}
+  if revision then
+   local observe=assert(loadfile(base..'/native-certificates.lua'))('observe')
+   for _,section in ipairs(doc)do
+    if section.kind=='certificate'then
+     local ok,status=pcall(observe,section.name,section.values)
+     if ok then certificates[#certificates+1]=status end
+    end
+   end
+  end
+  local info=decoded({'version'})
+  result.body=codec.json({api_version=1,ok=revision~=nil,phase='acme',version=info and info.version,
+   certificates=certificates,effect='none',write_ready=false})
+  result.headers['Content-Type']='application/json'
+  result.ok=true
+  return
+ end
  local fn=assert(loadfile(base..'/legacy-controller.lua'));setfenv(fn,env);fn()
  local handler=env[lib.routes[request.route].handler];if type(handler)~='function'then error('route handler')end;handler()
  result.ok=result.error==nil

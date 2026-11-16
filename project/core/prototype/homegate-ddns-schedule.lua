@@ -47,12 +47,12 @@ elseif mode=='decision' then
     local rows={};for i=2,#arg do local rule,status,wait=arg[i]:match('^([a-zA-Z0-9_-]+):([a-z_]+):(%d+)$');if not rule or #rule>64 then fail() end;rows[#rows+1]={rule=rule,status=status,retry_in=tonumber(wait)} end
     local decision,wait=policy.decision(rows);if not decision then fail() end;io.write(decision..':'..wait..'\n');return
 elseif mode=='batch' then
-    if arg[5] then fail() end;local names={};for n in (arg[4] or ''):gmatch('[^,]+') do names[#names+1]=n end
+    if arg[6] or (arg[5] and arg[5]~='retired') then fail() end;local names={};for n in (arg[4] or ''):gmatch('[^,]+') do names[#names+1]=n end
     local raw=io.stdin:read(65537) or '';if #raw>65536 then fail() end
     local d=shared.parse(raw)
     -- Failure reports intentionally have no configuration_revision field.
     if d and d.error then d.configuration_revision=tonumber(arg[2]) end
-    local effect=policy.batch(raw,d,arg[2],arg[3],names,codec.json);if not effect then fail() end;io.write(effect..'\n');return
+    local effect=policy.batch(raw,d,arg[2],arg[3],names,codec.json,arg[5]=='retired');if not effect then fail() end;io.write(effect..'\n');return
 elseif mode=='report' then
     if arg[8] or (arg[7] and arg[7]~='run' and arg[7]~='serve') then fail() end
     local d={api_version=1,prototype=true,ok=arg[2]=='true',phase='ddns-schedule',running=arg[3]=='running' or arg[3]=='waiting',status=arg[3],reason=arg[4],ticks=tonumber(arg[5]),last_effect=arg[6],effect='none',write_ready=false,admission_limit=policy.limit}

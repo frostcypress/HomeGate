@@ -5,7 +5,7 @@ local shared=assert(loadfile(dir..'/cloudflare-codec.lua'))('library')
 local planner=assert(loadfile(dir..'/ddns-plan.lua'))()
 local state=assert(loadfile(dir..'/ddns-state.lua'))()
 local mode,revision,rule=arg[1],arg[2],arg[3]
-if not revision or not revision:match('^[1-9]%d*$') or tonumber(revision)>96 or not planner.id(rule) then os.exit(1) end
+if not revision or not revision:match('^[1-9]%d*$') or tonumber(revision)>999999999 or not planner.id(rule) then os.exit(1) end
 if mode=='scope' or mode=='reset-scope' then
     if arg[4] then os.exit(1) end
     local snapshot=assert(loadfile(dir..'/private-snapshot.lua'))().read(io.stdin,backup)
@@ -31,6 +31,12 @@ if not f or not f:close() or #raw>4096 then os.exit(1) end
 local old
 if raw~='' then old=shared.parse(raw);if not state.valid(old) or old.rule~=rule or backup.json(old)..'\n'~=raw then os.exit(1) end end
 local decision=state.decision(old,c,now,blocked=='true',authorized=='true',incomplete=='true')
+if mode=='decision-manual' or mode=='begin-manual' then
+    mode=mode:gsub('%-manual$','')
+    -- Explicit sync may recheck a successful rule. Error backoff and unknown
+    -- writes still use the normal decision.
+    if decision=='waiting' then decision='ready' end
+end
 if mode=='status' then
     if arg[14] then os.exit(1) end
     io.write(state.report(old,c,now,blocked=='true',authorized=='true',incomplete=='true'))

@@ -157,6 +157,18 @@ msgstr "运行异常"
 msgid "Service status temporarily unavailable"
 msgstr "运行状态暂不可用"
 
+msgid "Starting..."
+msgstr "正在启动…"
+
+msgid "Stopping..."
+msgstr "正在停用…"
+
+msgid "No public IPv6 address"
+msgstr "未检测到公网 IPv6"
+
+msgid "IPv6 status temporarily unavailable"
+msgstr "IPv6 状态暂不可用"
+
 msgid "Dynamic DNS Rules"
 msgstr "动态域名规则"
 
@@ -1320,6 +1332,18 @@ msgstr "主域名由所选 DNS 账户自动识别。"
 
 msgid "No managed primary domains were detected."
 msgstr "未检测到可管理的主域名。"
+
+msgid "Unable to load primary domains."
+msgstr "暂未获取到 DNS 账户的主域名。"
+
+msgid "Using saved primary domains. The DNS list could not be refreshed."
+msgstr "已显示保存的主域名，暂时无法刷新 DNS 账户的列表。"
+
+msgid "Retry"
+msgstr "重试"
+
+msgid "Certificate status temporarily unavailable"
+msgstr "暂无法读取证书状态"
 
 msgid "Save the DNS account first to detect primary domains."
 msgstr "请先保存 DNS 账户以识别主域名。"

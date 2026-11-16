@@ -6,6 +6,7 @@ PATH=/usr/sbin:/usr/bin:/sbin:/bin;export PATH LC_ALL=C TZ=UTC0
 unset IPKG_INSTROOT INIT_TRACE LUA_INIT LUA_PATH LUA_CPATH HOMEGATE_CONFIG_PROTO_STORE
 unset HTTP_PROXY HTTPS_PROXY ALL_PROXY http_proxy https_proxy all_proxy SSL_CERT_FILE SSL_CERT_DIR
 proxy_runtime_enabled=false
+native_proxy_reads=false
 fail() { printf '{"api_version":1,"engineering":true,"ok":false,"phase":"proxy","effect":"none","write_ready":false,"error":"Proxy unavailable; inspect retained session"}\n';exit "${1:-7}"; }
 action=${1:-}
 case "$action" in
@@ -21,6 +22,7 @@ HG_JOB=;. "$HG_DIR/homegate-acme-common.sh"
 AUDIT=/var/run/homegate-audit
 P=$HG_RUN/proxy;LOCK=$HG_RUN/proxy.lock;CONTROL=$HG_RUN/proxy.control;BODY=/var/run/homegate-proxy-body
 process=$HG_DIR/worker-process.lua
+pause_startup() { lua "$process" pause 100 9>&- || sleep .1 9>&- || sleep 1 9>&-; }
 idle() { printf '{"api_version":1,"engineering":true,"ok":true,"phase":"proxy","state":"idle","running":false,"effect":"none","write_ready":false}\n'; }
 seal() { (cd "$P" && sha256sum plan.json binding intent token boot snapshots cn.conf audit-token); }
 control() { hg_file "$CONTROL" 0 && [ "$(stat -c %s "$CONTROL")" -eq 0 ] || return 1;exec 5>>"$CONTROL";hg_bound 5 "$CONTROL" && flock -n 5; }
@@ -151,19 +153,21 @@ if [ "$action" = start ];then
  ash "$HG_DIR/homegate-firewall.sh" cleanup-if-owned --confirm >/dev/null || fail 4
  if hg_exists /etc/homegate/access;then hg_dir /etc/homegate/access || fail;fi
  if hg_exists /etc/homegate/access/CN.cidr;then hg_file /etc/homegate/access/CN.cidr 25165824 || fail;fi
- business && ash "$HG_DIR/homegate-config-prototype.sh" --persistent writer-check >/dev/null && ash "$HG_DIR/homegate-startup-active.sh" check >/dev/null || fail 4
+ check=check;snapshot_command=runtime-startup-snapshot-read
+ if [ "$native_proxy_reads" = true ];then check=check-current;snapshot_command=runtime-active-snapshot-read;fi
+ business && ash "$HG_DIR/homegate-config-prototype.sh" --persistent writer-check >/dev/null && ash "$HG_DIR/homegate-startup-active.sh" "$check" >/dev/null || fail 4
  [ -f /usr/libexec/homegate-nginx/nginx ] && [ ! -L /usr/libexec/homegate-nginx/nginx ] && [ -x /usr/libexec/homegate-nginx/nginx ] && [ "$(stat -c %u /usr/libexec/homegate-nginx/nginx)" = 0 ] || fail 7
  for f in "$LOCK" "$CONTROL";do if ! hg_exists "$f";then (set -C; : > "$f") && fsync "$f" "$HG_RUN" || fail;fi;hg_file "$f" 0 && [ "$(stat -c %s "$f")" = 0 ] || fail;done
  exec 9>>"$LOCK";hg_bound 9 "$LOCK" && flock -n 9 && control || fail 4
- plan=$(ash "$HG_DIR/homegate-config-prototype.sh" --persistent runtime-startup-snapshot-read 3>&1 4>&- 5>&- 8>&- 9>&- >/dev/null | lua "$HG_DIR/homegate-proxy.lua" plan "$selection" "$policy" 3>&- 4>&- 5>&- 6>&- 7>&- 8>&- 9>&-) || fail
+ plan=$(ash "$HG_DIR/homegate-config-prototype.sh" --persistent "$snapshot_command" 3>&1 4>&- 5>&- 8>&- 9>&- >/dev/null | lua "$HG_DIR/homegate-proxy.lua" plan "$selection" "$policy" 3>&- 4>&- 5>&- 6>&- 7>&- 8>&- 9>&-) || fail
  selected_certificates=$(printf '%s\n' "$plan" | lua "$HG_DIR/homegate-proxy.lua" selection-certificates) || fail
  for c in $selected_certificates;do ash "$HG_DIR/homegate-certificate.sh" admission-status-internal "$c" --confirm | lua "$HG_DIR/homegate-proxy.lua" certificate-ok "$c" || fail;done
  ! hg_exists "$AUDIT" || fail 4
  ! hg_exists "$P" && mkdir "$P" && printf '%s\n' "$plan" > "$P/plan.json" || fail 4
  token=$(lua "$HG_DIR/cloudflare-codec.lua" nonce < /proc/sys/kernel/random/uuid) || fail
  printf '%s\n' "$token" > "$P/token" && hg_binding > "$P/binding" && intent > "$P/intent" && cat /proc/sys/kernel/random/boot_id > "$P/boot" || fail
- for c in $(certificates);do
-  ash "$HG_DIR/homegate-certificate.sh" admission-status-internal "$c" --confirm | lua "$HG_DIR/homegate-proxy.lua" certificate-ok "$c" || fail
+ # The admission above and the manifest-checked copies below share FD6/7.
+ for c in $selected_certificates;do
   base=/etc/homegate/certs/$c;hg_dir /etc/homegate/certs && hg_dir "$base" && hg_file "$base/current" 38 && [ "$(stat -c %s "$base/current")" = 38 ] || fail
   pair=$(cat "$base/current");case "$pair" in pair-*) ;;*) fail;;esac;hg_hex "${pair#pair-}" 32 && hg_dir "$base/$pair" || fail
   for n in fullchain.pem privkey.pem scope.json result.json manifest;do hg_file "$base/$pair/$n" 65536 || fail;done
@@ -206,23 +210,24 @@ finish() {
 child=$!;now=$(lua "$process" now) || finish failed;deadline=$((now+10))
 while kill -0 "$child" 2>/dev/null;do
  [ "$interrupted" = false ] && ! hg_exists "$P/stop" || finish stopped
- now=$(lua "$process" now) || finish failed;[ "$now" -lt "$deadline" ] || finish failed;sleep .1 || :
+ now=$(lua "$process" now) || finish failed;[ "$now" -lt "$deadline" ] || finish failed;pause_startup || finish failed
 done
 wait "$child" || finish failed
 [ "$interrupted" = false ] && ! hg_exists "$P/stop" || finish stopped
 [ "$(cat "$P/binding")" = "$(hg_binding)" ] && ash "$HG_DIR/homegate-startup-active.sh" check >/dev/null || finish failed
 lua "$HG_DIR/homegate-access-audit.lua" serve "$token" 3>&- 4>&- 5>&- 6>&- 7>&- 8>&- 9>&- </dev/null >/dev/null 2>&1 &
-audit_child=$!;attempt=0
+audit_child=$!;now=$(lua "$process" now) || finish failed;deadline=$((now+3))
 while [ "$(cat "$P/audit-health")" != true ];do
+ [ "$interrupted" = false ] && ! hg_exists "$P/stop" || finish stopped
  kill -0 "$audit_child" 2>/dev/null || finish failed
- attempt=$((attempt+1));[ "$attempt" -lt 20 ] || finish failed;sleep .1 || :
+ now=$(lua "$process" now) || finish failed;[ "$now" -lt "$deadline" ] || finish failed;pause_startup || finish failed
 done
 audit_info=$(lua "$process" info "$audit_child" none) || finish failed
 old_ifs=$IFS;IFS=:;set -- $audit_info;IFS=$old_ifs
 [ "$#" = 6 ] && [ "$2" = "$$" ] && [ "$3" = "$$" ] && [ "$4" = "$$" ] || finish failed
 audit_birth=$5
 /usr/libexec/homegate-nginx/nginx -p "$P/" -c "$P/active.conf" -g 'daemon off;' 3>&- 4>&- 5>&- 6>&- 7>&- 8>&- 9>&- </dev/null >/dev/null 2>&1 &
-child=$!;sleep .1
+child=$!;pause_startup || finish failed
 kill -0 "$child" 2>/dev/null || finish failed
 lua "$HG_DIR/homegate-proxy.lua" report running || finish failed
 child_info=$(lua "$process" info "$child" none) || finish failed

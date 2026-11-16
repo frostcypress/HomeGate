@@ -17,9 +17,14 @@ action=${1:-};shift || fail 2
 guard() {
  hg_dir "$P" && hg_file "$P/token" 33 && [ "$(cat "$P/token")" = "$1" ] && ! hg_exists "$P/stop" &&
  hg_bound 6 "$HG_RUN/frontend.lock" && hg_bound 7 "$HG_STORE/.supervisor.lock" &&
+ flock -n 6 && flock -n 7 &&
  [ "$(cat "$P/binding")" = "$(hg_binding)" ] && hg_file "$HG_STORE/startup-active" 16384 &&
- [ "$(cat "$P/intent")" = "$(sha256sum "$HG_STORE/startup-active")" ] &&
- ash "$HG_DIR/homegate-startup-active.sh" check >/dev/null || return 1
+ [ "$(cat "$P/intent")" = "$(sha256sum "$HG_STORE/startup-active")" ] || return 1
+ # Apply/watch already validated the history before invoking the child. The
+ # child inherits the same business locks and checks the bound source above.
+ if [ "$action" != guard-internal ];then
+  ash "$HG_DIR/homegate-startup-active.sh" check >/dev/null || return 1
+ fi
  proxy_status=$(ash "$HG_DIR/homegate-proxy.sh" status) || return 1
  printf '%s\n' "$proxy_status" | lua "$HG_DIR/homegate-firewall.lua" live
 }
@@ -35,11 +40,13 @@ if [ "$action" = operate-internal ];then
  interrupted=false;trap 'interrupted=true' TERM INT
  stop_family() { kill -TERM -- "-$$" 2>/dev/null || :;sleep .2;kill -KILL -- "-$$" 2>/dev/null;exit 7; }
  (ulimit -f 64 || exit 7;exec lua "$HG_DIR/homegate-firewall.lua" "$mode" "$token") &
- child=$!;now=$(lua "$process" now) || stop_family;deadline=$((now+6))
+ child=$!;now=$(lua "$process" now) || stop_family
+ case "$mode" in apply|watch) deadline=$((now+15));; *) deadline=$((now+6));; esac
  while kill -0 "$child" 2>/dev/null;do
   [ "$interrupted" = false ] || stop_family
   case "$mode" in apply|watch) ! hg_exists "$P/stop" || stop_family;;esac
-  now=$(lua "$process" now) || stop_family;[ "$now" -lt "$deadline" ] || stop_family;sleep .1 || :
+  now=$(lua "$process" now) || stop_family;[ "$now" -lt "$deadline" ] || stop_family
+  lua "$process" pause 100 || sleep .1 || sleep 1 || stop_family
  done
  wait "$child";result=$?
  [ "$(lua "$process" group "$$" 0)" = 0 ] || stop_family

@@ -202,7 +202,7 @@ class HostRpcd(unittest.TestCase):
             self.call('session', 'destroy', {'ubus_rpc_session': sid})
 
 
-def isolated(work, *, guest_script=None, extra_ro=(), extra_mounts=(), extra_rw_mounts=(), state_setup=None, guest_args=()):
+def isolated(work, *, guest_script=None, extra_ro=(), extra_mounts=(), extra_rw_mounts=(), state_setup=None, guest_args=(), guest_timeout=90):
     if sys.platform != 'linux' or os.getuid() == 0:
         raise ValueError('Run isolated RPC checks as a non-root Linux user')
     if not shutil.which('bwrap'):
@@ -263,7 +263,7 @@ def isolated(work, *, guest_script=None, extra_ro=(), extra_mounts=(), extra_rw_
                    '--chdir', '/teststate', '/usr/bin/python3', str(guest_script or Path(__file__).resolve()),
                    '--runtime-dir', str(work), '--inside-net', os.readlink('/proc/self/ns/net'),
                    '--inside-uid', str(os.getuid()), *guest_args]
-        result = subprocess.run(command, timeout=90)
+        result = subprocess.run(command, timeout=guest_timeout)
     for path, body in original.items():
         if path.read_bytes() != body:
             raise ValueError('Candidate or ACL changed during RPC checks')

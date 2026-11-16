@@ -60,7 +60,9 @@ done
 dir=$(CDPATH= cd "$(dirname "$0")" && pwd) || fail
 engine=$dir/homegate-config-prototype.sh
 ash "$engine" --persistent writer-check >/dev/null 2>/dev/null || fail 4
-scope() { ash "$engine" --persistent runtime-startup-snapshot-read 3>&1 4>&- 5>&- 8>&- 9>&- >/dev/null 2>/dev/null | lua "$dir/homegate-certificate.lua" "$scope_mode" "$id" 3>&- 4>&- 5>&- 6>&- 7>&- 8>&- 9>&-; }
+snapshot_command=runtime-startup-snapshot-read
+if [ "$native_certificate_maintenance_enabled:$preflight_internal" = true:true ];then snapshot_command=runtime-active-snapshot-read;fi
+scope() { ash "$engine" --persistent "$snapshot_command" 3>&1 4>&- 5>&- 8>&- 9>&- >/dev/null 2>/dev/null | lua "$dir/homegate-certificate.lua" "$scope_mode" "$id" 3>&- 4>&- 5>&- 6>&- 7>&- 8>&- 9>&-; }
 expected_scope=$(scope) || fail
 if [ "$action" = resume ];then
  HG_DIR=$dir;HG_JOB=

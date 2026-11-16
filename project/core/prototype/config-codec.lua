@@ -35,7 +35,7 @@ local function allowed(doc)
     end
     return slots
 end
-local function history(store, owner, capacity, selected)
+local function history(store, owner, selected, mode)
     local fs=require("nixio.fs")
     local function stat(path, kind, mode)
         local entry=fs.lstat(path)
@@ -62,11 +62,15 @@ local function history(store, owner, capacity, selected)
         paths,expected,argument_bytes={},{},0
     end
     local max_revision, selected_parent=0,nil
-    local function validate(name)
-        local revision=tonumber(name:match("^gen%-([1-9]%d?)$"))
-        if not revision or revision>capacity then fail() end
+    local revisions={}
+    local function generation_path(name)
+        local digits=name:match("^gen%-([1-9]%d*)$")
+        if not digits or #digits>9 then fail() end
         local path=store.."/"..name
         stat(path,"dir",700)
+        return path,tonumber(digits)
+    end
+    local function validate(name,path,revision)
         local source_files, seen={},{}
         for entry in assert(fs.dir(path)) do
             if entry=="source.conf" or entry=="legacy.conf" then
@@ -75,14 +79,14 @@ local function history(store, owner, capacity, selected)
             elseif entry~="." and entry~=".." and entry~="public.conf" and entry~="parent"
                 and entry~="manifest" and entry~="credentials" and entry:sub(1,1)~="." then fail() end
         end
-        local public=file(path.."/public.conf",262144)
-        if codec.canonical(public)~=public then fail() end
-        local parent_bytes=file(path.."/parent",3)
+        local doc=codec.parse_canonical(file(path.."/public.conf",262144))
+        if not doc then fail() end
+        local parent_bytes=file(path.."/parent",10)
         local parent=tonumber(parent_bytes:match("^(%d+)\n$"))
         if not parent or parent>=revision or parent_bytes~=tostring(parent).."\n" then fail() end
         local vault=path.."/credentials"
         stat(vault,"dir",700)
-        for _,slot in ipairs(allowed(codec.parse(public))) do seen[slot]=true end
+        for _,slot in ipairs(allowed(doc)) do seen[slot]=true end
         local credentials={}
         for slot in assert(fs.dir(vault)) do
             if slot:sub(1,1)~="." then
@@ -116,18 +120,29 @@ local function history(store, owner, capacity, selected)
             argument_bytes=argument_bytes+#argument+1
         end
         if offset~=#manifest+1 then fail() end
-        max_revision=math.max(max_revision,revision)
         return parent
     end
     if selected then
-        selected_parent=validate('gen-'..selected)
+        local name='gen-'..selected
+        local path,revision=generation_path(name)
+        selected_parent=validate(name,path,revision)
     else
         for name in assert(fs.dir(store)) do
-            if name:sub(1,4)=="gen-" then validate(name) end
+            if name:sub(1,4)=="gen-" then
+                local path,revision=generation_path(name)
+                if mode~="inventory" then validate(name,path,revision) end
+                max_revision=math.max(max_revision,revision)
+                if mode=="layout" then revisions[#revisions+1]=revision end
+            end
         end
     end
     verify()
-    io.write(selected_parent or max_revision,"\n")
+    if mode=="layout" then
+        table.sort(revisions)
+        io.write(max_revision, " ", #revisions, " ", table.concat(revisions," "), "\n")
+    else
+        io.write(selected_parent or max_revision,"\n")
+    end
 end
 if arg[1]=="normalize" and not arg[2] then
     local body=codec.canonical(read())
@@ -135,10 +150,11 @@ if arg[1]=="normalize" and not arg[2] then
     io.write(body)
 elseif arg[1]=="allowed" and arg[2] and not arg[3] then
     for _,slot in ipairs(allowed(parsed(arg[2]))) do io.write(slot,"\n") end
-elseif arg[1]=="history" and arg[2]=="/etc/homegate/transactions" and not arg[3] then
-    history(arg[2],0,96)
+elseif arg[1]=="history" and arg[2]=="/etc/homegate/transactions" and
+    (not arg[3] or arg[3]=="layout" or arg[3]=="inventory") and not arg[4] then
+    history(arg[2],0,nil,arg[3])
 elseif arg[1]=="generation" and arg[2]=="/etc/homegate/transactions" and arg[3] and not arg[4] then
-    history(arg[2],0,96,arg[3])
+    history(arg[2],0,arg[3])
 elseif arg[1]=="snapshot" and arg[2] and arg[3] and not arg[4] then
     local body=read(arg[2].."/public.conf")
     local doc=codec.parse(body)

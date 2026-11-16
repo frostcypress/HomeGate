@@ -13,6 +13,7 @@ if mode=='hold':
  child=subprocess.Popen(['/usr/sbin/busybox','sleep','45']);(p/'fw-held-pid').write_text(str(child.pid));(p/'fw-entered').touch();time.sleep(45);sys.exit(4)
 if mode=='fail-once' and a[:2]==['-A','HG_ENG_NAT']:fault.unlink();fail('Injected REDIRECT failure',3)
 if mode=='cleanup-fail' and a[0] in ('-D','-F','-X'):fail('Injected cleanup failure',4)
+if mode=='slow-apply' and a[0] in ('-N','-A','-I'):time.sleep(1.2)
 chains=d[tab];op=a[0];name=a[1] if len(a)>1 else None
 if op=='-S':
  if name is not None and name not in chains:fail('No chain/target/match by that name.')

@@ -40,13 +40,14 @@
     } catch (_) { /* The current page can still track the operation. */ }
   }
 
-  async function waitForResult(job, onSaved) {
+  async function waitForResult(job, onSaved, onResult) {
     const deadline = Date.now() + 330000;
     let saved = false;
     while (Date.now() < deadline) {
       const state = await request(base.pathname + '/compat_job/' + job);
       if (!state.pending) {
         if (!state.result || typeof state.result.ok !== 'boolean') throw new Error('暂时无法确认操作结果。');
+        if (onResult) onResult(state.result);
         if (!state.result.uncertain) {
           try {
             await request(base.pathname + '/compat_ack/' + job, { token: status.dataset.token }, 2000);
@@ -97,35 +98,51 @@
     if (route === 'basic_apply' && window.hgRefreshService) window.hgRefreshService();
   }
 
-  async function run(url, data, form) {
+  async function run(url, data, form, submitter) {
     if (busy) return;
     busy = true;
     const route = url.pathname.slice(base.pathname.length + 1);
     const controls = Array.from(form.elements).filter(element => !element.disabled && element.type !== 'hidden');
+    const toolbar = submitter && submitter.closest('.cbi-page-actions');
+    const reset = toolbar && toolbar.querySelector('.cbi-button-reset');
+    if (reset && !reset.disabled && !controls.includes(reset)) controls.push(reset);
+    const label = toolbar && submitter.type === 'submit' && 'value' in submitter ? submitter.value : null;
+    const restoreControls = () => {
+      controls.forEach(element => { element.disabled = false; });
+      if (label !== null) submitter.value = label;
+    };
     const captureSaved = () => {
       if ((route === 'basic_apply' || route === 'maintenance_apply') && window.hgOperationTracker) {
         window.hgOperationTracker.capture();
       }
     };
     controls.forEach(element => { element.disabled = true; });
+    if (label !== null) submitter.value = data.get('mode') === 'save' ? '正在保存…' : '正在应用…';
     show(data.get('mode') === 'save' ? '正在保存…' : '正在处理…', 'pending');
     try {
       const submitted = await request(url, data);
       if (!submitted.pending || !/^[a-f0-9]{32}$/.test(submitted.job)) throw new Error('暂时无法确认操作结果。');
       remember(submitted.job);
+      if (route === 'basic_apply' && data.get('mode') === 'apply' && window.hgServiceTransition) {
+        window.hgServiceTransition(data.has('enabled') ? 'start' : 'stop');
+      }
+      const complete = result => {
+        restoreControls();
+        if (result.ok || result.configuration_saved) captureSaved();
+        finish(result, route);
+      };
       const result = await waitForResult(submitted.job, () => {
         controls.forEach(element => { element.disabled = false; });
         captureSaved();
         controls.forEach(element => { element.disabled = true; });
-      });
-      controls.forEach(element => { element.disabled = false; });
-      if (result.ok || result.configuration_saved) captureSaved();
-      finish(result, route);
+      }, route === 'basic_apply' ? complete : undefined);
+      if (route !== 'basic_apply') complete(result);
     } catch (error) {
       show((error.name === 'AbortError' || error instanceof SyntaxError || error instanceof TypeError ?
         '暂时无法确认操作结果。' : error.message) + ' 请刷新页面查看状态。', 'error');
+      if (route === 'basic_apply' && window.hgRefreshService) window.hgRefreshService();
     } finally {
-      controls.forEach(element => { element.disabled = false; });
+      restoreControls();
       busy = false;
     }
   }
@@ -138,7 +155,7 @@
     if (event) event.preventDefault();
     const values = new FormData(form);
     if (event && event.submitter && event.submitter.name) values.append(event.submitter.name, event.submitter.value);
-    run(url, values, form);
+    run(url, values, form, event && event.submitter);
     return true;
   }
 

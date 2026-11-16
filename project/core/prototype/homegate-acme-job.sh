@@ -7,8 +7,12 @@ unset IPKG_INSTROOT INIT_TRACE LUA_INIT LUA_PATH LUA_CPATH HOMEGATE_CONFIG_PROTO
 acme_jobs_enabled=false
 fail() { printf '{"api_version":1,"engineering":true,"ok":false,"phase":"acme-job","effect":"none","write_ready":false,"error":"ACME request unavailable; inspect retained job and DNS receipts"}\n';exit "${1:-7}"; }
 [ "$acme_jobs_enabled" = true ] && [ "$(id -u)" = 0 ] || fail 2
-scheduled=false
+scheduled=false;allow_continuous_ddns=false;lock_busy=4
 action=${1:-}
+if [ "$action" = issue-live ];then
+ [ "$#" -eq 4 ] || fail 2
+ allow_continuous_ddns=true;lock_busy=8;set -- issue "$2" "$3" "$4";action=issue
+fi
 if [ "$action" = scheduled-renew ];then
  [ "$#" -eq 5 ] && [ "$5" = --confirm ] || fail 2
  schedule_token=$4;scheduled=true;set -- renew "$2" "$3" --confirm;action=renew
@@ -101,12 +105,17 @@ if [ "$scheduled" != true ] && { [ "$action" = issue ] || [ "$action" = renew ];
  ash "$HG_DIR/homegate-acme-schedule.sh" quiescent >/dev/null 2>/dev/null || fail 4
 fi
 hg_dir "$HG_RUN" && hg_dir "$HG_STORE" || fail
-if hg_exists "$HG_RUN/ddns-schedule";then ash "$HG_DIR/homegate-ddns-schedule.sh" quiescent >/dev/null 2>/dev/null || fail 4;fi
+if hg_exists "$HG_RUN/ddns-schedule";then
+ if [ "$allow_continuous_ddns" != true ] || ! ash "$HG_DIR/homegate-ddns-schedule.sh" acme-compatible >/dev/null 2>/dev/null;then
+  ash "$HG_DIR/homegate-ddns-schedule.sh" quiescent >/dev/null 2>/dev/null || fail 4
+ fi
+fi
 for fd in 6 7;do
  lock=$HG_RUN/frontend.lock;[ "$fd" != 7 ] || lock=$HG_STORE/.supervisor.lock
  hg_file "$lock" 0 || fail
  case "$fd" in 6) exec 6>>"$lock";;7) exec 7>>"$lock";;esac
- hg_bound "$fd" "$lock" && flock -n "$fd" || fail 4
+ hg_bound "$fd" "$lock" || fail 4
+ flock -n "$fd" || fail "$lock_busy"
 done
 # Recheck under the admission locks: a session may have started after the
 # earlier point-in-time quiescence observation.

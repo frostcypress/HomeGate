@@ -5,10 +5,17 @@ umask 077
 export LC_ALL=C
 ddns_batch_enabled=false
 ddns_batch_closeout_enabled=false
-rows=;effect=none;sampled=false;closeouts=false
+rows=;effect=none;sampled=false;closeouts=false;selected=
 fail() { printf '{"api_version":1,"prototype":true,"ok":false,"phase":"ddns-batch","effect":"%s","sampled":%s,"write_ready":false,"rules":[%s],"error":"DDNS batch is unavailable"}\n' "$effect" "$sampled" "$rows";exit "${1:-7}"; }
-[ "$ddns_batch_enabled" = true ] && [ "$#" -eq 2 ] && [ "$1" = sync ] || fail 2
-case "$2" in --confirm) ;; --confirm-closeouts) [ "$ddns_batch_closeout_enabled" = true ] || fail 2;closeouts=true;; *) fail 2;; esac
+[ "$ddns_batch_enabled" = true ] && [ "${1:-}" = sync ] || fail 2
+case "${2:-}:$#" in
+    --confirm:2) ;;
+    --confirm-closeouts:2|--confirm-rule:3) [ "$ddns_batch_closeout_enabled" = true ] || fail 2;closeouts=true;;
+    *) fail 2;;
+esac
+if [ "$#" -eq 3 ]; then
+    selected=$3;case "$selected" in ''|*[!a-zA-Z0-9_-]*) fail 2;; esac;[ "${#selected}" -le 64 ] || fail 2
+fi
 PATH=/usr/sbin:/usr/bin:/sbin:/bin;export PATH
 unset IPKG_INSTROOT INIT_TRACE LUA_INIT LUA_PATH LUA_CPATH
 owner=$(id -u) || fail;[ "$owner" = 0 ] || fail
@@ -24,24 +31,32 @@ for fd in 6 7; do
     if [ "$(stat -Lc '%d:%i:%u:%a:%h' /proc/self/fd/$fd 2>/dev/null)" != "$(stat -c '%d:%i:%u:%a:%h' "$lock")" ]; then
         case "$fd" in 6) exec 6>>"$lock" || fail;; 7) exec 7>>"$lock" || fail;; esac
     fi
-    flock -n "$fd" || fail 4
+    flock -n "$fd" || { [ -z "$selected" ] || fail 8;fail 4; }
 done
 if [ "$closeouts" = true ]; then
-    for p in "$store/dns-batch-results" "$store/.dns-batch-results-next" "$store/dns-settled" "$store/dns-collection" "$store/.dns-collection-next"; do ! exists "$p" || fail 4;done
+    for p in "$store/.dns-batch-results-next" "$store/dns-settled" "$store/dns-collection" "$store/.dns-collection-next"; do ! exists "$p" || fail 4;done
+    [ -n "$selected" ] || ! exists "$store/dns-batch-results" || fail 4
 fi
 ash "$dir/homegate-config-prototype.sh" --persistent writer-check >/dev/null 2>/dev/null || fail 4
 for p in "$run/".dns-check-* "$run/".ddns-plan-*; do ! exists "$p" || fail 4;done
 revision=$(lua "$dir/cloudflare-codec.lua" context < "$store/current" 2>/dev/null) || fail
 names=$(ash "$dir/homegate-ddns-authority.sh" check 2>/dev/null | lua "$dir/homegate-ddns-batch.lua" names "$revision" 2>/dev/null) || fail
+if [ -n "$selected" ]; then
+    case " $(printf '%s' "$names" | tr '\n' ' ') " in *" $selected "*) names=$selected;; *) fail 4;; esac
+fi
 due=false;pre_rows=
 for rule in $names; do
     status=$(ash "$dir/homegate-ddns-state.sh" status "$rule" 2>/dev/null) || fail
     row=$(printf '%s\n' "$status" | lua "$dir/homegate-ddns-batch.lua" row "$revision" "$rule" 0 2>/dev/null) || fail
     case "$row" in *'"status":"ready"'*|*'"status":"stale"'*) due=true;; esac
+    if [ -n "$selected" ]; then case "$row" in *'"status":"waiting"'*) due=true;; esac;fi
     pre_rows=${pre_rows:+$pre_rows,}$row
 done
 report() { ok=false;[ "$1" != 0 ] || ok=true;printf '{"api_version":1,"prototype":true,"ok":%s,"phase":"ddns-batch","configuration_revision":%s,"effect":"%s","sampled":%s,"write_ready":false,"rules":[%s]}\n' "$ok" "$revision" "$effect" "$sampled" "$rows";exit "$1"; }
 if [ "$due" = false ]; then rows=$pre_rows;report 4;fi
+if [ -n "$selected" ] && exists "$store/dns-batch-results"; then
+    ash "$dir/homegate-ddns-batch-results.sh" forget --confirm >/dev/null 2>/dev/null || fail 4
+fi
 job=$$;work=$run/.ddns-plan-$job
 ticket=$(lua "$dir/cloudflare-codec.lua" nonce < /proc/sys/kernel/random/uuid 2>/dev/null) || fail
 mkdir "$work" || fail
@@ -69,7 +84,8 @@ rmdir "$work" || fail
 sampled=true;result=0
 for rule in $names; do
     rc=0;previous_effect=$effect;effect=unknown
-    ash "$dir/homegate-ddns-state.sh" batch-sync-internal "$rule" "$job" --confirm > /proc/self/fd/8 8>&- 9>&- 2>/dev/null || rc=$?
+    mode=batch-sync-internal;[ -z "$selected" ] || mode=batch-sync-manual
+    ash "$dir/homegate-ddns-state.sh" "$mode" "$rule" "$job" --confirm > /proc/self/fd/8 8>&- 9>&- 2>/dev/null || rc=$?
     row=$(lua "$dir/homegate-ddns-batch.lua" row "$revision" "$rule" "$rc" < /proc/self/fd/8 8>&- 9>&- 2>/dev/null) || fail
     effect=$previous_effect
     case "$row" in *'"effect":"unknown"'*) effect=unknown;; *'"effect":"confirmed"'*) [ "$effect" = unknown ] || effect=confirmed;; esac

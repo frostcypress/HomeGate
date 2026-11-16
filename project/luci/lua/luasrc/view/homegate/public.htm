@@ -156,6 +156,7 @@
 <div class="hg-modal-control-stack">
 <select class="hg-control" id="hg-public-zone" onchange="hgPublicPreviewDomain()" disabled="disabled"><option value=""><%:Detecting Primary Domains...%></option></select>
 <div class="hg-field-note hg-field-note-compact" id="hg-public-zone-note"><%:Primary domains are detected from the selected DNS account.%></div>
+<button class="cbi-button hg-btn-4" type="button" id="hg-public-zone-retry" hidden onclick="hgPublicRetryZones()"><%:Retry%></button>
 </div>
 <label for="hg-public-host"><%:Host Record%></label><input class="hg-control" type="text" id="hg-public-host" value="" placeholder="home / @" autocomplete="off" oninput="hgPublicPreviewDomain()" />
 <label><%:Service Domain%></label><div class="hg-modal-static" id="hg-public-domain-preview">-</div>
@@ -219,12 +220,16 @@
 <span id="hg-public-label-cert-days" style="display:none"><%:Certificate %d days%></span>
 <span id="hg-public-label-renew-failed" style="display:none"><%:Renewal Failed · %d days%></span>
 <span id="hg-public-label-proxy-error" style="display:none"><%:Proxy Error%></span>
+<span id="hg-public-label-proxy-stopped" style="display:none"><%:Stopped%></span>
 <span id="hg-public-label-select-cert" style="display:none"><%:Select Certificate%></span>
 <span id="hg-public-label-no-matching-cert" style="display:none"><%:No certificate covers this domain.%></span>
 <span id="hg-public-label-no-active-cert" style="display:none"><%:No active certificates.%></span>
 <span id="hg-public-label-zones-loading" style="display:none"><%:Detecting Primary Domains...%></span>
 <span id="hg-public-label-zone-auto" style="display:none"><%:Primary domains are detected from the selected DNS account.%></span>
 <span id="hg-public-label-no-zones" style="display:none"><%:No managed primary domains were detected.%></span>
+<span id="hg-public-label-zones-unavailable" style="display:none"><%:Unable to load primary domains.%></span>
+<span id="hg-public-label-zones-saved" style="display:none"><%:Using saved primary domains. The DNS list could not be refreshed.%></span>
+<span id="hg-public-label-cert-unavailable" style="display:none"><%:Certificate status temporarily unavailable%></span>
 <span id="hg-public-label-save-account-first" style="display:none"><%:Save the DNS account first to detect primary domains.%></span>
 <span id="hg-public-label-local-pair" style="display:none"><%:Certificate and private key files must be uploaded together.%></span>
 <span id="hg-public-label-local-too-large" style="display:none"><%:Certificate or private key file is too large.%></span>
@@ -262,6 +267,7 @@
 
 <script type="text/javascript">
 var hgPublicRows=[], hgPublicDDNS={}, hgPublicCerts={}, hgPublicProxy=null, hgPublicHasUnsaved=false, hgPublicCertificateChoices=[], hgPublicSavedSignature='', hgPublicSavedRows={}, hgPublicRecentRows=[], hgPublicSavedAccessScope='', hgPublicSavedAccessAllow='', hgPublicSavedAccessDeny='', hgPublicZoneRequest=0, hgPublicConfirmPending=null;
+var hgPublicZoneCache=Object.create(null), hgPublicZonePending=Object.create(null), hgPublicCertsLoaded=false;
 function hgPublicTrim(v){return String(v===undefined||v===null?'':v).replace(/^\s+|\s+$/g,'');}
 function hgPublicFullDomain(zone,host){zone=hgPublicTrim(zone).toLowerCase().replace(/\.$/,'');host=hgPublicTrim(host).toLowerCase().replace(/\.$/,'');if(!zone)return '';if(!host||host=='@')return zone;if(host==zone||host.slice(-(zone.length+1))=='.'+zone)return host;return host+'.'+zone;}
 function hgPublicCertCovers(domains,domain){domain=hgPublicTrim(domain).toLowerCase().replace(/\.$/,'');if(!domain)return false;var ps=String(domains||'').split(',');for(var i=0;i<ps.length;i++){var p=hgPublicTrim(ps[i]).toLowerCase().replace(/\.$/,'');if(!p)continue;if(p==domain)return true;if(p.slice(0,2)=='*.'){var suffix=p.slice(1);if(domain.slice(-suffix.length)==suffix){var label=domain.slice(0,domain.length-suffix.length);if(label&&label.indexOf('.')<0)return true;}}}return false;}
@@ -287,8 +293,69 @@ function hgPublicAutomaticScopeBase(zone,host){zone=hgPublicTrim(zone).toLowerCa
 function hgPublicAutomaticScopeDomains(zone,host){var base=hgPublicAutomaticScopeBase(zone,host);return base?base+', *.'+base:'';}
 function hgPublicSameCertificateScope(a,b){var aa=hgPublicCertificateScopeParts(a).sort(),bb=hgPublicCertificateScopeParts(b).sort();if(aa.length!==bb.length)return false;for(var i=0;i<aa.length;i++)if(aa[i]!==bb[i])return false;return true;}
 function hgPublicAutomaticCertificate(domain,zone,host,ca,environment){var desired=hgPublicAutomaticScopeDomains(zone,host),base=hgPublicAutomaticScopeBase(zone,host),wild=base?'*.'+base:'';for(var i=0;i<hgPublicCertificateChoices.length;i++){var c=hgPublicCertificateChoices[i];if(c.enabled&&hgPublicCertificateIdentityMatches(c,ca,environment)&&hgPublicSameCertificateScope(c.domains,desired))return c;}for(var j=0;j<hgPublicCertificateChoices.length;j++){var d=hgPublicCertificateChoices[j],parts=hgPublicCertificateScopeParts(d.domains);if(!d.enabled||!hgPublicCertificateIdentityMatches(d,ca,environment)||!hgPublicCertCovers(d.domains,domain))continue;for(var k=0;k<parts.length;k++)if(parts[k]===wild)return d;}return null;}
-function hgPublicSetZoneOptions(zones,preferred,note){var s=document.getElementById('hg-public-zone'),n=document.getElementById('hg-public-zone-note');if(!s)return;preferred=hgPublicTrim(preferred).toLowerCase().replace(/\.$/,'');hgClearNode(s);var list=[],seen={};for(var i=0;i<(zones||[]).length;i++){var z=hgPublicTrim(zones[i]).toLowerCase().replace(/\.$/,'');if(z&&!seen[z]){seen[z]=true;list.push(z);}}list.sort();if(preferred&&!seen[preferred])list.unshift(preferred);if(!list.length){var e=document.createElement('option');e.value='';e.text=note||hgLabel('hg-public-label-no-zones');s.appendChild(e);s.disabled=true;}else{for(var j=0;j<list.length;j++){var o=document.createElement('option');o.value=list[j];o.text=list[j];s.appendChild(o);}s.disabled=false;if(preferred)s.value=preferred;if(!s.value)s.selectedIndex=0;}if(n){n.textContent=list.length?(note||hgLabel('hg-public-label-zone-auto')):'';n.style.display=list.length?'':'none';}hgPublicPreviewDomain();}
-function hgPublicLoadZones(accountId,preferred){var request=++hgPublicZoneRequest,s=document.getElementById('hg-public-zone'),n=document.getElementById('hg-public-zone-note');if(s){hgClearNode(s);var o=document.createElement('option');o.value='';o.text=hgLabel('hg-public-label-zones-loading');s.appendChild(o);s.disabled=true;}if(n){n.textContent='';n.style.display='none';}hgPublicPreviewDomain();if(!accountId)return;XHR.get('<%=url('admin/services/homegate/api/dns_zones')%>',{account:accountId},function(xhr,d){if(request!==hgPublicZoneRequest)return;if(!d){try{d=JSON.parse(xhr.responseText||'{}');}catch(e){d={ok:false,error:'invalid JSON'};}}if(d&&d.ok===true&&d.zones&&d.zones.length){hgPublicSetZoneOptions(d.zones,preferred,hgLabel('hg-public-label-zone-auto'));}else{var msg=(d&&d.error)?String(d.error):hgLabel('hg-public-label-no-zones');hgPublicSetZoneOptions([],preferred,preferred?msg:hgLabel('hg-public-label-no-zones'));}});}
+function hgPublicSetZoneOptions(zones,preferred,note,retry){
+  var select=document.getElementById('hg-public-zone'),hint=document.getElementById('hg-public-zone-note');
+  var list=[],seen=Object.create(null);
+  zones.concat([preferred]).forEach(function(value){
+    var zone=hgPublicTrim(value).toLowerCase().replace(/\.$/,'');
+    if(zone&&!seen[zone]){seen[zone]=true;list.push(zone);}
+  });
+  list.sort();
+  hgClearNode(select);
+  list.forEach(function(zone){select.add(new Option(zone,zone));});
+  select.disabled=list.length===0;
+  if(select.disabled)select.add(new Option(note||hgLabel('hg-public-label-no-zones'),''));
+  else if(preferred)select.value=preferred;
+  if(!select.disabled&&!select.value)select.selectedIndex=0;
+  hint.textContent=list.length?note||'':'';
+  hint.style.display=hint.textContent?'':'none';
+  document.getElementById('hg-public-zone-retry').hidden=!retry;
+  hgPublicPreviewDomain();
+}
+function hgPublicFetchZones(accountId,reply){
+  var pending=hgPublicZonePending[accountId];
+  if(pending){pending.push(reply);return;}
+  pending=hgPublicZonePending[accountId]=[reply];
+  var timer=setTimeout(function(){finish(null);},20000),retries=0;
+  function finish(zones){
+    if(hgPublicZonePending[accountId]!==pending)return;
+    clearTimeout(timer);
+    delete hgPublicZonePending[accountId];
+    if(zones)hgPublicZoneCache[accountId]={zones:zones,expires:Date.now()+60000};
+    pending.forEach(function(callback){callback(zones);});
+  }
+  function fetch(){
+    if(hgPublicZonePending[accountId]!==pending)return;
+    XHR.get('<%=url('admin/services/homegate/api/dns_zones')%>',{account:accountId},function(xhr,data){
+      if(hgPublicZonePending[accountId]!==pending)return;
+      if(!data){try{data=JSON.parse(xhr.responseText||'{}');}catch(e){finish(null);return;}}
+      if(data&&(data.error_kind==='busy'||data.retryable===true&&data.error_kind!=='rate_limit')&&retries<4){retries++;setTimeout(fetch,500*retries);return;}
+      var zones=data&&data.ok===true?data.zones:null;
+      if(zones&&typeof zones==='object'&&Object.keys(zones).length===0)zones=[];
+      finish(Array.isArray(zones)?zones:null);
+    });
+  }
+  fetch();
+}
+function hgPublicLoadZones(accountId,preferred){
+  var request=++hgPublicZoneRequest,select=document.getElementById('hg-public-zone');
+  var known=hgPublicRows.filter(function(row){return row.account_id===accountId&&row.zone;})
+    .map(function(row){return row.zone;});
+  var cached=hgPublicZoneCache[accountId],fresh=cached&&cached.expires>Date.now();
+  var available=cached?known.concat(cached.zones):known;
+  hgPublicSetZoneOptions(available,preferred,available.length||preferred?'':hgLabel('hg-public-label-zones-loading'));
+  if(!accountId||fresh)return;
+  function showZones(zones){
+    if(request!==hgPublicZoneRequest)return;
+    var selected=select.value||preferred;
+    if(zones===null)hgPublicSetZoneOptions(available,selected,hgLabel(available.length||selected?'hg-public-label-zones-saved':'hg-public-label-zones-unavailable'),true);
+    else hgPublicSetZoneOptions(known.concat(zones),selected,'');
+  }
+  hgPublicFetchZones(accountId,showZones);
+}
+function hgPublicRetryZones(){
+  hgPublicLoadZones(document.getElementById('hg-public-account').value,document.getElementById('hg-public-zone').value);
+}
 function hgPublicSaveAccount(){var provider=(document.getElementById('hg-public-provider')||{}).value||'aliyun',key=hgPublicTrim((document.getElementById('hg-public-key-id')||{}).value),secret=hgPublicTrim((document.getElementById('hg-public-secret')||{}).value),account=hgPublicTrim((document.getElementById('hg-public-provider-account-id')||{}).value),endpoint=hgPublicTrim((document.getElementById('hg-public-endpoint')||{}).value),meta=hgPublicProviderMeta(provider);if(!meta){alert('<%:Unsupported DNS provider%>');return;}var fields=[['key',key],['secret',secret],['account',account],['endpoint',endpoint]];for(var i=0;i<fields.length;i++){var name=fields[i][0],value=fields[i][1];if(meta.getAttribute('data-'+name+'-enabled')==='1'&&meta.getAttribute('data-'+name+'-required')==='1'&&!value){alert((meta.getAttribute('data-'+name+'-label')||name)+' <%:is required%>');return;}}hgSubmitPost('<%=url('admin/services/homegate/public_account_apply')%>','<%=pcdata(token)%>',{provider:provider,key_id:key,secret:secret,provider_account_id:account,endpoint:endpoint,resume_public:'add'});}
 function hgPublicSyncStage(includeSensitive){
   var box=document.getElementById('hg-public-stage');if(!box)return;hgClearNode(box);
@@ -383,21 +450,20 @@ function hgPublicHintText(r){
   }
   if(r.https){
     var certDays=c?Number(c.days):NaN,identityBad=!!(c&&c.identity_valid===false),expired=isFinite(certDays)&&certDays<0;
-    if(!c||!c.exists||identityBad||expired)parts.push(hgLabel('hg-public-label-cert-error'));
-    else if(String(c.renew_state||'').toLowerCase()==='failed'){
+    if(c&&(!c.exists||identityBad||expired||c.valid===false))parts.push(hgLabel('hg-public-label-cert-error'));
+    else if(c&&String(c.renew_state||'').toLowerCase()==='failed'){
       var failedFmt=hgLabel('hg-public-label-renew-failed'),failedDays=Number(c.days);
       parts.push(failedFmt.replace('%d',String(isFinite(failedDays)?failedDays:0)));
-    }
+    }else if(c&&c.exists&&isFinite(certDays))parts.push(hgLabel('hg-public-label-cert-days').replace('%d',String(certDays)));
+    else if(!c&&r.cert_id&&hgPublicCertsLoaded)parts.push(hgLabel('hg-public-label-cert-unavailable'));
   }
   if(r.enabled&&hgPublicProxy){
     var proxyBad=(hgPublicProxy.ok===false)||!!hgPublicProxy.error||(r.https?!hgPublicProxy.https_listening:!hgPublicProxy.http_listening);
-    if(proxyBad)parts.push(hgLabel('hg-public-label-proxy-error'));
+    var stopped=hgPublicProxy.ok===true&&hgPublicProxy.running===false&&(hgPublicProxy.state==='stopped'||hgPublicProxy.state==='idle');
+    if(stopped)parts.push(hgLabel('hg-public-label-proxy-stopped'));
+    else if(proxyBad)parts.push(hgLabel('hg-public-label-proxy-error'));
   }
   if(parts.length)return parts.join(' · ');
-  if(r.https&&c&&c.exists){
-    var fmt=hgLabel('hg-public-label-cert-days'),days=Number(c.days);
-    if(isFinite(days))return fmt.replace('%d',String(days));
-  }
   return '-';
 }
 function hgPublicAccessAddressText(r){var domain=hgPublicTrim((r&&r.domain)||''),base=(r&&r.https?'https://':'http://')+(domain||'-'),hint=hgPublicHintText(r);return hint&&hint!=='-'?base+'（'+hint+'）':base;}
@@ -486,11 +552,11 @@ function hgPublicConfirmReady(d,pair){
 }
 function hgPublicDeleteNeedsConfirmation(i){var r=hgPublicRows[i];if(!r||(!r.web_id&&!r.ddns_id))return false;var certLast=!!r.cert_id,zoneLast=!!(r.account_id&&r.zone);for(var j=0;j<hgPublicRows.length;j++){if(j===i)continue;var o=hgPublicRows[j];if(certLast&&o.cert_id&&o.cert_id===r.cert_id)certLast=false;if(zoneLast&&o.account_id===r.account_id&&hgPublicTrim(o.zone).toLowerCase()===hgPublicTrim(r.zone).toLowerCase())zoneLast=false;}return certLast||zoneLast;}
 function hgPublicDelete(i){var r=hgPublicRows[i];if(!r)return;if(hgPublicDeleteNeedsConfirmation(i)&&!confirm(hgLabel('hg-public-label-delete-confirm')))return;hgPublicRows.splice(i,1);hgPublicRecomputeDirty();hgPublicRender();}
-function hgPublicClose(){hgSetModalOpen('hg-public-modal',false);}
+function hgPublicClose(){hgPublicZoneRequest++;hgSetModalOpen('hg-public-modal',false);}
 function hgPublicConsumeResumeQuery(){if(!window.history||typeof window.history.replaceState!=='function')return;var href=window.location.href,hash='',h=href.indexOf('#');if(h>=0){hash=href.substring(h);href=href.substring(0,h);}var q=href.indexOf('?');if(q<0)return;var base=href.substring(0,q),parts=href.substring(q+1).split('&'),keep=[],changed=false;for(var i=0;i<parts.length;i++){if(!parts[i])continue;var k=parts[i].split('=')[0];try{k=decodeURIComponent(k.replace(/\+/g,' '));}catch(e){}if(k==='resume_public'||k==='resume_account')changed=true;else keep.push(parts[i]);}if(changed)window.history.replaceState(null,document.title,base+(keep.length?'?'+keep.join('&'):'')+hash);}
-(function(){hgPublicReadCertificateChoices();hgPublicLoadRows();hgPublicAccessRenderRegionData();hgPublicAccessRenderEmptyWarning();hgPublicAccountChanged(true,'');hgPublicCAChanged('production');hgPublicUpdateCertificateUI();var resume=(document.getElementById('hg-public-resume-mode')||{}).value||'',resumeAccount=(document.getElementById('hg-public-resume-account')||{}).value||'';if(resume==='add'&&resumeAccount){hgPublicOpenAdd(resumeAccount);hgPublicConsumeResumeQuery();}
+(function(){hgPublicReadCertificateChoices();hgPublicLoadRows();hgPublicAccessRenderRegionData();hgPublicAccessRenderEmptyWarning();hgPublicUpdateCertificateUI();var resume=(document.getElementById('hg-public-resume-mode')||{}).value||'',resumeAccount=(document.getElementById('hg-public-resume-account')||{}).value||'';if(resume==='add'&&resumeAccount){hgPublicOpenAdd(resumeAccount);hgPublicConsumeResumeQuery();}
   hgGet('<%=url('admin/services/homegate/api/ddns')%>',function(d){var rs=(d&&d.results)||[];hgPublicDDNS={};for(var i=0;i<rs.length;i++)if(rs[i].rule)hgPublicDDNS[rs[i].rule]=rs[i];hgPublicRender();});
-  hgGet('<%=url('admin/services/homegate/api/certs')%>',function(d){var cs=(d&&d.certificates)||[];hgPublicCerts={};for(var i=0;i<cs.length;i++)if(cs[i].id)hgPublicCerts[cs[i].id]=cs[i];hgPublicRender();});
+  hgGet('<%=url('admin/services/homegate/api/certs')%>',function(d){var cs=(d&&d.certificates)||[];hgPublicCerts=Object.create(null);hgPublicCertsLoaded=true;for(var i=0;i<cs.length;i++)if(cs[i].id)hgPublicCerts[cs[i].id]=cs[i];hgPublicRender();});
   hgGet('<%=url('admin/services/homegate/api/proxy')%>',function(p){hgPublicProxy=p||{};hgPublicRender();});
 })();
 </script>

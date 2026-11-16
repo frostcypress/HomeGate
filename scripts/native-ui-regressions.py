@@ -84,11 +84,64 @@ with sync_playwright() as pw:
     context = browser.new_context(viewport={'width':1200,'height':700})
     context.route('http://homegate.test/**',lambda route: route.fulfill(status=200,body='<html><body></body></html>'))
     page = context.new_page();page.goto('http://homegate.test/cgi-bin/luci/admin/services/homegate/public')
-    errors=[];page.on('pageerror',lambda e:errors.append(str(e)))
+    errors=[];page.on('pageerror',lambda e:errors.append(e.stack or str(e)))
     for name,text in pages.items():
         page.set_content('<script>window.homegateXHR={get:(u,f,cb)=>cb({status:200,responseText:"{}"},{})};</script>'+text)
         page.wait_for_timeout(100)
         assert not errors,(name,errors)
+    public_fixture={**data,'services':[{'web_id':'web_a','ddns_id':'rule_a','account_id':'dns_a','cert_id':'cert_a',
+        'enabled':'1','https':'1','domain':'files.example.test','zone':'example.test','host':'files','target':'http://192.168.1.2'}],
+        'dns_accounts':[{'id':'dns_a','label':'Existing'}, {'id':'dns_b','label':'Other'}],
+        'acme_ca_catalog':[{'name':'letsencrypt','display_name':"Let's Encrypt"}]}
+    installed=payload(ROOT)
+    installed_views={f:installed['usr/lib/lua/luci/view/homegate_legacy/'+f+'.htm'].decode() for f in ('public','common')}
+    context.route('**/homegate/native-operations.js',lambda route:route.fulfill(
+        status=200,content_type='application/javascript',body=installed['www/luci-static/resources/homegate/native-operations.js']))
+    public_html=legacy('public',public_fixture,installed_views)
+    (OUT/'public-zones.html').write_text(public_html,encoding='utf-8')
+    page.set_content('''<script>
+    window.zones=[];
+    window.XHR={get:(u,f,cb)=>{
+      if(u.endsWith('/dns_zones')){zones.push({account:f.account,reply:cb});return;}
+      const d=u.endsWith('/certs')?{ok:true,certificates:[{id:'cert_a',exists:true,identity_valid:true,valid:true,days:42}]}:
+        (u.endsWith('/proxy')?{ok:true,running:false,state:'stopped'}:{});
+      cb({status:200,responseText:JSON.stringify(d)},d);
+    }}
+    </script>'''+public_html)
+    assert not errors,errors
+    assert 'Certificate 42 days' in page.locator('.hg-public-table').inner_text()
+    assert page.evaluate('zones.length')==0,'Background DNS query before opening the modal'
+    timing=page.evaluate('''() => {
+      const start=performance.now();
+      hgPublicOpenIndex(0);
+      return [performance.now()-start,document.getElementById('hg-public-zone').value];
+    }''')
+    assert timing[0]<3000 and timing[1]=='example.test',timing
+    page.evaluate("hgPublicClose(); hgPublicOpenAdd()")
+    assert page.locator('#hg-public-zone').input_value()=='example.test'
+    assert page.evaluate('zones.length')==1,'Same account launched a duplicate fetch'
+    page.wait_for_timeout(2900)
+    assert not page.locator('#hg-public-zone-retry').is_visible()
+    assert page.locator('#hg-public-zone').input_value()=='example.test'
+    page.evaluate("zones[0].reply({status:200},{ok:true,zones:['aaa.test','example.test']})")
+    assert page.locator('#hg-public-zone').input_value()=='example.test'
+    assert page.locator('#hg-public-zone option').all_text_contents()==['aaa.test','example.test']
+    page.locator('#hg-public-account').select_option('dns_b')
+    assert page.locator('#hg-public-zone').input_value()==''
+    page.evaluate("zones[1].reply({status:200},{ok:false,error_kind:'busy'})")
+    page.wait_for_function('zones.length===3')
+    assert not page.locator('#hg-public-zone-retry').is_visible()
+    page.evaluate("zones[2].reply({status:200},{ok:false,error:'DNS status request refused'})")
+    assert page.locator('#hg-public-zone-retry').is_visible()
+    assert page.locator('#hg-public-zone-retry').evaluate("b=>parseInt(getComputedStyle(b).marginTop,10)")>=6
+    assert 'DNS status request refused' not in page.locator('#hg-public-modal').inner_text()
+    page.locator('#hg-public-zone-retry').click()
+    assert page.evaluate('zones.length')==4,'Retry did not send a new request'
+    page.evaluate("zones[3].reply({status:200},{ok:true,zones:{}})")
+    assert not page.locator('#hg-public-zone-retry').is_visible()
+    assert 'No managed primary domains' in page.locator('#hg-public-zone').inner_text()
+    assert not errors,errors
+    print('SAVED_PRIMARY_DOMAIN_MS='+str(round(timing[0],2)),flush=True)
     # Actual native transport, RPC responses mocked only at the ubus boundary.
     transport = (JS/'transport.js').read_text(encoding='utf-8')
     page.set_content('<form id="a" action="/cgi-bin/luci/admin/services/homegate/basic_apply"><input name="enabled" value="1"><button name="mode" value="save">Save</button></form>')
@@ -136,8 +189,10 @@ with sync_playwright() as pw:
             if path in ('/basic_apply','/maintenance_apply'):
                 data={'ok':True,'pending':True,'job':'b'*32}
             elif path.startswith('/compat_job/'):
-                if mode=='apply' and sum(p.startswith('/compat_job/') for p,_ in calls)==1:
-                    data={'ok':True,'pending':True,'configuration_saved':True,'applying_service':'stop' if stopping else 'start'}
+                if sum(p.startswith('/compat_job/') for p,_ in calls)==1:
+                    data={'ok':True,'pending':True}
+                    if mode=='apply':
+                        data.update(configuration_saved=True,applying_service='stop' if stopping else 'start')
                 else:
                     result={'ok':not failure,'configuration_saved':failure!='save','runtime_applied':mode=='apply' and not failure and not stopping,
                             'redirect':base+'/'+name+('?notice=Saved+and+applied' if stopping else '?notice=Saved')}
@@ -155,15 +210,26 @@ with sync_playwright() as pw:
         else:
             page.locator('input[name=log_max_lines]').fill('1025');dirty=page.locator('#hg-maintenance-dirty')
         assert dirty.is_visible()
-        page.locator('.cbi-page-actions .cbi-button-'+mode).click()
+        toolbar=page.locator('.cbi-page-actions')
+        button=toolbar.locator('.cbi-button-'+mode)
+        other=toolbar.locator('.cbi-button-'+('save' if mode=='apply' else 'apply'))
+        reset=toolbar.locator('.cbi-button-reset')
+        label,other_label=button.input_value(),other.input_value()
+        button.click()
+        assert button.input_value()==('正在应用…' if mode=='apply' else '正在保存…')
+        assert other.input_value()==other_label
+        assert button.is_disabled() and other.is_disabled() and reset.is_disabled()
         status=page.locator('#hg-operation-status')
         assert status.evaluate("node => node.parentElement.classList.contains('hg-wrap') && node.nextElementSibling.classList.contains('hg-notice-pending')")
         assert not dirty.is_visible()
         if mode=='apply':
             status.filter(has_text='正在停用' if stopping else '正在启动').wait_for(state='visible',timeout=5000)
+            assert page.locator('#hg_service').inner_text()==('Stopping...' if stopping else 'Starting...')
             assert not dirty.is_visible()
         outcome={'apply':'服务尚未验证运行','save':'保存失败'}.get(failure,'已保存并应用。' if stopping else ('HomeGate 已运行' if mode=='apply' else '已保存。'))
         status.filter(has_text=outcome).wait_for(state='visible',timeout=5000)
+        assert button.input_value()==label
+        assert button.is_enabled() and other.is_enabled() and reset.is_enabled()
         assert page.url.endswith('/'+name) and not dirty.is_visible()
         assert status.evaluate("node => node.classList.contains('hg-notice') && getComputedStyle(node).borderLeftWidth === '3px'")
         assert not page.locator('.cbi-page-actions #hg-operation-status').count()
@@ -177,8 +243,7 @@ with sync_playwright() as pw:
         assert len(applied)==1 and 'mode='+mode in applied[0],calls
         assert any(p.startswith('/compat_ack/') for p,_ in calls) == (failure!='apply')
         context.unroute('http://homegate.test/**',operation_response)
-    # Use real asynchronous requests to exercise shared-lock sequencing and
-    # allow a previously displayed running status to become unknown.
+    # WAN information must arrive independently of runtime status retries.
     status_calls=[]
     stopped={'ok':True,'service':{'running':False,'healthy':True}}
     running={'ok':True,'service':{'running':True,'healthy':True},'runtime':{'pid':123}}
@@ -191,28 +256,30 @@ with sync_playwright() as pw:
             route.fulfill(content_type='text/html; charset=utf-8',body=xhr+legacy('overview',fixtures[0],templates))
         elif path.endswith('/homegate/native-operations.js'):
             route.fulfill(content_type='application/javascript',body=operations)
-        elif path=='/api/status':
+        elif path=='/api/overview_status':
             status_calls.append(path)
             route.fulfill(json=replies.pop(0) if replies else unavailable)
-        elif path=='/api/network':
+        elif path=='/api/overview_ipv6':
             status_calls.append(path)
-            route.fulfill(json={'ok':True,'network':{'wan':{'public_ipv6':'2001:db8::1'}}})
+            route.fulfill(json={'ok':True,'public_ipv6':'2001:db8::1'})
         else:
             route.fulfill(status=404)
     context.route('http://homegate.test/**',status_response)
     page.goto('http://homegate.test'+base+'/overview')
     service=page.locator('#hg_service')
     page.locator('#hg_ipv6').filter(has_text='2001:db8::1').wait_for(timeout=5000)
-    assert status_calls==['/api/status','/api/status','/api/network'],status_calls
-    assert service.inner_text()=='Stopped'
+    service.filter(has_text='Stopped').wait_for(timeout=5000)
+    assert status_calls.count('/api/overview_ipv6')==1,status_calls
+    assert status_calls.index('/api/overview_ipv6') < [i for i,p in enumerate(status_calls) if p=='/api/overview_status'][1],status_calls
     page.evaluate('window.hgRefreshService()')
     page.locator('#hg_pid').filter(has_text='PID 123').wait_for(timeout=5000)
     page.evaluate('window.hgRefreshService()')
     service.filter(has_text='Service status temporarily unavailable').wait_for(timeout=5000)
     assert page.locator('#hg_pid').inner_text()=='-'
-    assert status_calls[3:]==['/api/status']*5,status_calls
+    assert status_calls.count('/api/overview_status')==7,status_calls
+    assert status_calls.count('/api/overview_ipv6')==1,status_calls
     assert not errors,errors
     browser.close()
-(OUT/'results.json').write_text(json.dumps({'html_parity':parity,'transport':['submitter-mode','job-poll-ack','duplicate-suppression','dynamic-form'],'production_http':['delayed-maintenance-save','delayed-overview-save','delayed-overview-save-error','delayed-inline-start-success','delayed-inline-uncertain-start','delayed-inline-stop','status-retry-before-network','status-unknown-clears-pid']},indent=2),encoding='utf-8')
+(OUT/'results.json').write_text(json.dumps({'html_parity':parity,'transport':['submitter-mode','job-poll-ack','duplicate-suppression','dynamic-form'],'production_http':['delayed-maintenance-save','delayed-overview-save','delayed-overview-save-error','delayed-inline-start-success','delayed-inline-uncertain-start','delayed-inline-stop','network-independent-of-status-retry','status-unknown-clears-pid']},indent=2),encoding='utf-8')
 print('Native/Lua HTML parity: PASS (10); native transport: PASS (4); production HTTP: PASS (8)')
 

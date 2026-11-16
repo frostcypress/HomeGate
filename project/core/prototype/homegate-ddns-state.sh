@@ -8,12 +8,13 @@ ddns_recovery_publish_enabled=false
 ddns_batch_enabled=false
 fail() { printf '{"api_version":1,"prototype":true,"ok":false,"phase":"ddns-state","effect":"none","write_ready":false,"error":"DDNS state is unavailable"}\n';exit "${1:-7}"; }
 [ "$ddns_state_enabled" = true ] || fail 2
-action=${1:-};rule=${2:-};batch=false
-if [ "$action" = batch-sync-internal ]; then
+action=${1:-};rule=${2:-};batch=false;manual=
+if [ "$action" = batch-sync-internal ] || [ "$action" = batch-sync-manual ]; then
     [ "$ddns_batch_enabled" = true ] && [ "$#" -eq 4 ] && [ "$4" = --confirm ] || fail 2
     batch=true;batch_parent=$3
     case "$batch_parent" in ''|0*|*[!0-9]*) fail 2;; esac
     [ "${#batch_parent}" -le 9 ] && [ "$batch_parent" -ge 2 ] || fail 2
+    [ "$action" != batch-sync-manual ] || manual=-manual
     action=sync;set -- sync "$rule" --confirm
 fi
 case "$action" in status) [ "$#" -eq 2 ] || fail 2;; sync|reset) [ "$#" -eq 3 ] && [ "$3" = --confirm ] || fail 2;; *) fail 2;; esac
@@ -82,14 +83,14 @@ if [ "$action" = reset ]; then
     publish_recovery || fail
     printf '{"api_version":1,"prototype":true,"ok":true,"phase":"ddns-state","state_reset":true,"effect":"none","write_ready":false}\n';exit 0
 fi
-decision=$(codec decision) || fail
+decision=$(codec "decision$manual") || fail
 case "$decision" in ready|stale) ;; *) codec status || fail;exit 4;; esac
 if ! exists "$cache"; then mkdir "$cache" && fsync "$run" 2>/dev/null || fail;fi
 reserve=2;exists "$file" || reserve=3
 private_dir "$cache" && [ "$((count+reserve))" -le 192 ] || fail
 publish() { private_file "$next" && [ "$(stat -c %s "$next")" -le 4096 ] && fsync "$next" "$cache" 2>/dev/null && mv -f "$next" "$file" && fsync "$file" "$cache" 2>/dev/null; }
 (set -C; : > "$next") 2>/dev/null || fail
-codec begin > "$next" && publish || fail
+codec "begin$manual" > "$next" && publish || fail
 exec 8<&-
 publish_recovery || fail
 (set -C; : > "$result") 2>/dev/null || fail

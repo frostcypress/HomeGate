@@ -15,6 +15,11 @@ end
 local function emit(d)io.write(codec.json(d),'\n')end
 local function report(raw)local d=raw and json.parse(raw);if type(d)~='table' then fail()end;return d end
 local function number(v,max)return type(v)=='number' and v>=0 and v<=max and v%1==0 end
+local receipt_path='/var/run/homegate/native-service.json'
+local function owner_key(d)
+ if not number(d.pid,999999999) or d.pid<2 or not number(d.process_start_ticks,9007199254740991)then fail()end
+ return string.format('%.0f:%.0f',d.pid,d.process_start_ticks)
+end
 local function identity(d)
  if not number(d.pid,999999999) or d.pid<2 or not number(d.process_start_ticks,9007199254740991)then return false end
  local function sample()
@@ -27,15 +32,28 @@ local function identity(d)
  local a,b=sample(),sample();return a and a==b or false
 end
 local mode=arg[1]
+if mode=='web-previous-owner'then
+ local d=fs.lstat(receipt_path) and report(read(receipt_path,16384))
+ io.write(d and owner_key(d) or 'none','\n');return
+end
 if mode=='web-running'then
- if not fs.lstat('/var/run/homegate/native-service.json')then os.exit(3)end
- local d=report(read('/var/run/homegate/native-service.json',16384));local revision=tonumber(arg[2])
+ if not fs.lstat(receipt_path)then os.exit(3)end
+ local d=report(read(receipt_path,16384));local revision=tonumber(arg[2])
  if d.configuration_revision~=revision then os.exit(3)end
  if arg[3]then
   if not arg[3]:match('^[0-9a-f]+$') or #arg[3]~=64 then fail()end
   if d.source_binding_digest~=arg[3] or d.phase~='native-service' or d.version~=version()then os.exit(3)end
  end
- if d.state=='failed' or d.state=='restart_required'then os.exit(1)end
+ if d.state=='failed' or d.state=='restart_required'then
+  if arg[4] then
+   -- A retry can apply the same revision and source. Wait for a failure from
+   -- the new owner to survive shutdown, then end the Web wait immediately.
+   if arg[5]~='false' or owner_key(d)==arg[4] or d.running~=false or d.healthy~=false then os.exit(3)end
+   if type(d.reason)~='string' or #d.reason>64 or d.reason:find('[^a-z_]') then fail()end
+   emit({api_version=1,native=true,ok=false,configuration_revision=revision,reason=d.reason,cleanup_confirmed=d.cleanup_confirmed==true})
+  end
+  os.exit(1)
+ end
  if d.state~='running' or d.running~=true or d.healthy~=true or not identity(d)then os.exit(3)end
  if arg[3]then
   emit({api_version=1,native=true,ok=true,configuration_revision=revision,verification='source-bound-coordinator',service={configured=true,enabled=true,running=true,healthy=true}})
@@ -59,7 +77,7 @@ if mode=='plan' or mode=='plan-set'then
   elseif s.kind=='web_rule' and enabled then out.web[#out.web+1]=s.name end
  end
  local revision=tonumber(read('/etc/homegate/transactions/current',16))
- if not revision or revision<1 or revision>96 or type(arg[2])~='string' or #arg[2]>8192 then fail()end
+ if not revision or revision<1 or revision>999999999 or type(arg[2])~='string' or #arg[2]>8192 then fail()end
  if mode=='plan-set'then
   local index={};for _,s in ipairs(doc.configuration)do index[s.name]=s end
   local function selection(raw,kind,acme)
@@ -95,27 +113,38 @@ elseif mode=='ready'then
  if arg[2]=='intent' then if d.known~=true or d.active_overlay~=true or d.main_enabled~=true or d.source_bound~=true then fail()end
  elseif arg[2]=='due' then if d.pending~=false or type(d.renew)~='boolean' or type(d.exists)~='boolean' or type(d.valid)~='boolean' then fail()end;if not d.renew and d.exists and d.valid then os.exit(3)end
  elseif arg[2]=='job' then if d.pending==true then os.exit(3)end;if d.pending~=false or d.cleanup_required~=false or (d.state~='issued' and d.state~='skipped')then fail()end
- elseif arg[2]=='running' then if d.running~=true then fail()end
+ elseif arg[2]=='running' then
   if d.phase=='proxy' and d.state=='starting' then os.exit(3)end
+  if d.running~=true then fail()end
   if d.phase=='proxy' and d.state~='running' then fail()end
  else fail()end;return
 elseif mode=='emit'then
  local states={starting=true,running=true,renewing=true,stopping=true,stopped=true,failed=true,restart_required=true}
  local state,pid,ticks,revision=arg[2],tonumber(arg[3]),tonumber(arg[4]),tonumber(arg[5]);local reason=arg[6]
- if not states[state] or not number(pid,999999999) or not number(ticks,9007199254740991) or not number(revision,96) or not reason or #reason>64 or reason:find('[^a-z_]')then fail()end
+ if not states[state] or not number(pid,999999999) or not number(ticks,9007199254740991) or not number(revision,999999999) or not reason or #reason>64 or reason:find('[^a-z_]')then fail()end
  local digest=arg[7];if not digest or #digest~=64 or not digest:match('^[0-9a-f]+$')then fail()end
- emit({api_version=1,native=true,ok=state~='failed' and state~='restart_required',phase='native-service',version=version(),state=state,pid=pid,process_start_ticks=ticks,configuration_revision=revision,source_binding_digest=digest,reason=reason,healthy=state=='running',running=state=='starting' or state=='running' or state=='renewing' or state=='stopping',effect='none',write_ready=false});return
+ emit({api_version=1,native=true,ok=state~='failed' and state~='restart_required',phase='native-service',version=version(),state=state,pid=pid,process_start_ticks=ticks,configuration_revision=revision,source_binding_digest=digest,reason=reason,cleanup_confirmed=arg[8]=='true',healthy=state=='running',running=state=='starting' or state=='running' or state=='renewing' or state=='stopping',effect='none',write_ready=false});return
 elseif mode=='alive'then
  local d=report(read('/var/run/homegate/native-service.json',16384))
  if d.phase~='native-service' or d.running~=true or not identity(d)then fail()end;return
-elseif mode=='status'then
- local config=report(io.stdin:read(8193));if type(config.service)~='table' or type(config.service.configured)~='boolean'then fail()end
- local intent=report(arg[2]);local live=arg[3]=='true';if arg[3]~='true' and arg[3]~='false'then fail()end
+elseif mode=='status' or mode=='overview-status'then
+ local live_flag=mode=='status' and arg[3] or arg[2]
+ if live_flag~='true' and live_flag~='false'then fail()end
+ local live=live_flag=='true'
+ if mode=='overview-status' and not live then
+  emit({ok=true,service={running=false},coordinator={state='stopped'}});return
+ end
  local d={state='idle',running=false,healthy=false,reason=''}
  if fs.lstat('/var/run/homegate/native-service.json')then d=report(read('/var/run/homegate/native-service.json',16384)) end
  if d.phase and (d.phase~='native-service' or type(d.running)~='boolean' or type(d.healthy)~='boolean' or type(d.state)~='string' or d.version~=version())then fail()end
  local running=live and d.running and identity(d) or false
  if live and not running then fail() end
+ local runtime=running and {pid=d.pid} or nil
+ if mode=='overview-status'then
+  emit({ok=true,service={running=true,healthy=d.healthy},runtime=runtime,coordinator={state=d.state}});return
+ end
+ local config=report(io.stdin:read(8193));if type(config.service)~='table' or type(config.service.configured)~='boolean'then fail()end
+ local intent=report(arg[2])
  local enabled=config.service.enabled
  local configured=config.service.configured
  if intent.known==true then
@@ -125,7 +154,7 @@ elseif mode=='status'then
   enabled=intent.main_enabled;configured=true
  end
  local healthy=configured and enabled==running and (not running or d.healthy==true and d.configuration_revision==config.configuration_revision)
- emit({api_version=1,native=true,ok=healthy,phase='common-runtime',version=version(),configuration_revision=config.configuration_revision,service={configured=configured,enabled=enabled,running=running,healthy=healthy},coordinator={state=d.state,reason=d.reason},effect='none',write_ready=false})
+ emit({api_version=1,native=true,ok=healthy,phase='common-runtime',version=version(),configuration_revision=config.configuration_revision,service={configured=configured,enabled=enabled,running=running,healthy=healthy},runtime=runtime,coordinator={state=d.state,reason=d.reason},effect='none',write_ready=false})
  if arg[4]=='check' and not healthy then os.exit(1)end;return
 end
 fail()

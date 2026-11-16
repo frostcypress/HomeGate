@@ -5,6 +5,7 @@ umask 077
 export LC_ALL=C
 ddns_authority_enabled=false
 ddns_multi_authority_enabled=false
+native_ddns_authority_reads=false
 fail() { printf '{"api_version":1,"prototype":true,"ok":false,"phase":"ddns-authority","effect":"none","error":"DDNS authority is unavailable"}\n';exit "${1:-7}"; }
 [ "$ddns_authority_enabled" = true ] || fail 2
 action=${1:-}
@@ -44,7 +45,9 @@ if [ "$validation" = runtime-startup-snapshot-read ];then
  [ "$validated" = 0 ] || fail 4
 else ash "$dir/homegate-config-prototype.sh" --persistent writer-check 3>/dev/null >/dev/null 2>/dev/null || fail 4;fi
 if [ -e "$store/startup-active" ] || [ -L "$store/startup-active" ];then
- case "$action" in revoke|cancel) ;; *) ash "$dir/homegate-startup-active.sh" check >/dev/null 2>/dev/null || fail 4;; esac
+ check=check
+ [ "$native_ddns_authority_reads" = false ] || check=check-current
+ case "$action" in revoke|cancel) ;; *) ash "$dir/homegate-startup-active.sh" "$check" >/dev/null 2>/dev/null || fail 4;; esac
 fi
 body() { printf '%s\n' "$format" "$state" "$identity" "$revision" "$generation" "$source_hash" "$rule" "$nonce" "$boot" "$created" "$previous"; }
 framed() { frame=$(body) || return 1;digest=$(printf '%s\n' "$frame" | sha256sum) || return 1;printf '%s\n' "$frame" "${digest%% *}"; }
@@ -65,7 +68,7 @@ read_record() {
     case "$revision:$created" in *[!0-9:]*) return 1;; esac
     case "$revision" in ''|0*) return 1;; esac
     case "$created" in ''|0?*) return 1;; esac
-    [ "${#revision}" -le 2 ] && [ "$revision" -le 96 ] && [ "${#created}" -le 9 ] && hex "$nonce" 32 || return 1
+    [ "${#revision}" -le 9 ] && [ "$revision" -le 999999999 ] && [ "${#created}" -le 9 ] && hex "$nonce" 32 || return 1
     for value in "$identity" "$generation" "$source_hash"; do hex "$value" 64 || return 1;done
     [ "$previous" = none ] || hex "$previous" 64 || return 1
     [ "${#boot}" -eq 36 ] || return 1;case "$boot" in *[!0-9a-f-]*) return 1;; esac
@@ -81,7 +84,7 @@ current() {
 same_current() { [ "$identity:$revision:$generation:$source_hash" = "$current_identity:$current_revision:$current_generation:$current_source" ]; }
 scope() {
     [ "$format" != HGDDNSAUTH2 ] || [ "$ddns_multi_authority_enabled" = true ] || return 1
-    provider=$(ash "$dir/homegate-config-prototype.sh" --persistent runtime-ddns-snapshot-read 3>&1 4>&- 8>&- 9>&- >/dev/null 2>/dev/null |
+    provider=$(ash "$dir/homegate-config-prototype.sh" --persistent "$snapshot_command" 3>&1 4>&- 8>&- 9>&- >/dev/null 2>/dev/null |
         lua "$dir/homegate-ddns-authority.lua" scope "$revision" "$rule" 3>&- 4>&- 8>&- 9>&- 2>/dev/null) || return 1
     case "$provider" in cloudflare|aliyun|dnspod|huaweicloud|multiple) ;; *) return 1;; esac
 }
@@ -105,6 +108,8 @@ if [ "$action" = cancel ]; then
     printf '{"api_version":1,"prototype":true,"ok":true,"phase":"ddns-authority","cancelled":true,"effect":"none"}\n';exit 0
 fi
 current || fail
+snapshot_command=runtime-ddns-snapshot-read
+[ "$native_ddns_authority_reads" = false ] || snapshot_command=runtime-active-snapshot-read
 if [ "$action" = preview ] || [ "$action" = preview-rules ]; then
     ! exists "$next" || fail 2
     preview_format=HGDDNSAUTH1
@@ -154,7 +159,7 @@ fi
 [ -z "${id_action:-}" ] || lua "$dir/homegate-ddns-authority.lua" member "$rule" "$selected" >/dev/null 2>/dev/null || fail
 if [ "$action" = snapshot ]; then
     [ -p /proc/self/fd/3 ] && [ -f /proc/self/fd/4 ] && [ "$(stat -Lc '%u:%a:%h' /proc/self/fd/4)" = "$owner:600:1" ] || fail
-    ash "$dir/homegate-config-prototype.sh" --persistent runtime-ddns-snapshot-read 3>&1 4>&- 8>&- 9>&- >/dev/null 2>/dev/null |
+    ash "$dir/homegate-config-prototype.sh" --persistent "$snapshot_command" 3>&1 4>&- 8>&- 9>&- >/dev/null 2>/dev/null |
         lua "$dir/homegate-ddns-authority.lua" snapshot "$revision" "${selected:-$rule}" 8>&- 9>&- 2>/dev/null || fail
 fi
 public=$(public_scope) || fail

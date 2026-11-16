@@ -37,12 +37,13 @@ elseif mode=='start-options' or mode=='runtime-result'then
  local token=arg[2];if not id(token) or not dir(root) or not dir(root..'/'..token)then fail()end
  local path=root..'/'..token..'/result.next';local d=strict(read(path,2097152));if not d or type(d.ok)~='boolean' or d.api_version~=1 then fail()end
  if mode=='start-options'then
-  if d.ok and d.runtime_start then local r=d.runtime_start.revision;if type(r)~='number' or r<1 or r>96 or r%1~=0 then fail()end;io.write(r,'\n')end;return
+  if d.ok and d.runtime_start then local r=d.runtime_start.revision;if type(r)~='number' or r<1 or r>999999999 or r%1~=0 then fail()end;io.write(r,'\n')end;return
  end
+ local raw=io.stdin:read(32769);local status=raw and #raw<=32768 and strict(raw)
+ local revision=d.runtime_start and d.runtime_start.revision
  local verified=false
  if arg[3]=='true'then
-  local raw=io.stdin:read(32769);local status=raw and #raw<=32768 and strict(raw)
-  verified=status and status.ok==true and status.configuration_revision==d.runtime_start.revision and status.service and status.service.configured==true and status.service.enabled==true and status.service.running==true and status.service.healthy==true or false
+  verified=status and status.ok==true and status.configuration_revision==revision and status.service and status.service.configured==true and status.service.enabled==true and status.service.running==true and status.service.healthy==true or false
  end
  d.runtime_start=nil;d.runtime_applied=verified
  if not verified then
@@ -52,6 +53,10 @@ elseif mode=='start-options' or mode=='runtime-result'then
   d.init_start_exit=tonumber(arg[5]);d.receipt_exit=tonumber(arg[6])
   d.error=arg[4]=='boot-enable' and '服务已运行，但开机自启尚未确认。请核对任务状态后再操作。'
    or '配置已保存，但服务尚未验证运行。请核对任务状态后再操作。'
+  if d.receipt_exit==1 and status and status.api_version==1 and status.native==true and status.ok==false and status.configuration_revision==revision and status.reason=='firewall_apply_failed' and status.cleanup_confirmed==true then
+   d.uncertain=false
+   d.error='配置已保存。IPv6 防火墙配置失败，HomeGate 未启动。'
+  end
  end
  assert(fs.unlink(path));write(path,codec.json(d)..'\n');return
 elseif mode=='purge'then

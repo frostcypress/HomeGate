@@ -31,7 +31,7 @@ function M.lines(stream)
   end
  end
 end
-function M.parse(stream,output,now)
+function M.parse(stream,output,now,daily)
  local header,records,counts,summaries=false,0,{asn=0,ipv4=0,ipv6=0},{}
  local seen,parts,v4n,v6n,bytes={}, {},0,0,0
  local function emit(prefix)
@@ -63,16 +63,23 @@ function M.parse(stream,output,now)
  end
  if not header or records~=header or v4n==0 or v6n==0 then bad()end
  for kind,count in pairs(counts)do if (count>0 and summaries[kind]~=count) or (summaries[kind] and summaries[kind]~=count)then bad()end end
- if not output:write('HGREGION1|'..now..'|'..v4n..'|'..v6n..'\n')then bad()end;for _,part in ipairs(parts)do if not output:write(part)then bad()end end
- return {updated=now,ipv4=v4n,ipv6=v6n,prefixes=v4n+v6n,stale=false}
+ local header='HGREGION1|'..now..'|'..v4n..'|'..v6n
+ if daily then header=header..'|'..daily.day..'|'..daily.count end
+ if not output:write(header..'\n')then bad()end;for _,part in ipairs(parts)do if not output:write(part)then bad()end end
+ return {updated=now,ipv4=v4n,ipv6=v6n,prefixes=v4n+v6n,stale=false,members=daily and seen or nil}
 end
-function M.cache(stream,output,now)
+function M.cache(stream,output,now,keep_members)
  local lines=M.lines(stream);local header=lines();if not header then bad()end;local stamp,a,b=header:match('^HGREGION1|(%d+)|(%d+)|(%d+)$')
+ local day,count
+ if not stamp then
+  stamp,a,b,day,count=header:match('^HGREGION1|(%d+)|(%d+)|(%d+)|(%d%d%d%d%d%d%d%d)|([12])$')
+ end
  if not stamp then bad()end;stamp=integer(stamp,1,2147483647);a=integer(a,1,M.max_prefixes);b=integer(b,1,M.max_prefixes)
  if stamp>now+300 then bad()end
  local counts={ipv4=0,ipv6=0};local seen={}
  for line in lines do local canonical,kind=M.prefix(line);if canonical~=line or seen[line]then bad()end;seen[line]=true;counts[kind]=counts[kind]+1;if counts.ipv4+counts.ipv6>M.max_prefixes then bad()end;if output and not output:write(line..' 1;\n')then bad()end end
  if counts.ipv4~=a or counts.ipv6~=b then bad()end
- return {updated=stamp,ipv4=a,ipv6=b,prefixes=a+b,stale=now-stamp>604800}
+ return {updated=stamp,ipv4=a,ipv6=b,prefixes=a+b,stale=now-stamp>604800,
+  day=day,day_count=tonumber(count),members=keep_members and seen or nil}
 end
 return M

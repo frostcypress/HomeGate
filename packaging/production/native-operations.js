@@ -1,17 +1,14 @@
 (function () {
   'use strict';
 
-  const status = document.getElementById('hg-operation-status');
+  const status = document.querySelector('.hg-operation-status[data-base]');
   if (!status) return;
   const base = new URL(status.dataset.base, location.href);
   const pendingKey = 'homegate:operation:' + base.pathname;
   let busy = false;
 
   function show(message, state = 'success') {
-    status.textContent = message;
-    status.classList.toggle('hg-notice-error', state === 'error');
-    status.classList.toggle('hg-notice-pending', state === 'pending');
-    status.hidden = false;
+    hgShowNotice(status, message, state);
   }
 
   async function request(url, values, timeout = 10000) {
@@ -40,7 +37,7 @@
     } catch (_) { /* The current page can still track the operation. */ }
   }
 
-  async function waitForResult(job, onSaved, onResult) {
+  async function waitForResult(job, onSaved, onResult, interval = 750) {
     const deadline = Date.now() + 330000;
     let saved = false;
     while (Date.now() < deadline) {
@@ -60,13 +57,28 @@
       if (!saved && state.configuration_saved === true) {
         saved = true;
         if (onSaved) onSaved();
-        show(state.applying_service === 'stop' ? '配置已保存，正在停用 HomeGate。' :
-          '配置已保存，HomeGate 正在启动。', 'pending');
+        if (state.applying_service) {
+          show(state.applying_service === 'stop' ? '配置已保存，正在停用 HomeGate。' :
+            '配置已保存，HomeGate 正在启动。', 'pending');
+        }
       }
-      await new Promise(resolve => setTimeout(resolve, 750));
+      await new Promise(resolve => setTimeout(resolve, interval));
     }
     throw new Error(saved ? '配置已保存，服务状态仍待确认。' : '操作结果仍待确认。');
   }
+
+  window.homegateAccessAction = async function (route, values) {
+    if (busy) throw new Error('正在处理另一项操作，请稍后再试。');
+    busy = true;
+    try {
+      const submitted = await request(base.pathname + '/' + route, { ...values, token: status.dataset.token });
+      if (!submitted.pending || !/^[a-f0-9]{32}$/.test(submitted.job)) throw new Error('暂时无法确认操作结果。');
+      remember(submitted.job);
+      return await waitForResult(submitted.job, null, null, 250);
+    } finally {
+      busy = false;
+    }
+  };
 
   function finish(result, route) {
     if (!result.ok) {
@@ -77,7 +89,7 @@
         message = (result.uncertain ? '操作结果待确认，请检查当前配置和服务状态。' : '操作未完成，请检查当前配置后重试。') + site;
       }
       show(prefix + message, 'error');
-      if (route === 'basic_apply' && window.hgRefreshService) window.hgRefreshService();
+      if (route === 'basic_apply' && window.hgRefreshService) window.hgRefreshService(result.configuration_saved);
       return;
     }
     const redirect = result.redirect && new URL(result.redirect, base);
@@ -95,7 +107,7 @@
       return;
     }
     show(result.runtime_applied ? '已保存，HomeGate 已运行。' : (messages[notice] || notice || '操作已完成。'));
-    if (route === 'basic_apply' && window.hgRefreshService) window.hgRefreshService();
+    if (route === 'basic_apply' && window.hgRefreshService) window.hgRefreshService(true);
   }
 
   async function run(url, data, form, submitter) {
@@ -153,6 +165,10 @@
     const path = url.pathname.slice(base.pathname.length + 1);
     if (path.includes('/') || ['config_import', 'config_export', 'diagnostic_download', 'config_reset', 'log_clear'].includes(path)) return;
     if (event) event.preventDefault();
+    if (path === 'basic_apply' && form.elements.enabled.disabled && !busy) {
+      show('暂时无法确认 HomeGate 运行状态，请刷新页面后重试。', 'error');
+      return true;
+    }
     const values = new FormData(form);
     if (event && event.submitter && event.submitter.name) values.append(event.submitter.name, event.submitter.value);
     run(url, values, form, event && event.submitter);

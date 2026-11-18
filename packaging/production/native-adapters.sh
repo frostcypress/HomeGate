@@ -20,14 +20,17 @@ case "$action" in
   ash "$base/ddns-control.sh" "access-$operation" --confirm >/dev/null || { lua "$base/native-adapters.lua" access-error;exit 1; }
   exec 8>&-
   token=$(lua "$base/native-adapters.lua" access-token) || { lua "$base/native-adapters.lua" access-error;exit 1; }
-  now=$(lua "$dir/worker-process.lua" now) || fail 1;deadline=$((now+45))
+  # Allow both bounded downloads plus the cache validation/publication step.
+  now=$(lua "$dir/worker-process.lua" now) || fail 1;deadline=$((now+155))
   while :;do
-   status=$(ash "$base/ddns-control.sh" access-status) || { lua "$base/native-adapters.lua" access-error;exit 1; }
-   row=$(printf '%s\n' "$status" | lua "$base/native-adapters.lua" access-row "$operation" "$token");code=$?
-   case "$code" in 0|1) printf '%s\n' "$row";exit "$code";;3) ;;*) lua "$base/native-adapters.lua" access-error;exit 1;;esac
+   status=$(ash "$dir/homegate-access-region.sh" progress) || { lua "$base/native-adapters.lua" access-error;exit 1; }
+   if [ "$status" != pending ];then
+    row=$(printf '%s\n' "$status" | lua "$base/native-adapters.lua" access-row "$operation" "$token");code=$?
+    case "$code" in 0|1) printf '%s\n' "$row";exit "$code";;3) ;;*) lua "$base/native-adapters.lua" access-error;exit 1;;esac
+   fi
    now=$(lua "$dir/worker-process.lua" now) || fail 1
    if [ "$now" -ge "$deadline" ];then ash "$base/ddns-control.sh" access-stop --confirm >/dev/null;lua "$base/native-adapters.lua" access-error;exit 1;fi
-   sleep .1 || sleep 1 || fail 1
+   sleep .25 || sleep 1 || fail 1
   done;;
  access-clear)
   lock=$run/proxy.lock

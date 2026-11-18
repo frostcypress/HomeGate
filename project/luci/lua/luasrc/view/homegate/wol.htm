@@ -94,7 +94,6 @@
 <span id="hg-wol-label-empty" style="display:none"><%:No hosts.%></span>
 <span id="hg-wol-label-add-title" style="display:none"><%:Add Host%></span>
 <span id="hg-wol-label-edit-title" style="display:none"><%:Edit Host%></span>
-<span id="hg-wol-label-delete-confirm" style="display:none"><%:Delete this saved host?%></span>
 
 <script type="text/javascript">
 var hgWolRows=[], hgWolHasUnsaved=false, hgWolSavedSignature='', hgWolSavedRows={};
@@ -181,7 +180,13 @@ function hgWolConfirm(){
   if(idx==='')hgWolRows.push({id:'',name:name,mac:mac,committed:false,dirty:true});else{idx=parseInt(idx,10);hgWolRows[idx].name=name;hgWolRows[idx].mac=mac;hgWolRows[idx].dirty=true;}
   hgWolRecomputeDirty();hgWolClose();
 }
-function hgWolDeleteIndex(i){if(!confirm(hgLabel('hg-wol-label-delete-confirm')))return;hgWolRows.splice(i,1);hgWolRecomputeDirty();}
+function hgWolDeleteIndex(i){
+  if(!hgWolRows[i])return;
+  hgWolRows.splice(i,1);
+  hgWolRecomputeDirty();
+  var status=document.getElementById('hg-operation-status');
+  if(status)status.hidden=true;
+}
 function hgWolClose(){hgSetModalOpen('hg-wol-modal',false);}
 (function(){hgWolLoadRows();hgWolCaptureSavedState();hgWolMacChanged();})();
 </script>

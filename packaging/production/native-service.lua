@@ -56,7 +56,8 @@ if mode=='web-running'then
  end
  if d.state~='running' or d.running~=true or d.healthy~=true or not identity(d)then os.exit(3)end
  if arg[3]then
-  emit({api_version=1,native=true,ok=true,configuration_revision=revision,verification='source-bound-coordinator',service={configured=true,enabled=true,running=true,healthy=true}})
+  local certificate_state=({certificate='pending',certificate_unknown='unknown',certificate_retry='retry'})[d.reason]
+  emit({api_version=1,native=true,ok=true,configuration_revision=revision,verification='source-bound-coordinator',certificate_state=certificate_state,service={configured=true,enabled=true,running=true,healthy=true}})
  end
  return
 end
@@ -109,10 +110,14 @@ elseif mode=='field'then
  elseif key=='auto_firewall' and type(d.auto_firewall)=='boolean'then io.write(d.auto_firewall and 'true\n' or 'false\n')
  else fail()end;return
 elseif mode=='ready'then
- local d=report(io.stdin:read(16385));if d.ok~=true then fail()end
+ local d=report(io.stdin:read(16385))
+ if arg[2]=='job' and d.pending==false and d.cleanup_required==false and d.state=='failed' then os.exit(5)end
+ if d.ok~=true then fail()end
  if arg[2]=='intent' then if d.known~=true or d.active_overlay~=true or d.main_enabled~=true or d.source_bound~=true then fail()end
  elseif arg[2]=='due' then if d.pending~=false or type(d.renew)~='boolean' or type(d.exists)~='boolean' or type(d.valid)~='boolean' then fail()end;if not d.renew and d.exists and d.valid then os.exit(3)end
- elseif arg[2]=='job' then if d.pending==true then os.exit(3)end;if d.pending~=false or d.cleanup_required~=false or (d.state~='issued' and d.state~='skipped')then fail()end
+ elseif arg[2]=='job' then
+  if d.pending==true then os.exit(3)end
+  if d.pending~=false or d.cleanup_required~=false or (d.state~='issued' and d.state~='skipped')then fail()end
  elseif arg[2]=='running' then
   if d.phase=='proxy' and d.state=='starting' then os.exit(3)end
   if d.running~=true then fail()end

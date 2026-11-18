@@ -15,12 +15,18 @@ if fixture then
  work='/offline-memory'
 else request=lib.request(arg[2],write);work=arg[2]:match('^(.*)/[^/]+$')end
 local result={api_version=1,ok=false,headers={}};local bytes=0;local private={};local documents={};local files={};local revision
-local needs_config_write=write and not ({config_export=true,diagnostic_download=true,log_clear=true})[request.route]
+local needs_config_write=write and not ({config_export=true,diagnostic_download=true,log_clear=true,update_url_save=true})[request.route]
 if request.route=='config_import' and request.form.mode~='restore'then needs_config_write=false end
 local effect_started=false
 local failure_stage
 local pending_imports={}
 local stopped_for_save=false
+local dns_delete_confirmed=false
+local prepared_region
+local access_rule_routes={access_save_rule=true,access_delete_all=true,access_delete_entry=true,access_delete_rule=true}
+local access_store=not fixture and assert(loadfile(base..'/native-access.lua'))()
+local access_baseline,access_overlay
+local access_origins={}
 local function quote(s)return "'"..tostring(s):gsub("'","'\\''").."'"end
 local function capture(command,limit)
  if fixture then return fixture.shell(command)end
@@ -47,6 +53,39 @@ local function core(args,input)
 end
 local function decoded(args,input)
  local raw,code=core(args,input);return json.parse(raw),code
+end
+local update_url_path='/etc/homegate/plugin-update-url'
+local function read_update_url()
+ local state=fs.lstat(update_url_path)
+ if not state then return '' end
+ if not lib.dir('/etc/homegate') or state.type~='reg' or state.uid~=0 or state.nlink~=1 or
+    state.modedec~=600 or state.size<1 or state.size>2049 then return nil end
+ local raw=fs.readfile(update_url_path,2049)
+ return raw and #raw==state.size and raw:match('^([^\r\n%z]*)\n$') or nil
+end
+local function save_update_url(value)
+ if type(value)~='string' or #value>2048 then return '请输入有效的 HTTP 或 HTTPS 更新地址。' end
+ if value~='' then
+  local validation=assert(loadfile(proto..'/configuration-validation.lua'))()
+  local ip=assert(loadfile(proto..'/cloudflare-record-plan.lua'))()
+  if not validation.target(value,ip) then return '请输入有效的 HTTP 或 HTTPS 更新地址。' end
+ end
+ local current=read_update_url()
+ if current==nil or not lib.dir('/etc/homegate') then return '无法保存插件更新地址。' end
+ if value~=current then
+  local job=work:match('/([0-9a-f]+)$')
+  if not lib.id(job) then return '无法保存插件更新地址。' end
+  local staged=update_url_path..'.'..job
+  lib.write(staged,value..'\n')
+  local _,code=call({'fsync',staged},nil,64)
+  if code~=0 or not fs.rename(staged,update_url_path) then
+   fs.unlink(staged)
+   return '无法保存插件更新地址。'
+  end
+  local _,synced=call({'fsync','/etc/homegate'},nil,64)
+  if synced~=0 then return '更新地址保存结果待确认，请刷新页面核对。' end
+ end
+ result.plugin_update_url=value
 end
 local function uptime()
  local f=original_io.open('/proc/uptime','rb')
@@ -114,7 +153,14 @@ local function load_document(pkg)
   end end
  end
  for _,s in ipairs(documents[pkg])do
-  if s.kind=='dns_account'then for _,k in ipairs({'id','secret','account_id','endpoint'})do local v=s.values[k];if v and v~=''then private[#private+1]=v end end
+  if s.name=='main' and s.kind=='homegate'then
+   access_baseline={s.values.access_allow or '',s.values.access_deny or ''}
+   access_overlay=access_store.read(unpack(access_baseline))
+   if access_overlay then
+    s.values.access_allow,s.values.access_deny=access_overlay.allow,access_overlay.deny
+    access_origins=access_overlay.origins
+   end
+  elseif s.kind=='dns_account'then for _,k in ipairs({'id','secret','account_id','endpoint'})do local v=s.values[k];if v and v~=''then private[#private+1]=v end end
   elseif s.kind=='ddns_rule' and s.values.url then private[#private+1]=s.values.url
   elseif s.kind=='web_rule' and s.values.target then
    local credentials=s.values.target:match('^https?://([^/@]+)@');if credentials then private[#private+1]=credentials end
@@ -148,7 +194,17 @@ local function text(doc)
 end
 local changed=false
 local cursor={}
-function cursor:get_all(pkg,name)local s=find(pkg,name);if not s then return nil end;local row=copy(s.values);row['.name']=s.name;row['.type']=s.kind;return row end
+function cursor:get_all(pkg,name)
+ local s=find(pkg,name);if not s then return nil end
+ local row=copy(s.values);row['.name']=s.name;row['.type']=s.kind
+ if pkg=='homegate' and name=='main' and request.route=='public' then
+  local origins={observed={},custom={}}
+  for ip,origin in pairs(access_origins)do table.insert(origins[origin],ip)end
+  row['.access_observed']=table.concat(origins.observed,',')
+  row['.access_custom']=table.concat(origins.custom,',')
+ end
+ return row
+end
 function cursor:get(pkg,name,key)local s=find(pkg,name);if s then if key then return s.values[key]end;return s.kind end end
 function cursor:foreach(pkg,kind,cb)
  for i,s in ipairs(copy(load_document(pkg)))do if not kind or s.kind==kind then local row=copy(s.values);row['.name']=s.name;row['.type']=s.kind;row['.index']=i-1;cb(row)end end
@@ -174,6 +230,126 @@ function cursor:delete(pkg,name,key)
  changed=true;return true
 end
 function cursor:revert(pkg)documents[pkg]=nil;changed=false;return true end
+local function wait_ms(ms)
+ local _,rc=call({'lua',proto..'/worker-process.lua','pause',tostring(ms)},nil,32)
+ if rc~=0 then _,rc=call({'sleep','1'},nil,32) end
+ return rc==0
+end
+local function service_owner()
+ local owner,rc=call({'ash',base..'/native-service.sh','owner-state'})
+ if rc==0 and (owner=='true\n' or owner=='false\n') then return owner=='true\n' end
+end
+local function log_web_progress(outcome)
+ local operation=not fixture and lib.web_operation(request)
+ if operation then pcall(call,{'ash',base..'/native-log.sh','web',operation,outcome,'none'},nil,32) end
+end
+local function stop_and_wait()
+ if not fixture and service_owner()==true then log_web_progress('stopping') end
+ local _,rc=core({'service-stop','--confirm'})
+ if rc~=0 then return rc,'runtime-stop' end
+ local started=uptime()
+ local short_retries=3
+ repeat
+  _,rc=core({'service-quiescent'})
+  if rc==0 then return 0 end
+  local now=uptime()
+  if not started or not now or now-started>=20 then break end
+  if not wait_ms(short_retries>0 and 300 or 1000) then break end
+  short_retries=short_retries-1
+ until false
+ return rc,'runtime-quiescent'
+end
+local function disable_intent()
+ local started=uptime()
+ repeat
+  local raw,code=core({'lifecycle-disable','--confirm'})
+  local now=uptime()
+  if code~=4 or not started or not now or now-started>=6 or not wait_ms(300) then return raw,code end
+ until false
+end
+local function stop_for_save()
+ if stopped_for_save then return true end
+ local owner=service_owner()
+ if owner==nil then result.failure_stage='runtime-quiescent';return false end
+ if owner then
+  local rc,stage=stop_and_wait()
+  if rc~=0 then result.failure_stage=stage;result.exit_code=rc;return false end
+  stopped_for_save=true;result.runtime_stopped_for_save=true
+ end
+ return true
+end
+local editor_contention={
+ ['Shared writer is busy']='shared-writer',
+ ['Worker supervisor is busy']='worker-supervisor',
+ ['Configuration busy']='configuration',
+ ['Proxy must be quiescent before configuration changes']='proxy-quiescence',
+}
+local editor_errors={
+ ['Editor candidate invalid']='invalid',
+ ['Editor input size']='invalid',
+ ['Editor baseline changed']='stale',
+ ['Prototype history capacity reached']='history',
+ ['Configuration history is retained by active references']='history',
+ ['Invalid history reference']='history',
+ ['Unable to allocate generation']='storage',
+ ['Unable to allocate credential directory']='storage',
+ ['Unable to synchronize candidate files']='storage',
+ ['Unable to synchronize candidate directories']='storage',
+}
+local function reject_editor(stage,report,code,blocker)
+ local kind=type(report)=='table' and editor_errors[report.error] or nil
+ result.failure_stage=blocker=='ddns-sync' and 'editor-ddns-busy' or blocker and 'editor-busy' or
+    ((kind=='history' or kind=='storage' or kind=='stale') and 'editor-'..kind or stage)
+ if blocker then result.editor_stage=stage;result.editor_blocker=blocker end
+ result.exit_code=code
+end
+local function ddns_in_progress()
+ local status,rc=decoded({'schedule-status'})
+ return rc==0 and type(status)=='table' and status.ok==true and status.phase=='ddns-schedule'
+    and status.continuous==true and status.running==true and status.status=='running'
+    and type(status.ticks)=='number' and status.ticks>0
+end
+local function editor(action,body)
+ local started=uptime()
+ local deadline=started and started+20
+ local waiting_for_ddns=false
+ local attempt=0
+ while true do
+  local raw,code=call({'ash',proto..'/homegate-config-prototype.sh','--persistent',action,tostring(revision)},body)
+  local report=json.parse(raw)
+  -- Only these errors occur before candidate generation or publication.
+  -- Let an admitted background batch settle before asking the owner to stop.
+  local blocker=code==4 and type(report)=='table' and editor_contention[report.error]
+  if not blocker then return report,code end
+  local now=uptime()
+  if not deadline or not now then return report,code,blocker end
+  if now>=deadline then
+   if waiting_for_ddns or action~='editor-check' or (blocker~='shared-writer' and blocker~='worker-supervisor')
+      or not ddns_in_progress() then
+    return report,code,waiting_for_ddns and ddns_in_progress() and 'ddns-sync' or blocker
+   end
+   -- The running coordinator can publish readiness before its first batch
+   -- drains. Keep the old service live and leave time to stop and publish.
+   local job_deadline=tonumber(lib.read(work..'/deadline',16))
+   if not job_deadline then return report,code,blocker end
+   deadline=math.min(started+90,job_deadline-60)
+   if now>=deadline then return report,code,'ddns-sync' end
+   waiting_for_ddns=true
+  end
+  attempt=attempt+1
+  if not wait_ms(attempt<=3 and 300 or 1000) then return report,code,blocker end
+ end
+end
+local function restore_before_publish()
+ if not stopped_for_save or dns_delete_confirmed or result.uncertain then return end
+ local status,code=decoded({'config-status'})
+ if code==0 and status and status.ok==true and status.revision==revision and
+    status.preview_present==false and status.application_pending==false and
+    status.persistent_fence_pending==false and status.workers_pending==false then
+  -- The start broker must still verify the exact previous source and plan.
+  result.runtime_start={revision=revision,restore=true}
+ end
+end
 function cursor:commit(pkg)
  if not write or pkg~='homegate'then return false end
  if not changed then result.configuration_saved=true;return true end
@@ -182,44 +358,55 @@ function cursor:commit(pkg)
   if fixture.fail_commit then return false end
   fixture.documents[pkg]=copy(documents[pkg]);changed=false;return true
  end
+ if access_rule_routes[request.route] then
+  local main=find(pkg,'main')
+  if not main or not revision or not access_baseline then return false end
+  effect_started=true
+  if request.route=='access_save_rule' then
+   local key=access_store.rule_key(request.form.rule_token)
+   if key and not access_origins[key] then
+    access_origins[key]=request.form.rule_origin=='observed' and 'observed' or 'custom'
+   end
+  end
+  access_store.write(access_baseline[1],access_baseline[2],main.values.access_allow or '',main.values.access_deny or '',access_origins)
+  access_origins=assert(access_store.read(unpack(access_baseline))).origins
+  changed=false;result.configuration_saved=true;return true
+ end
  local body=text(load_document(pkg))
+ local checked,checked_code,blocker=editor('editor-check',body)
+ if checked_code~=0 or not checked or checked.ok~=true or checked.revision~=revision then
+  reject_editor('editor-check',checked,checked_code,blocker)
+  restore_before_publish()
+  return false
+ end
  -- A write needs to know whether a coordinator owns the service. The full
  -- health report reads configuration twice and can be busy during a job.
- local owner,owner_code=call({'ash',base..'/native-service.sh','owner-state'})
- if owner_code~=0 or (owner~='true\n' and owner~='false\n') then
-  result.failure_stage='runtime-quiescent';return false
- end
- if owner=='true\n' then
-  local _,rc=core({'service-stop','--confirm'})
-  if rc~=0 then result.failure_stage='runtime-stop';result.exit_code=rc;return false end
-  local quiet=false
-  local started=uptime()
-  if started then
-   local short_retries=3
-   repeat
-    local _,code=core({'service-quiescent'})
-    if code==0 then quiet=true;break end
-    local now=uptime()
-    if not now or now-started>=20 then break end
-    local pause=-1
-    if short_retries>0 then
-     short_retries=short_retries-1
-     _,pause=call({'lua',proto..'/worker-process.lua','pause','300'},nil,1)
-    end
-    if pause~=0 then
-     _,pause=call({'sleep','1'},nil,1)
-     if pause~=0 then break end
-    end
-   until false
-  end
-  if not quiet then result.failure_stage='runtime-stop';return false end
-  stopped_for_save=true;result.runtime_stopped_for_save=true
- end
+ if not stop_for_save() then return false end
  effect_started=true
- local raw,code=call({'ash',proto..'/homegate-config-prototype.sh','--persistent','editor-preview',tostring(revision)},body)
- local preview=json.parse(raw);if code~=0 or type(preview)~='table' or type(preview.confirmation)~='string'then result.failure_stage='editor-preview';result.exit_code=code;return false end
+ if request.route=='config_reset' then
+  local cleanup,cleanup_code=call({'ash',base..'/native-dns-cleanup.sh','--confirm',tostring(revision)})
+  if cleanup_code~=0 then
+   result.failure_stage='reset-dns-cleanup';result.exit_code=cleanup_code;result.uncertain=true
+   return false
+  end
+  dns_delete_confirmed=cleanup~=''
+ end
+ local preview,code,preview_blocker=editor('editor-preview',body)
+ if code~=0 or type(preview)~='table' or type(preview.confirmation)~='string'then
+  reject_editor('editor-preview',preview,code,preview_blocker)
+  restore_before_publish()
+  return false
+ end
  local d,rc=decoded({'config-commit',preview.confirmation});if rc~=0 or not d or not d.ok then result.failure_stage='editor-publish';result.exit_code=rc;return false end
  result.configuration_saved=true
+ if request.route=='config_reset' or request.route=='config_import' then
+  access_store.clear()
+ elseif access_overlay then
+  local main=find(pkg,'main')
+  local allow,deny=main.values.access_allow or '',main.values.access_deny or ''
+  if next(access_origins) then access_store.write(allow,deny,allow,deny,access_origins)
+  else access_store.clear() end
+ end
  for id,pair in pairs(pending_imports)do
   local material,code=decoded({'cert-import-stdin',id},codec.json(pair))
   if code~=0 or not material or not material.ok then result.failure_stage='certificate-publication';result.uncertain=true;return false end
@@ -228,8 +415,15 @@ function cursor:commit(pkg)
  changed=false;revision=d.configuration_revision or d.revision or revision+2;return true
 end
 local stage_messages={
+ ['reset-dns-cleanup']='云端解析清理未完成，本地设置和 DNS 凭据已保留。请核对 DNS 账户及任务状态后重试。',
  ['runtime-stop']='现有服务未能停止，请检查运行状态。',
  ['runtime-quiescent']='上一次服务操作尚未结束，请稍后再试。',
+ ['editor-check']='配置未通过保存前检查，请刷新页面核对当前配置。',
+ ['editor-busy']='配置正被另一项任务使用，请稍后再试。',
+ ['editor-ddns-busy']='后台 DNS 同步仍在进行，配置尚未保存。同步结束后请重试。',
+ ['editor-history']='无法为这次修改保留配置历史，请检查插件维护中的配置状态。',
+ ['editor-storage']='无法写入配置，请检查路由器存储空间。',
+ ['editor-stale']='配置已被其他操作更新，请刷新页面后重试。',
  ['editor-preview']='配置校验未通过，请刷新页面核对当前配置。',
  ['editor-publish']='配置提交未完成，请到插件维护检查恢复状态。',
  ['legacy-certificate-adoption']='已有证书无法接管，请检查证书和私钥。',
@@ -240,7 +434,21 @@ local stage_messages={
  ['ddns-authorization']='DDNS 规则授权未完成，请检查规则和账号。',
  ['runtime-plan']='服务启动计划未能保存，请检查已启用的公网规则、证书和访问策略。',
  ['runtime-binding']='无法确认启动时要使用的配置版本。',
+ ['access-region-retained']='地区数据更新失败，已保留上次验证通过的数据。',
+ ['access-region-download']='无法下载或验证地区数据，请检查路由器联网后重试。',
+ ['access-region-unavailable']='地区数据任务未能完成，请稍后查看或重试。',
+ ['access-region-transport']='无法从 APNIC 或镜像下载地区数据。',
+ ['access-region-invalid_data']='下载的地区数据未通过校验。',
+ ['access-region-publish']='地区数据未能写入路由器缓存。',
+ ['access-region-timeout']='获取地区数据超时。',
+ ['access-region-worker_exit']='地区数据更新进程提前退出。',
+ ['access-record-clear']='无法确认访问记录已清除，请刷新记录后重试。',
+ ['reset-access-cache']='默认配置已保存，地区数据清理未确认，请重试恢复默认配置。',
+ ['reset-access-records']='默认配置已保存，访问记录清理未确认，请重试恢复默认配置。',
+ ['access-live-reload']='访问规则已保存，代理加载尚未确认。',
  ['dns-busy']='后台正在处理 DNS 或证书任务，请稍后再试。',
+ ['ddns-delete']='远端 DNS 记录未能删除，公网服务条目已保留。',
+ ['ddns-delete-unknown']='远端 DNS 删除结果待核对，公网服务条目已保留。请先检查任务状态。',
  ['ddns-sync']='DDNS 同步未完成，请检查 DNS 账户和插件日志。',
  ['ddns-backoff']='DNS 服务暂时无法更新，请等待下一次自动同步。',
  ['ddns-unknown']='DDNS 更新结果待核对，请检查插件日志。',
@@ -252,9 +460,23 @@ local function refused_stage(stage, code)
  result.failure_stage=stage;result.exit_code=code
  return '',code~=0 and code or 1
 end
-local function wait_ms(ms)
- local _,rc=call({'lua',proto..'/worker-process.lua','pause',tostring(ms)},nil,32)
- if rc~=0 then call({'sleep','1'},nil,32) end
+local function prepare_region(action,region)
+ local d,rc=decoded({action,region})
+ if rc~=0 or not d or not d.ok then
+  local stage='access-region-unavailable'
+  if d and ({transport=true,invalid_data=true,publish=true,timeout=true,worker_exit=true})[d.error_kind] then
+   stage='access-region-'..d.error_kind
+  elseif d and d.cache_retained then stage='access-region-retained'
+  elseif d and d.native_state=='failed' then stage='access-region-download' end
+  if d and d.cache_retained then result.access_region_retained=true end
+  return refused_stage(stage,rc)
+ end
+ prepared_region=region
+ if action=='access-refresh' then
+  result.access_region_state=d.native_state
+  result.access_region_updated=d.cache_updated_local
+ end
+ return '',0
 end
 local function dns_action(args)
  local until_time=uptime()
@@ -312,8 +534,8 @@ local function virtual_file(path,mode)
  end
  function f:close()
   if writable and path=='/var/log/homegate.log'then
-   local a=fs.lstat(path);if a and (a.type~='reg' or a.uid~=0 or a.modedec~=600 or a.nlink~=1)then error('unsafe log')end
-   local fd=nx.open(path,nx.open_flags('wronly','creat','trunc'),'600');if not fd then error('log')end;assert(fd:close())
+   local _,rc=call({'ash',base..'/native-log.sh','clear'},nil,32)
+   if rc~=0 then error('log clear')end
   end;return true
  end
  return f
@@ -321,6 +543,8 @@ end
 local function shell(command)
  if command=='sha256sum /etc/config/homegate 2>/dev/null'then
   if fixture then return fixture.shell(command)end
+  find('homegate','main')
+  if access_overlay then return capture('cat /etc/config/homegate /etc/homegate/access-rules.json | sha256sum',256) end
   return capture('sha256sum /etc/config/homegate',256)
  end
  if fixture then return fixture.shell(command)end
@@ -351,6 +575,16 @@ local function shell(command)
    end
    return raw,rc
   end
+  if action=='access-update' or action=='access-refresh'then
+   if not write or #argv~=2 then return '',1 end
+   return prepare_region(action,argv[2])
+  end
+  if action=='access-clear-all' or action=='access-clear-denied' or action=='access-clear-entry'then
+   local raw,rc=core(argv)
+   if rc~=0 then return refused_stage('access-record-clear',rc) end
+   result.access_records_cleared=true
+   return raw,rc
+  end
   if action=='ddns-sync'then
    if not write or #argv~=2 then return '',1 end
    effect_started=true
@@ -362,6 +596,24 @@ local function shell(command)
     result.uncertain=true;return refused_stage('ddns-unknown',rc)
    end
    return refused_stage(rc==8 and 'dns-busy' or row and row.status=='retry_wait' and 'ddns-backoff' or 'ddns-sync',rc)
+  end
+  if action=='ddns-delete'then
+   if not write or #argv~=2 then return '',1 end
+   if not stop_for_save() then return '',1 end
+   effect_started=true
+   local raw,rc
+   if fixture then raw,rc=core(argv)
+   else raw,rc=call({'ash',proto..'/homegate-ddns-read.sh','--runtime-delete-close',argv[2],'--confirm'}) end
+   local d=json.parse(raw)
+   if rc==0 and d and d.ok then dns_delete_confirmed=true;return raw,0 end
+   if dns_delete_confirmed or not d or d.effect~='none' or d.reconciliation_required then
+    result.uncertain=true
+    return refused_stage('ddns-delete-unknown',rc)
+   end
+   -- The previous revision is still published and no remote write occurred.
+   -- Dispatch its sealed plan back through the same bounded Web start flow.
+   if stopped_for_save and revision then result.runtime_start={revision=revision,restore=true} end
+   return refused_stage('ddns-delete',rc)
   end
   if action=='cert-renew'then
    if not write or #argv~=2 then return '',1 end
@@ -393,17 +645,55 @@ local function shell(command)
   if argv[2]=='reload'then
    local main=find('homegate','main')
    if not main then return '',1 end
+   if access_rule_routes[request.route] then
+    if not fs.lstat('/var/run/homegate/proxy') then return '',0 end
+    local owner=service_owner()
+    if owner==false then return '',0 end
+    if not owner then return refused_stage('access-live-reload',7)end
+    local started=uptime()
+    repeat
+     local raw,rc=call({'ash',proto..'/homegate-proxy.sh','access-reload'})
+     if rc==0 then result.runtime_applied=true;return '',0 end
+     local now=uptime()
+     if rc~=4 or not started or not now or now-started>=1 or not wait_ms(100) then
+      local status=json.parse(raw)
+      result.reload_step=type(status)=='table' and status.step or nil
+      return refused_stage('access-live-reload',rc)
+     end
+    until false
+   end
+   if request.route=='access_update' then
+    if result.access_region_state~='published' then return '',0 end
+    local owner=stopped_for_save or service_owner()
+    if owner==nil then return refused_stage('runtime-quiescent',7) end
+    if not owner then return '',0 end
+   end
    if main.values.enabled~='1'then
     mark_service_apply('stop')
-    local _,rc=core({'service-stop','--confirm'});if rc~=0 then return refused_stage('runtime-stop',rc) end
-    local raw,code=core({'lifecycle-disable','--confirm'});if code~=0 then return refused_stage('runtime-disable',code) end
+    local rc,stage=stop_and_wait();if rc~=0 then return refused_stage(stage,rc) end
+    local raw,code=disable_intent();if code~=0 then return refused_stage('runtime-disable',code) end
     local _,boot_code=capture('exec 8>&-; /etc/init.d/homegate disable')
     if boot_code~=0 then return refused_stage('runtime-boot-disable',boot_code) end
+    if request.route=='config_reset' then
+     local records,clear_code=decoded({'access-clear-all'})
+     if clear_code~=0 or not records or records.ok~=true or type(records.entries)~='table' or next(records.entries) then
+      return refused_stage('reset-access-records',clear_code~=0 and clear_code or 7)
+     end
+     local _,cache_code=call({'ash',proto..'/homegate-access-region.sh','clear-cache','--confirm'})
+     if cache_code~=0 then return refused_stage('reset-access-cache',cache_code) end
+    end
     return raw,code
    end
    mark_service_apply('start')
-   local _,stop=core({'service-stop','--confirm'});if stop~=0 then return refused_stage('runtime-stop',stop) end
-   local _,quiet=core({'service-quiescent'});if quiet~=0 then return refused_stage('runtime-quiescent',quiet) end
+   local region=main.values.access_enabled=='1' and main.values.access_region
+   if region and region~='' and region~=prepared_region then
+    local raw,rc=prepare_region('access-update',region)
+    if rc~=0 then return raw,rc end
+   end
+   if not stopped_for_save then
+    local rc,stage=stop_and_wait()
+    if rc~=0 then return refused_stage(stage,rc) end
+   end
    local ddns,certs,web={},{},{}
    for _,s in ipairs(load_document('homegate'))do
     if s.kind=='certificate' and fs.lstat('/etc/homegate/certs/'..s.name..'/fullchain.pem') and not fs.lstat('/etc/homegate/certs/'..s.name..'/current')then
@@ -466,6 +756,21 @@ modules['luci.http']={formvalue=function(k)if k then return request.form[k]end;r
   result.redirect=v;if result.material_retained then result.error='证书材料已保留，尚未完成清理。请先在维护中核对，不要重复操作。';result.redirect=nil
   elseif v:find('[?&]error=')then
    result.error=stage_messages[result.failure_stage] or '操作未完成，请检查当前配置及未完成的操作。'
+   if request.route=='config_reset' and result.configuration_saved and
+       not result.error:find('^默认配置已保存') then
+    result.error='默认配置已保存。'..result.error
+   end
+   if dns_delete_confirmed and not result.configuration_saved then
+    result.uncertain=true
+    result.error=result.error..'远端 DNS 已处理，公网服务配置还未保存，请核对当前状态。'
+   end
+   if result.access_region_retained and result.failure_stage~='access-region-retained' then
+    result.error=result.error..'已保留可用的地区缓存。'
+   end
+   if access_rule_routes[request.route] and not result.failure_stage then
+    if v:find('error=Invalid%20access%20rule',1,true) then result.error='请输入有效的 IP 地址或网段。'
+    elseif v:find('error=Access%20rule%20changed',1,true) then result.error='规则已被修改，请核对列表后再操作。' end
+   end
   end
   if result.redirect and not result.error and stopped_for_save and not result.runtime_start then
    local notice=modules['luci.http'].urlencode('配置已保存，任务已停止；应用后重新启动。');result.redirect=result.redirect:gsub('([?&]notice=)[^&]*',function(prefix)return prefix..notice end)
@@ -476,6 +781,12 @@ modules['luci.http']={formvalue=function(k)if k then return request.form[k]end;r
  write=function(v)if type(v)~='string'then error('response')end;bytes=bytes+#v;if bytes>2097152 then error('response limit')end;result.body=(result.body or '')..v end}
 modules['luci.template']={render=function(name,data)
  if not name:match('^homegate/[a-z]+$')then error('template')end
+ if name=='homegate/overview' and not fixture then
+  local raw,rc=call({'ash',base..'/native-service.sh','overview-status'},nil,8192)
+  local info=rc==0 and json.parse(raw)
+  local running=info and info.ok and info.service and info.service.running
+  data.runtime_enabled=type(running)=='boolean' and (running and '1' or '0') or 'unknown'
+ end
  if name=='homegate/maintenance' and not fixture then
   local store='/etc/homegate/transactions'
   data.configuration_recovery_needed=fs.lstat(store..'/application')~=nil
@@ -489,18 +800,42 @@ modules['luci.template']={render=function(name,data)
   data.configuration_migration_copied=path and fs.lstat(path..'/legacy.conf')~=nil or false
  end
  result.template=name;result.data=public(data)
+ if name=='homegate/maintenance' and not fixture then result.data.plugin_update_url=read_update_url() end
 end}
 modules['nixio.fs']={chmod=function(path)if files[path]then return true end;return false end,stat=function(path)
  if fixture then return nil end
  local cid=path:match('^/etc/homegate/certs/([a-zA-Z0-9_-]+)/fullchain%.pem$') or path:match('^/etc/homegate/certs/([a-zA-Z0-9_-]+)/privkey%.pem$')
  if cid then local d=decoded({'cert-status',cid});return d and d.exists and {mtime=0,size=0} or nil end
- if path=='/etc/homegate/access/regions/CN.cidr'then return fs.stat('/etc/homegate/access/CN.cidr')end
+ if path=='/etc/homegate/access/regions/CN.cidr'then
+  local p='/etc/homegate/access/CN.cidr';local a=fs.lstat(p)
+  if not a or a.type~='reg' or a.uid~=0 or a.modedec~=600 or a.nlink~=1 then return nil end
+  local f=original_io.open(p,'rb');if not f then return nil end
+  local header=(f:read(96) or ''):match('^([^\n]+)\n');f:close()
+  if not header then return nil end
+  local stamp=header:match('^HGREGION1|(%d+)|%d+|%d+$') or header:match('^HGREGION1|(%d+)|%d+|%d+|%d+|[12]$')
+  if not stamp then return nil end
+  local date,rc=call({'lua',proto..'/homegate-access.lua','display-time',stamp},nil,32)
+  return rc==0 and {mtime=tonumber(stamp),updated=date:gsub('\n$','')} or nil
+ end
  return nil
 end}
 local env={_M=nil,module=function()end,package={seeall=true},require=function(name)if not modules[name]then error('module unavailable')end;return modules[name]end,
  io={open=virtual_file},os={time=os.time,date=os.date,remove=function(p)if files[p]then files[p]=nil;return true end;return false end},math=math,string=string,table=table,tonumber=tonumber,tostring=tostring,type=type,pairs=pairs,ipairs=ipairs,next=next,assert=assert,error=error,pcall=pcall,select=select,unpack=unpack,_=function(s)return s end}
 env._M=env
 local ok,err=pcall(function()
+ if request.route=='update_url_save' and not fixture then
+  result.error=save_update_url(request.form.plugin_update_url)
+  result.ok=result.error==nil
+  return
+ end
+ if request.route=='diagnostic_download' and not fixture then
+  local collect=assert(loadfile(base..'/native-diagnostics.lua'))()
+  result.body=collect(core,call,load_document('homegate'),lib,work)
+  result.headers['Content-Type']='text/plain; charset=UTF-8'
+  result.headers['Content-Disposition']='attachment; filename="homegate-diagnostic.txt"'
+  result.ok=true
+  return
+ end
  if request.route=='api/overview_status' or request.route=='api/overview_ipv6' then
   local command=request.route=='api/overview_status' and {'ash',base..'/native-service.sh','overview-status'}
    or {'lua',proto..'/homegate-network.lua','overview-wan'}
@@ -530,9 +865,41 @@ local ok,err=pcall(function()
   result.ok=true
   return
  end
+ if request.route=='public_apply' then
+  local count=tonumber(request.form.public_service_count)
+  if count and count>=0 and count<=128 and count==math.floor(count) then
+   local validation=assert(loadfile(proto..'/configuration-validation.lua'))()
+   local ip=assert(loadfile(proto..'/cloudflare-record-plan.lua'))()
+   for i=1,count do
+    local target=(request.form['public_service_'..i..'_target'] or ''):match('^%s*(.-)%s*$')
+    if target~='' and not validation.target(target,ip) then
+     result.error='内网目标无效，请检查 HTTP/HTTPS 地址和端口（1–65535）。'
+     return
+    end
+   end
+  end
+ end
+ if not fixture and request.route=='access_save_rule' and request.form.old_rule_token and request.form.rule_token then
+  find('homegate','main')
+  local old=access_store.rule_key(request.form.old_rule_token)
+  if access_origins[old]=='observed' and old~=access_store.rule_key(request.form.rule_token) then
+   result.error='访问记录的来源 IP 不可修改。'
+   return
+  end
+ end
  local fn=assert(loadfile(base..'/legacy-controller.lua'));setfenv(fn,env);fn()
  local handler=env[lib.routes[request.route].handler];if type(handler)~='function'then error('route handler')end;handler()
+ if access_rule_routes[request.route] and access_overlay and not result.error and not result.configuration_saved then
+  local _,rc=shell('/etc/init.d/homegate reload')
+  if rc~=0 then result.error=stage_messages[result.failure_stage] end
+ end
  result.ok=result.error==nil
+ if access_rule_routes[request.route] then
+  local main=find('homegate','main')
+  if main and (not changed or result.configuration_saved) then
+   result.access_rules={allow=main.values.access_allow or '',deny=main.values.access_deny or '',origins=access_origins}
+  end
+ end
 end)
 if not ok then
  local message='Native Web operation unavailable; inspect current configuration and retained tasks'
@@ -547,6 +914,7 @@ if result.body then result.body=masked(result.body)end
 if result.redirect then result.redirect=masked(result.redirect)end
 if result.headers and next(result.headers)==nil then result.headers=nil end
 if fixture then return result end
+if write and result.runtime_start then log_web_progress(result.runtime_start.restore and 'restoring' or 'starting') end
 io.write(codec.json(result),'\n')
 end
 -- Only the fixed installed selftest invokes this library with a memory host.

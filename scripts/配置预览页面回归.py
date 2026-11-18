@@ -15,7 +15,7 @@ views=ROOT/'project/luci/lua/luasrc/view/homegate'
 resources=ROOT/'project/luci/js/htdocs/luci-static/resources/homegate'
 out=ROOT/'build/config-preview-regressions'
 out.mkdir(parents=True,exist_ok=True)
-data={'main':{},'packages':{},'notice':'','error_message':'','token':'fixture-csrf'}
+data={'main':{'log_level':'debug'},'packages':{},'notice':'','error_message':'','token':'fixture-csrf'}
 text=(views/'maintenance.htm').read_text(encoding='utf-8').replace('<%+homegate/common%>',(views/'common.htm').read_text(encoding='utf-8'))
 lua=LuaRuntime(unpack_returned_tuples=True)
 lua.globals().pcdata=lambda v:html.escape('' if v is None else str(v),quote=True)
@@ -62,7 +62,7 @@ with sync_playwright() as pw, LiveError():
     executable=os.environ.get('HOMEGATE_BROWSER') or (str(edge) if edge.exists() else None)
     browser=pw.chromium.launch(**({'executable_path':executable} if executable else {}),headless=True,timeout=15000)
     print('Browser started',flush=True)
-    context=browser.new_context()
+    context=browser.new_context(timezone_id='Asia/Shanghai')
     context.set_default_timeout(10000)
     requests=[]
     response={'body':json.dumps({'ok':True,'body':json.dumps(report)})}
@@ -76,11 +76,46 @@ with sync_playwright() as pw, LiveError():
     context.route('http://homegate.test/**',serve)
     page=context.new_page();page.goto('http://homegate.test/cgi-bin/luci/admin/services/homegate/maintenance')
     errors=[];page.on('pageerror',lambda e:errors.append(str(e)))
+    text_logs=[f'Log entry {index}' for index in range(60)]
+    initial_logs=[*text_logs,'2026-11-17 10:02:15 [INFO] Region updated']
+    local_initial=[*text_logs,'2026-11-17 18:02:15 [INFO] Region updated']
+    refreshed_logs=[*initial_logs,'2026-11-17 16:14:33 [WARN] Latest log entry']
+    local_refreshed=[*local_initial,'2026-11-18 00:14:33 [WARN] Latest log entry']
     for variant,markup in [('lua',legacy),('js',modern)]:
         print('Checking '+variant+' preview behavior',flush=True)
-        page.set_content('<script>window.XHR={get:function(u,f,cb){cb({status:200,responseText:""},null);}};window.homegateXHR=window.XHR;window.homegatePreviewImport=null;window.homegateMaintenanceAction=null;window.xss=0;</script>'+markup,wait_until='domcontentloaded')
+        page.set_content('<script>window.fixtureLogs='+json.dumps('\n'.join(initial_logs)+'\n')+
+          ';window.XHR={get:function(u,f,cb){cb({status:200,responseText:fixtureLogs},null);}};window.homegateXHR=window.XHR;window.homegatePreviewImport=null;window.homegateMaintenanceAction=null;window.xss=0;</script>'+markup,wait_until='domcontentloaded')
         theme=ROOT/'scripts/fixtures'/('legacy-bootstrap/cascade.css' if variant=='lua' else 'luci/bootstrap.css')
         page.add_style_tag(content=theme.read_text(encoding='utf-8'))
+        log=page.locator('#hg-maintenance-log')
+        level=page.locator('select[name=log_level]')
+        assert level.locator('option').evaluate_all('options=>options.map(option=>option.value)')==['info','warn','error']
+        assert level.input_value()=='info'
+        assert page.locator('.hg-wrap > .hg-section > h3').last.inner_text()=='About the plugin'
+        page.get_by_role('button',name='Plugin license',exact=True).click()
+        license_box=page.get_by_role('dialog',name='Plugin license')
+        license_terms, use_notice, attribution=license_box.locator('p').all_inner_texts()
+        assert 'MIT License' in license_terms and 'Apache License 2.0' in license_terms
+        assert 'obtain authorization' in use_notice and 'legal consequences' in use_notice
+        assert attribution=='© 2026 HomeGate contributors'
+        license_box.get_by_role('button',name='Close',exact=True).click()
+        page.get_by_role('button',name='Update URL',exact=True).click()
+        update_box=page.get_by_role('dialog',name='Update URL')
+        update_url=update_box.get_by_role('textbox',name='Plugin update URL')
+        assert update_box.get_by_role('heading',name='Update URL',exact=True).is_visible()
+        assert update_box.get_by_role('textbox').count()==1
+        assert update_url.input_value()=='' and update_url.is_editable()
+        update_url.fill('https://example.test/homegate')
+        response['body']=json.dumps({'ok':True,'plugin_update_url':'https://example.test/homegate'})
+        update_box.get_by_role('button',name='Save',exact=True).click()
+        update_box.wait_for(state='hidden')
+        assert requests[-1]['url'].endswith('/update_url_save')
+        page.get_by_role('button',name='Update URL',exact=True).click()
+        assert update_url.input_value()=='https://example.test/homegate'
+        update_box.get_by_role('button',name='Cancel',exact=True).click()
+        response['body']=json.dumps({'ok':True,'body':json.dumps(report)})
+        assert log.text_content().split('\n')==local_initial[::-1]
+        assert log.evaluate('node=>node.scrollTop')==0
         print('Mounted '+variant+' fixture',flush=True)
         requests.clear()
         page.locator('#hg-config-import-file').set_input_files({'name':'public.conf','mimeType':'text/plain','buffer':backup.encode()})
@@ -91,7 +126,16 @@ with sync_playwright() as pw, LiveError():
         assert 'token=fixture-csrf' in requests[0]['body'] and 'config_payload=' in requests[0]['body']
         assert page.locator('#hg-config-preview-changes img').count()==0
         assert page.evaluate('window.xss')==0
-        assert 'Import check complete.' in page.locator('#hg-config-preview').inner_text()
+        banner=page.locator('#hg-maintenance-result')
+        def check_banner(color):
+            assert banner.is_visible()
+            assert banner.evaluate("node=>getComputedStyle(node).borderLeftWidth")=='3px'
+            assert banner.evaluate("node=>getComputedStyle(node).borderLeftColor")==color
+        green='rgb(92, 184, 92)'
+        orange='rgb(240, 173, 78)'
+        red='rgb(217, 83, 79)'
+        assert 'Import check complete.' in banner.inner_text()
+        check_banner(green)
         assert page.locator('#hg-config-import-file').input_value()==''
         assert page.locator('#hg-config-import-payload').count()==0
         for mode in ('light','dark'):
@@ -112,21 +156,44 @@ with sync_playwright() as pw, LiveError():
         page.once('dialog',lambda dialog:dialog.accept())
         page.locator('#hg-config-restore-confirm').click()
         page.wait_for_function('document.getElementById("hg-maintenance-result").textContent.includes("Configuration restored.")')
+        check_banner(green)
         from urllib.parse import parse_qs
         sent=parse_qs(requests[-1]['body'])
         assert sent['mode']==['restore'] and sent['config_payload']==[backup] and sent['confirmation']==[report['confirmation']]
         assert page.locator('#hg-config-preview').is_hidden()
         # Log clear and both actual Blob downloads remain on Maintenance.
         response['body']=json.dumps({'ok':True,'redirect':'/cgi-bin/luci/admin/services/homegate/maintenance'})
-        page.once('dialog',lambda dialog:dialog.accept())
+        page.evaluate("()=>{window.originalConfirm=window.confirm;window.confirmCalls=0;window.confirm=()=>{++confirmCalls;return false;};}")
         page.get_by_role('button',name='Clear Log',exact=True).click()
+        assert page.evaluate('confirmCalls')==0
+        page.evaluate("()=>{window.confirm=window.originalConfirm;}")
         page.wait_for_function('document.getElementById("hg-maintenance-result").textContent==="Log cleared"')
+        assert requests[-1]['url'].endswith('/log_clear')
+        check_banner(green)
+        page.evaluate("window.replyToLog=null;const api=window.homegateXHR;api.get=(u,f,cb)=>{window.replyToLog=cb;}")
+        refresh=page.get_by_role('button',name='Refresh',exact=True)
+        assert log.evaluate('node=>{node.scrollTop=node.scrollHeight;return node.scrollTop;}')>0
+        refresh.click()
+        assert banner.inner_text()=='Processing...'
+        check_banner(orange)
+        page.evaluate("body=>replyToLog({status:200,responseText:body})",'\r\n'.join(refreshed_logs)+'\r\n')
+        assert banner.inner_text()=='Logs refreshed'
+        check_banner(green)
+        assert log.text_content().split('\n')==local_refreshed[::-1]
+        assert log.evaluate('node=>node.scrollTop')==0
+        banner.wait_for(state='hidden',timeout=5000)
+        refresh.click()
+        page.evaluate("replyToLog({status:503,responseText:'Unavailable'})")
+        assert banner.inner_text()=='Unable to load runtime logs'
+        check_banner(red)
+        assert log.text_content().split('\n')==local_refreshed[::-1]
         for label,filename in [('Download Diagnostic','homegate-diagnostic.txt'),('Export Configuration','homegate-config-backup.conf')]:
             response['body']=json.dumps({'ok':True,'body':'fixture contents','headers':{'Content-Disposition':'attachment; filename="'+filename+'"','Content-Type':'text/plain'}})
             with page.expect_download() as pending_download:page.get_by_role('button',name=label,exact=True).click()
             download=pending_download.value
             assert download.suggested_filename==filename and Path(download.path()).read_text()=='fixture contents'
-            assert page.locator('#hg-maintenance-result').is_hidden()
+            assert banner.inner_text()=='Download started'
+            check_banner(green)
             assert page.locator('a[download]').count() == 0
         reset = page.get_by_role('button',name='Restore Default Configuration',exact=True)
         before = len(requests)
@@ -137,6 +204,7 @@ with sync_playwright() as pw, LiveError():
         page.once('dialog', lambda dialog: dialog.accept())
         reset.click()
         page.wait_for_function('document.getElementById("hg-maintenance-result").textContent.includes("配置写入准备失败")')
+        check_banner(red)
         assert requests[-1]['url'].endswith('/config_reset') and page.url.endswith('/maintenance')
         response['body']=json.dumps({'ok':False,'error':'运行目录不可用，操作未执行。'})
         page.get_by_role('button',name='Export Configuration',exact=True).click()
@@ -146,12 +214,13 @@ with sync_playwright() as pw, LiveError():
         # Real FileReader rejects oversized files before transmission.
         requests.clear()
         page.locator('#hg-config-import-file').set_input_files({'name':'large.conf','mimeType':'text/plain','buffer':b'x'*262145})
-        assert 'too large' in page.locator('#hg-config-preview-message').inner_text()
+        assert 'too large' in banner.inner_text()
+        check_banner(red)
         assert not requests
         # Invalid JSON and server failures clear previous rows and do not apply.
         response['body']='not JSON'
         page.locator('#hg-config-import-file').set_input_files({'name':'public.conf','mimeType':'text/plain','buffer':backup.encode()})
-        page.wait_for_function('document.getElementById("hg-config-preview-message").textContent==="Unable to read action result"')
+        page.wait_for_function('document.getElementById("hg-maintenance-result").textContent==="Unable to read action result"')
         print('Invalid JSON handled',flush=True)
         assert page.locator('#hg-config-preview-changes tr').count()==0
         response['body']=json.dumps({'ok':True,'body':json.dumps(report)})
@@ -165,17 +234,19 @@ with sync_playwright() as pw, LiveError():
         page.evaluate('r=>previewResolvers[1](r)',report)
         page.wait_for_function('document.querySelectorAll("#hg-config-preview-changes tr").length>0')
         page.evaluate('previewResolvers[0]({ok:false,error:"STALE_RESPONSE"})')
-        assert 'STALE_RESPONSE' not in page.locator('#hg-config-preview').inner_text()
+        assert 'STALE_RESPONSE' not in banner.inner_text()
         page.locator('#hg-config-import-file').set_input_files({'name':'public.conf','mimeType':'text/plain','buffer':backup.encode()})
         page.wait_for_function('previewResolvers.length===3')
         page.get_by_role('button',name='Close Check',exact=True).click()
         page.evaluate('r=>previewResolvers[2](r)',report)
         assert page.locator('#hg-config-preview').is_hidden()
+        assert banner.is_hidden()
         assert page.locator('#hg-config-preview-changes tr').count()==0
         # An incomplete preview never enables restoration.
         page.evaluate('r=>hgMaintenanceShowPreview({...r,confirmation:null})',report)
         assert page.locator('#hg-config-preview-changes tr').count()==0
-        assert 'Unable to preview' in page.locator('#hg-config-preview-message').inner_text()
+        assert 'Unable to preview' in banner.inner_text()
+        check_banner(red)
     # Exercise the actual JS transport's preview adapter and job polling/ack.
     transport=(resources/'transport.js').read_text(encoding='utf-8')
     page.evaluate('''([code,result])=>{

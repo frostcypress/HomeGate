@@ -115,10 +115,13 @@ if [ "$action" = stop ];then
  if [ "$live" = true ];then
   if ! exists "$run/native-service.stop";then (set -C; : > "$run/native-service.stop") && fsync "$run/native-service.stop" "$run" || fail;fi
   private_file "$run/native-service.stop" 0 || fail
+ else
+  # A live coordinator owns component shutdown after the stop marker.
+  # Only an absent coordinator needs the orphaned components stopped here.
+  for pair in homegate-access-region.sh:access-update homegate-proxy.sh:proxy homegate-acme-schedule.sh:acme-schedule homegate-ddns-schedule.sh:ddns-schedule;do
+   if exists "$run/${pair#*:}";then component "${pair%%:*}" stop --confirm >/dev/null || fail 4;fi
+  done
  fi
- for pair in homegate-access-region.sh:access-update homegate-proxy.sh:proxy homegate-acme-schedule.sh:acme-schedule homegate-ddns-schedule.sh:ddns-schedule;do
-  if exists "$run/${pair#*:}";then component "${pair%%:*}" stop --confirm >/dev/null || fail 4;fi
- done
  printf '{"api_version":1,"native":true,"ok":true,"phase":"native-service","stop_requested":true,"effect":"none","write_ready":false}\n'
  exit 0
 fi
@@ -146,7 +149,9 @@ private_file "$lock" 0 || fail
 exec 9>>"$lock";bound 9 "$lock" && flock -n 9 || fail 4
 # A previous owner must be fully quiet before fixed ephemeral records are reused.
 quiet || fail 4
-for pair in homegate-access-region.sh:access-update homegate-proxy.sh:proxy homegate-acme-schedule.sh:acme-schedule homegate-ddns-schedule.sh:ddns-schedule;do
+# Leave the independent region task's terminal receipt visible until the next
+# refresh, including when Apply restarts HomeGate after downloading data.
+for pair in homegate-proxy.sh:proxy homegate-acme-schedule.sh:acme-schedule homegate-ddns-schedule.sh:ddns-schedule;do
  item=${pair%%:*};member=${pair#*:}
  if exists "$run/$member";then component "$item" reap --confirm >/dev/null || fail 4;fi
 done
@@ -166,7 +171,7 @@ info=$(lua "$dir/worker-process.lua" info "$$" none 9>&-) || fail
 oldifs=$IFS;IFS=:;set -- $info;IFS=$oldifs;[ "$#" = 6 ] || fail;birth=$5
 stage=admission;intent_guard && [ "$(stamp && plan_stamp)" = "$binding" ] || fail 4
 receipt=$run/native-service.json;next_receipt=$receipt.next
-published_status=;published_report=
+published_status=;published_report=;previous_log_state=
 emit() {
  complete=${3:-false}
  case "$1" in failed|restart_required) final_state=$1;final_reason=$2;;esac
@@ -182,8 +187,12 @@ emit() {
  IFS= read -r report < "$next_receipt" && fsync "$next_receipt" &&
  mv -f "$next_receipt" "$receipt" && fsync "$receipt" "$run" || return 1
  published_status=$1:$2:$complete;published_report=$report
+ if [ "$1:$2" != "$previous_log_state" ];then
+  ash "$base/native-log.sh" service "$1" "$2" 9>&- >/dev/null || :
+  previous_log_state=$1:$2
+ fi
 }
-stopping=false;reload=false;job=;ddns_started=false;proxy_started=false;final_state=stopped;final_reason=known
+stopping=false;reload=false;job=;ddns_started=false;proxy_started=false;certificate_blocked=false;certificate_retry=false;final_state=stopped;final_reason=known
 trap 'stopping=true' TERM INT
 trap 'reload=true' HUP
 trap ':' USR1
@@ -253,6 +262,37 @@ watch_component() {
  done
  component_running "$1"
 }
+start_proxy() {
+ proxy_poll_delay=0.1
+ if ! sleep 0.001 9>&- >/dev/null 2>&1;then proxy_poll_delay=1;fi
+ entry proxy-start "$web" "$policy" --confirm >/dev/null || return 1
+ clock=$(lua "$dir/worker-process.lua" now 9>&-) || return 1
+ ready_until=$((clock+20))
+ while :;do
+  [ "$stopping" = false ] && ! exists "$run/native-service.stop" || return 1
+  if state=$(entry proxy-status);then
+   printf '%s\n' "$state" | lua "$codec" ready running 9>&-;code=$?
+   [ "$code" != 0 ] || { proxy_started=true;return 0; }
+   [ "$code" = 3 ] || return 1
+  fi
+  clock=$(lua "$dir/worker-process.lua" now 9>&-) || return 1
+  [ "$clock" -lt "$ready_until" ] && sleep "$proxy_poll_delay" 9>&- || return 1
+ done
+}
+reset_failed_proxy() {
+ # Retry only after the first attempt's process family and firewall are
+ # confirmed gone. Leave partial or unverified sessions for diagnosis.
+ tries=0
+ while [ "$tries" -lt 5 ];do
+  [ "$stopping" = false ] && ! exists "$run/native-service.stop" || return 1
+  if component homegate-proxy.sh quiescent >/dev/null;then
+   if exists "$run/proxy";then component homegate-proxy.sh reap --confirm >/dev/null || return 1;fi
+   [ "$(stamp && plan_stamp)" = "$binding" ];return $?
+  fi
+  tries=$((tries+1));sleep 1 9>&- || return 1
+ done
+ return 1
+}
 if [ -z "$certificates" ] && [ -z "$web" ];then start_ddns || { emit failed authorization_required;exit 4; };fi
 next_check=0
 while :;do
@@ -262,16 +302,36 @@ while :;do
  fi
  current=$(stamp && plan_stamp) || { emit failed source_unavailable;exit 4; }
  if [ "$reload" = true ] || [ "$current" != "$binding" ];then emit restart_required source_changed;exit 4;fi
+ # Bring up routes that already have usable certificates before making a
+ # potentially long ACME request. Pending names fail closed in Nginx.
+ if [ -n "$web" ] && [ "$proxy_started" = false ];then
+  if ! start_proxy;then
+   [ "$stopping" = false ] && ! exists "$run/native-service.stop" || exit 0
+   reset_failed_proxy && start_proxy || { emit failed proxy_start_failed;exit 7; }
+  fi
+  if [ "$auto_firewall" = true ];then entry firewall-apply --confirm >/dev/null || { emit failed firewall_apply_failed;exit 7; };fi
+ fi
  # Each component admits its own work under the existing business locks.
  # The coordinator watches the already-validated immutable binding instead
  # of competing with an active DNS/ACME transaction for those same locks.
- if [ -n "$job" ];then
-  state=$(entry acme-job "$job") || { emit failed certificate_unknown;exit 7; }
-  printf '%s\n' "$state" | lua "$codec" ready job 9>&-;code=$?
-  if [ "$code" = 0 ];then job=;next_check=0
-  elif [ "$code" != 3 ];then emit failed certificate_failed;exit 7;fi
+ if [ -n "$job" ] && [ "$certificate_blocked" = false ];then
+  if state=$(entry acme-job "$job");then
+   printf '%s\n' "$state" | lua "$codec" ready job 9>&-;code=$?
+  else code=7;fi
+  if [ "$code" = 0 ];then job=;next_check=0;certificate_retry=false
+  elif [ "$code" != 3 ];then
+   [ "$proxy_started" = true ] || { emit failed certificate_failed;exit 7; }
+   if [ "$code" = 5 ];then
+    job=;now=$(lua "$dir/worker-process.lua" now 9>&-) || fail
+    next_check=$((now+300));certificate_retry=true
+   else
+    # Keep the existing proxy available, but do not admit another DNS
+    # mutation until the uncertain certificate job has been reconciled.
+    certificate_blocked=true
+   fi
+  fi
  fi
- if [ -n "$certificates" ] && [ -z "$job" ];then
+ if [ -n "$certificates" ] && [ -z "$job" ] && [ "$certificate_blocked" = false ];then
   now=$(lua "$dir/worker-process.lua" now 9>&-) || fail
   if [ "$now" -ge "$next_check" ];then
    next_check=$((now+60))
@@ -284,36 +344,34 @@ while :;do
     )
     code=$?
     if [ "$code" = 3 ];then next_check=$((now+5));break;fi
-    [ "$code" = 0 ] || { emit failed certificate_unavailable;exit 7; }
+    if [ "$code" != 0 ];then
+     [ "$proxy_started" = true ] || { emit failed certificate_unavailable;exit 7; }
+     certificate_retry=true;continue
+    fi
     printf '%s\n' "$material" | lua "$codec" ready due 9>&-;code=$?
     if [ "$code" = 3 ];then continue;fi
-    [ "$code" = 0 ] || { emit failed certificate_unknown;exit 7; }
+    if [ "$code" != 0 ];then
+     [ "$proxy_started" = true ] || { emit failed certificate_unknown;exit 7; }
+     certificate_blocked=true;break
+    fi
     pause_ddns || { emit failed ddns_pause_unknown;exit 4; }
     job=$(lua "$dir/cloudflare-codec.lua" nonce < /proc/sys/kernel/random/uuid 9>&-) || fail
-    entry acme-renew "$certificate" "$job" --confirm >/dev/null || { emit failed certificate_start_failed;exit 7; }
+    if ! entry acme-renew "$certificate" "$job" --confirm >/dev/null;then
+     [ "$proxy_started" = true ] || { emit failed certificate_start_failed;exit 7; }
+     certificate_blocked=true
+    fi
     break
    done
   fi
  fi
- if [ -z "$job" ] && [ -n "$web" ] && [ "$proxy_started" = false ];then
-  proxy_poll_delay=0.1
-  if ! sleep 0.001 9>&- >/dev/null 2>&1;then proxy_poll_delay=1;fi
-  entry proxy-start "$web" "$policy" --confirm >/dev/null || { emit failed proxy_start_failed;exit 7; };proxy_started=true
-  clock=$(lua "$dir/worker-process.lua" now 9>&-) || fail;ready_until=$((clock+20))
-  while :;do
-   state=$(entry proxy-status) || { emit failed proxy_unavailable;exit 7; }
-   printf '%s\n' "$state" | lua "$codec" ready running 9>&-;code=$?
-   [ "$code" != 0 ] || break
-   clock=$(lua "$dir/worker-process.lua" now 9>&-) || fail
-   [ "$code" = 3 ] && [ "$clock" -lt "$ready_until" ] || { emit failed proxy_start_failed;exit 7; }
-   sleep "$proxy_poll_delay" 9>&- || fail
-  done
-  if [ "$auto_firewall" = true ];then entry firewall-apply --confirm >/dev/null || { emit failed firewall_apply_failed;exit 7; };fi
- fi
  # Proxy and firewall admission acquire the same locks as the first DDNS batch.
- if [ -z "$job" ] && [ "$ddns_started" = false ];then start_ddns || { emit failed ddns_resume_failed;exit 4; };fi
+ if [ -z "$job" ] && [ "$certificate_blocked" = false ] && [ "$ddns_started" = false ];then start_ddns || { emit failed ddns_resume_failed;exit 4; };fi
  if [ "$ddns_started" = true ];then watch_component schedule-status || { emit failed ddns_stopped;exit 7; };fi
  if [ "$proxy_started" = true ];then watch_component proxy-status || { emit failed proxy_stopped;exit 7; };fi
- if [ -n "$job" ];then emit renewing certificate;else emit running ready;fi || fail
+ if [ "$certificate_blocked" = true ];then emit running certificate_unknown
+ elif [ -n "$job" ];then
+  if [ "$proxy_started" = true ];then emit running certificate;else emit renewing certificate;fi
+ elif [ "$certificate_retry" = true ];then emit running certificate_retry
+ else emit running ready;fi || fail
  sleep 1 9>&- || fail
 done

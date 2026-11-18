@@ -114,6 +114,9 @@ case "$action" in
    /usr/libexec/homegate/native-web.sh purge - >/dev/null || { printf '%s\n' 'HomeGate Web task is active or unresolved; inspect retained receipt before removal.' >&2;exit 4; }
   fi
   if [ -d /var/run/homegate ];then
+   if [ "$running" = 1 ] && [ "$desired_mode" != remove ];then
+    ash /usr/libexec/homegate/native-log.sh package "$desired_mode" >/dev/null 2>&1 || :
+   fi
    /usr/bin/homegate service-stop --confirm >/dev/null || exit 4
    count=0
    while [ "$count" -lt 20 ];do
@@ -127,6 +130,10 @@ case "$action" in
   else
    [ ! -e /var/run/homegate ] && [ ! -L /var/run/homegate ] || exit 4
    /usr/bin/homegate service-quiescent >/dev/null || exit 4
+  fi
+  if [ "$desired_mode" = remove ];then
+   ash /usr/libexec/homegate/native-dns-cleanup.sh --confirm ||
+    { printf '%s\n' 'HomeGate remote DNS cleanup did not finish. Local configuration and credentials were retained.' >&2;exit 4; }
   fi
   init_with_stop_lease package_stopped || exit 4
   stash_config || exit 7;mode=$desired_mode;write_record || exit 7;;

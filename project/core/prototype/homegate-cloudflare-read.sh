@@ -71,7 +71,7 @@ if [ "${1:-}" = --acme-records-internal ];then
     acme_dispatch=true
     case "$2" in cloudflare) set -- "$3" --records;; aliyun|dnspod|huaweicloud) set -- --"$2"-internal "$3" --records;; *) fail 2;;esac
 fi
-ddns_dispatch=false;runtime_dispatch=false;runtime_recovery=false;runtime_closeout=false
+ddns_dispatch=false;runtime_dispatch=false;runtime_recovery=false;runtime_closeout=false;runtime_delete=false
 case "${1:-}" in
     --runtime-collect-orphan-internal|--runtime-collect-receipt-internal|--runtime-retire-archive-internal)
         [ "$ddns_runtime_enabled" = true ] && [ "$ddns_closeout_enabled" = true ] && [ "$#" -eq 5 ] && [ "$5" = --confirm ] || fail 2
@@ -84,7 +84,8 @@ if [ "${1:-}" = --runtime-reconcile-internal ]; then
     runtime_recovery=true
     case "$2" in cloudflare) set -- "$3" --reconcile-receipt "$4" --confirm;; aliyun|dnspod|huaweicloud) set -- --"$2"-internal "$3" --reconcile-receipt "$4" --confirm;; *) fail 2;; esac
 fi
-if [ "${1:-}" = --ddns-runtime-sync-internal ]; then
+if [ "${1:-}" = --ddns-runtime-sync-internal ] || [ "${1:-}" = --ddns-runtime-delete-internal ]; then
+    [ "$1" != --ddns-runtime-delete-internal ] || runtime_delete=true
     [ "$ddns_runtime_enabled" = true ] || fail 2;runtime_dispatch=true;shift;set -- --ddns-sync-internal "$@"
 fi
 if [ "${1:-}" = --ddns-sync-internal ]; then
@@ -281,7 +282,16 @@ fi
 if [ "$ddns_dispatch" = true ]; then
     work_check=check;[ "$runtime_dispatch" != true ] || work_check=check-runtime
     ddns_rule=$(ash "$dir/homegate-ddns-work.sh" "$work_check" "$ddns_job" "$revision" "$provider" "$account" 2>/dev/null) || fail
-    if [ "$runtime_dispatch" = true ]; then ash "$dir/homegate-ddns-authority.sh" check-rule "$ddns_rule" >/dev/null 2>/dev/null || fail;fi
+    if [ "$runtime_delete" = true ]; then
+        # Verify input before reusing the records dispatcher without a
+        # runtime grant. Never allow this entry point to issue an upsert.
+        input=/var/run/homegate/.ddns-plan-$ddns_job/input
+        operation=$(lua "$dir/homegate-ddns-sync.lua" operation "$revision" "$ddns_rule" < "$input" 2>/dev/null) || fail
+        [ "$operation" = delete-result ] || fail
+        ash "$dir/homegate-ddns-authority.sh" cleanup-check-rule "$ddns_rule" >/dev/null 2>/dev/null || fail
+    elif [ "$runtime_dispatch" = true ]; then
+        ash "$dir/homegate-ddns-authority.sh" check-rule "$ddns_rule" >/dev/null 2>/dev/null || fail
+    fi
 fi
 # Never silently collect an orphan request or unlink possibly live files.
 for orphan in /var/run/homegate/.dns-check-*; do

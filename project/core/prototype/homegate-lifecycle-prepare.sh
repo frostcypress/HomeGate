@@ -177,7 +177,9 @@ check_binding
 flock -n 6 || fail 'Lifecycle writer is busy' 4
 check_binding
 if [ "$startup" = true ]; then
-    startup_fences || fail 'Runtime observations require explicit recovery' 4
+    if [ "$record_action" != switch ]; then
+        startup_fences || fail 'Runtime observations require explicit recovery' 4
+    fi
     [ "$(startup_source_stamp)" = "$source_stamp" ] || fail 'Startup configuration changed'
 fi
 dir=$(CDPATH= cd "$(dirname "$0")" && pwd) || fail 'Unable to locate lifecycle dependencies'
@@ -219,6 +221,10 @@ if [ "$startup" = true ]; then
     supervisor_binding || fail 'Unsafe startup supervisor lock'
     flock -n 7 || fail 'Startup supervisor is busy' 4
     supervisor_binding || fail 'Startup supervisor identity changed'
+    if [ "$record_action" = switch ]; then
+        ash "$dir/homegate-recovery-read.sh" reap-empty >/dev/null || fail 'Recovery observation cleanup unavailable' 4
+    fi
+    startup_fences || fail 'Runtime observations require explicit recovery' 4
     revision=$(lua "$dir/cloudflare-codec.lua" context < "$store/current") || fail 'Startup revision unavailable'
     store_stamp=$(startup_store_stamp) || fail 'Unsafe startup store binding'
     # Validate retained history once before changing the startup record.

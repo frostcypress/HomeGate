@@ -26,7 +26,7 @@ function M.result(raw,d,provider,account,revision,rule,rc,operation)
     local deleting=operation=='delete'
     if operation~=nil and not deleting then return nil end
     if (rc~='0' and rc~='1') or type(d)~='table' or not kinds[d.error_kind] or type(d.retryable)~='boolean' or
-        type(d.provider_code)~='string' or #d.provider_code>32 or not d.provider_code:match('^[a-zA-Z0-9_-]*$') or
+        type(d.provider_code)~='string' or #d.provider_code>32 or not d.provider_code:match('^[a-zA-Z0-9_.%-]*$') or
         type(d.affected)~='number' or d.affected<0 or d.affected>(deleting and 100000 or 1) or d.affected~=math.floor(d.affected) or
         d.ok~=(rc=='0') or (d.effect~='none' and d.effect~='confirmed' and d.effect~='unknown') then return nil end
     if d.ok then

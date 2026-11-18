@@ -60,27 +60,42 @@ fi
 job=$$;work=$run/.ddns-plan-$job
 ticket=$(lua "$dir/cloudflare-codec.lua" nonce < /proc/sys/kernel/random/uuid 2>/dev/null) || fail
 mkdir "$work" || fail
-for name in result public plan intent envelope call; do (set -C; : > "$work/$name") 2>/dev/null && private_file "$work/$name" || fail;done
+members='result public plan intent envelope call'
+for name in $members; do (set -C; : > "$work/$name") 2>/dev/null && private_file "$work/$name" || fail;done
+scratch_identity=$(stat -c '%d:%i' "$work") || fail
+discard_sample() {
+    private_dir "$work" && [ "$(stat -c '%d:%i' "$work")" = "$scratch_identity" ] || return 1
+    for p in "$work/"* "$work/".[!.]* "$work/"..?*; do
+        exists "$p" || continue
+        case "${p##*/}" in result|public|plan|intent|envelope|call) private_file "$p" || return 1;; *) return 1;; esac
+    done
+    for name in $members; do rm -f "$work/$name" || return 1;done
+    rmdir "$work"
+}
+retry_sample() {
+    discard_sample || fail
+    # Internal retry receipt. No provider has been called.
+    fail 75
+}
 rc=0
 ash "$dir/homegate-ddns-authority.sh" snapshot 3>&1 4>"$work/intent" 8>&- 9>&- >/dev/null 2>/dev/null |
     setsid ash "$dir/homegate-service-observer-watchdog.sh" --ddns-plan "$ticket" "$revision" "$job" '' 3>"$work/result" 8>&- 9>&- >/dev/null 2>/dev/null || rc=$?
-case "$rc" in 0|1) ;; *) fail;; esac
-lua "$dir/homegate-ddns-plan.lua" result "$revision" '' "$rc" < "$work/result" >/dev/null 2>/dev/null || fail
+case "$rc" in
+    0|1) ;;
+    125|126) retry_sample;;
+    *) fail;;
+esac
+lua "$dir/homegate-ddns-plan.lua" result "$revision" '' "$rc" < "$work/result" >/dev/null 2>/dev/null || retry_sample
 hash "$store/identity" || fail;identity=$sum;hash "$store/gen-$revision/manifest" || fail;generation=$sum
 hash "$store/ddns-authority" || fail;grant=$sum;boot=$(cat /proc/sys/kernel/random/boot_id) || fail
 info=$(lua "$dir/worker-process.lua" info "$job" none 2>/dev/null) || fail
 old_ifs=$IFS;IFS=:;set -- $info;IFS=$old_ifs;[ "$#" -eq 6 ] || fail;parent=$job:$5
 ash "$dir/homegate-ddns-authority.sh" snapshot 3>&1 4>"$work/intent" 8>&- 9>&- >/dev/null 2>/dev/null |
-    lua "$dir/homegate-ddns-batch.lua" seal "$revision" "$identity" "$generation" "$grant" "$boot" "$parent" 4<"$work/intent" 8<"$work/plan" > "$work/envelope" 2>/dev/null || fail
+    lua "$dir/homegate-ddns-batch.lua" seal "$revision" "$identity" "$generation" "$grant" "$boot" "$parent" 4<"$work/intent" 8<"$work/plan" > "$work/envelope" 2>/dev/null || retry_sample
 exec 5<"$work/envelope" 8>"$work/call" || fail
 # The sampling-only stage is removed before any provider attempt. Unknown
 # members are preserved; no unbound work is automatically swept after a crash.
-for p in "$work/"* "$work/".[!.]* "$work/"..?*; do
-    exists "$p" || continue
-    case "${p##*/}" in result|public|plan|intent|envelope|call) private_file "$p" || fail;; *) fail;; esac
-done
-for name in result public plan intent envelope call; do rm -f "$work/$name" || fail;done
-rmdir "$work" || fail
+discard_sample || fail
 sampled=true;result=0
 for rule in $names; do
     rc=0;previous_effect=$effect;effect=unknown

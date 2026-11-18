@@ -107,7 +107,8 @@ local function run()
   local doc,_,main=configuration();d.enabled=(doc.switches.main or {}).access_enabled=='1'
   d.mode=not d.enabled and 'disabled' or main.access_region~='' and 'region' or 'manual'
   local function count(v)local seen,n={},0;for p in (v or ''):gmatch('[^,;%s]+')do if not seen[p]then seen[p]=true;n=n+1 end end;return n end
-  d.manual_prefixes=count(main.access_allow);d.deny_prefixes=count(main.access_deny);d.region=main.access_region
+  local rules=assert(loadfile(base..'/native-access.lua'))().read(main.access_allow or '',main.access_deny or '')
+  d.manual_prefixes=count(rules and rules.allow or main.access_allow);d.deny_prefixes=count(rules and rules.deny or main.access_deny);d.region=main.access_region
   if d.enabled and d.mode=='region' and not d.cache_valid then d.ok=false;d.error='Configured region cache unavailable'end
   d.cache_ipv4=d.ipv4 or 0;d.cache_ipv6=d.ipv6 or 0;d.region_prefixes=d.cache_ipv4+d.cache_ipv6
   if type(d.cache_updated)=='number'then d.cache_updated_epoch=d.cache_updated;d.cache_updated=d.cache_updated>0 and os.date('!%Y-%m-%dT%H:%M:%SZ',d.cache_updated) or nil end

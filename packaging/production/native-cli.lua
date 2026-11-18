@@ -19,7 +19,13 @@ end
 if mode=='version'then
  if arg[2]then fail()end
  local machine=require('nixio').uname().machine;local arch=({x86_64='amd64',aarch64='arm64',armv7l='arm',armv6l='arm',i686='386',mips='mips',mipsel='mipsle',mips64='mips64',mips64el='mips64le',riscv64='riscv64'})[machine] or machine
- emit({api_version=1,native=true,version=version(),arch=arch,package_arch='all',effect='none',write_ready=false});return
+ local release=io.open('/etc/openwrt_release','r')
+ local system_arch
+ if release then
+  local raw=release:read(8193) or '';release:close()
+  if #raw<=8192 then system_arch=('\n'..raw..'\n'):match("\nDISTRIB_ARCH=['\"]?([%w_.-]+)['\"]?[ \t\r]*\n") end
+ end
+ emit({api_version=1,native=true,version=version(),arch=arch,system_arch=system_arch or machine,package_arch='all',effect='none',write_ready=false});return
 elseif mode=='legacy-import'then
  local id=arg[2];if type(id)~='string' or #id>64 or not id:match('^[a-zA-Z0-9_-]+$') or arg[3]then fail()end
  for _,p in ipairs({'/etc/homegate','/etc/homegate/certs','/etc/homegate/certs/'..id})do local a=fs.lstat(p);if not a or a.type~='dir' or a.uid~=0 or a.modedec~=700 then fail()end end
@@ -29,8 +35,11 @@ elseif mode=='import'then
  emit({certificate_pem=read(arg[2],65536,'public'),private_key_pem=read(arg[3],16384)});return
 elseif mode=='ids'then
  local raw=io.stdin:read(262145);local doc=raw and #raw<=262144 and codec.parse(raw);if not doc then fail()end
- if arg[2]~='certificate' then fail()end
- for _,s in ipairs(doc)do if s.kind==arg[2] then io.write(s.name,'\n')end end;return
+ if arg[3] or (arg[2]~='certificate' and arg[2]~='ddns_rule') then fail()end
+ for _,s in ipairs(doc)do
+  if s.kind==arg[2] and (s.kind~='ddns_rule' or s.values.type=='AAAA') then io.write(s.name,'\n')end
+ end
+ return
 elseif mode=='aggregate'then
  local rows={};local ok=true;local size=0
  for line in io.stdin:lines()do size=size+#line;if size>524288 or #rows>=128 then fail()end

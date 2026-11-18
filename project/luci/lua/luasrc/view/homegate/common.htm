@@ -78,9 +78,9 @@
    * Access Address column. Give the full address the flexible width and keep
    * Actions fixed; conditional buttons collapse without reserving empty slots. */
   --hg-public-column-gap: 10px;
-  --hg-public-enabled-width: 46px;
-  --hg-public-address-min: 300px;
-  --hg-public-target-min: 150px;
+  --hg-public-enabled-width: 58px;
+  --hg-public-address-min: 250px;
+  --hg-public-target-min: 220px;
   --hg-public-actions-width: 292px;
   --hg-public-actions-inset: 8px;
 }
@@ -198,6 +198,8 @@ textarea.hg-control { box-sizing: border-box; width: var(--hg-control-width); mi
 .hg-notice { margin: .75em 0; padding: .55em .75em; border-left: 3px solid var(--hg-notice-success-border); background: var(--hg-notice-success-bg); }
 .hg-notice-error { border-left-color: var(--hg-notice-error-border); background: var(--hg-notice-error-bg); }
 .hg-notice-pending { border-left-color: var(--hg-notice-pending-border); background: var(--hg-notice-pending-bg); }
+.hg-notice[hidden],
+.hg-wrap .hg-operation-status:not([hidden]) + .hg-notice-pending { display: none !important; }
 .hg-log { box-sizing: border-box; width: 100%; min-height: 220px; max-height: 460px; overflow: auto; white-space: pre-wrap; word-break: break-word; font-family: Consolas, "SFMono-Regular", "Noto Sans Mono CJK SC", "Microsoft YaHei", monospace !important; font-weight: 400 !important; font-size: 12px; padding: .65em; border: 1px solid #ccc; background: rgba(0,0,0,.02); }
 .hg-field-note { margin-top: .35em; max-width: 420px; opacity: .72; line-height: 1.45; }
 .hg-modal .hg-field-note { color: var(--hg-modal-note-color); opacity: var(--hg-modal-note-opacity); }
@@ -224,12 +226,8 @@ textarea.hg-control { box-sizing: border-box; width: var(--hg-control-width); mi
   -webkit-overflow-scrolling: touch; scrollbar-gutter: stable;
 }
 .hg-public-service-modal > .hg-public-service-footer { flex: 0 0 auto; }
-/* Footer action geometry is owned by HomeGate. Host hover/focus rules may repaint
- * the buttons, but cannot change their outer height and trigger a visible bounce. */
-.hg-public-service-modal > .hg-public-service-footer .cbi-button,
-.hg-public-service-modal > .hg-public-service-footer .cbi-button:hover,
-.hg-public-service-modal > .hg-public-service-footer .cbi-button:focus,
-.hg-public-service-modal > .hg-public-service-footer .cbi-button:active {
+/* Match the compact dialog actions even when the host theme adjusts button states. */
+.hg-modal .hg-modal-actions-compact .cbi-button {
   height: var(--hg-control-height) !important;
   min-height: var(--hg-control-height) !important;
   max-height: var(--hg-control-height) !important;
@@ -247,8 +245,6 @@ textarea.hg-control { box-sizing: border-box; width: var(--hg-control-width); mi
 .hg-modal-check input[type="checkbox"] { float: none !important; margin: 0 !important; }
 .hg-web-enabled-check { float: none !important; margin: 0 !important; vertical-align: middle; }
 .hg-modal-control-stack { min-width: 0; }
-/* Match the primary-domain empty-state hint; only this placeholder changes. */
-#hg-public-renew-days::placeholder { color: #9ca9b7; opacity: 1; }
 .hg-modal-control-stack .hg-control { width: 100%; }
 #hg-public-zone-retry { margin-top: 6px; }
 #hg-public-zone-retry[hidden] { display: none !important; }
@@ -258,10 +254,10 @@ textarea.hg-control { box-sizing: border-box; width: var(--hg-control-width); mi
 .hg-log-actions-below { margin-top: var(--hg-log-action-gap); }
 .hg-log-actions form, .hg-button-row form { display: inline-block; margin: 0; }
 .hg-hidden-file { display: none !important; }
-.hg-public-hint { white-space: nowrap; }
 .hg-wol-custom-mac { display: none; margin-top: .45em; }
 .hg-modal-actions { display: flex; align-items: center; justify-content: flex-end; gap: var(--hg-modal-actions-gap); margin-top: var(--hg-modal-actions-margin-top); text-align: right; white-space: nowrap; }
 .hg-modal-actions .cbi-button { margin: 0 !important; }
+#hg-plugin-update-form { margin: 0; }
 /* Theme-safe action geometry: HomeGate owns spacing, host themes must not inject icons/floats/hidden margins. */
 .hg-wrap .cbi-button, .hg-modal .cbi-button { float: none !important; text-indent: 0 !important; max-width: 100%; }
 .hg-wrap .cbi-button:before, .hg-wrap .cbi-button:after,
@@ -310,14 +306,12 @@ html:lang(zh) .hg-log-actions .hg-btn-4, html:lang(zh) .hg-button-row .hg-btn-4 
 .hg-table-scroll-wrap { display: block; width: 100%; max-width: 100%; min-width: 0; overflow-x: auto; overflow-y: hidden; -webkit-overflow-scrolling: touch; box-sizing: border-box; }
 .hg-public-table { display: block; width: 100%; min-width: 820px; }
 .hg-public-table thead, .hg-public-table tbody { display: block; width: 100%; }
-/* Public desktop columns: Access Address owns most flexible width and contains
- * http/https plus the stable status hint. LAN Target remains compact. */
 .hg-public-table tr {
   display: grid;
   grid-template-columns:
     var(--hg-public-enabled-width)
-    minmax(var(--hg-public-address-min), 2fr)
-    minmax(var(--hg-public-target-min), .9fr)
+    minmax(var(--hg-public-address-min), 1.55fr)
+    minmax(var(--hg-public-target-min), 1fr)
     var(--hg-public-actions-width);
   column-gap: var(--hg-public-column-gap);
   align-items: center; width: 100%; box-sizing: border-box;
@@ -333,12 +327,16 @@ html:lang(zh) .hg-log-actions .hg-btn-4, html:lang(zh) .hg-button-row .hg-btn-4 
 .hg-wrap .hg-public-table th.hg-public-action-head, .hg-wrap .hg-public-table td.hg-actions { padding-left: var(--hg-public-actions-inset) !important; padding-right: 0 !important; }
 .hg-public-table td.hg-actions { overflow: visible; text-overflow: clip; }
 .hg-public-table td.hg-action-group { gap: 4px; }
-/* Never ellipsize a public address. Very long hostnames and the parenthesized
- * status hint wrap naturally while remaining fully readable. */
-.hg-public-table .hg-public-address {
+/* Long addresses and status text wrap within their own table cell. */
+.hg-public-table :is(.hg-public-address, .hg-public-target) {
   white-space: normal !important; overflow: visible !important; text-overflow: clip !important;
   overflow-wrap: anywhere; word-break: break-word; line-height: 1.35;
 }
+.hg-public-address > span { display: block; }
+.hg-public-address .hg-public-url { font-size: 1.06em; }
+.hg-public-address .hg-public-hint { font-size: 1em; line-height: 1.25; }
+.hg-public-table td.hg-public-target { font-size: 1.12em; }
+.hg-public-table td > .hg-web-enabled-check { margin-block: 0; vertical-align: middle; }
 .hg-public-table td[colspan] { grid-column: 1 / -1; }
 /* HomeGate form rows: one shared semantic label/control contract across every page. */
 .hg-form-fields { min-width: 0; max-width: 100%; }
@@ -366,22 +364,14 @@ html:lang(zh) .hg-log-actions .hg-btn-4, html:lang(zh) .hg-button-row .hg-btn-4 
 .hg-inline-status-control { display: flex; align-items: center; gap: 10px; min-height: 30px; white-space: nowrap; }
 
 .hg-access-modal { width: var(--hg-modal-access-width); }
-/* Access modal owns one content edge. Header, table and footer inherit the modal padding directly;
- * none of them may introduce a second horizontal inset. The title is deliberately not an h3 so
- * host LuCI heading rules cannot re-indent it. */
-.hg-access-modal > .hg-access-toolbar,
 .hg-access-modal > .hg-access-table-wrap,
 .hg-access-modal > .hg-access-footer {
   box-sizing: border-box; width: 100%; max-width: 100%;
   margin-left: 0 !important; margin-right: 0 !important;
   padding-left: 0 !important; padding-right: 0 !important;
 }
-.hg-access-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 1em; }
-.hg-access-title { margin: 0 !important; padding: 0 !important; border: 0 !important; text-indent: 0 !important; position: static !important; transform: none !important; line-height: var(--hg-modal-title-line-height); font-size: 1.17em; font-weight: 600 !important; }
-.hg-access-toolbar-actions { display: flex; align-items: center; justify-content: flex-end; gap: .45em; flex: 0 0 auto; margin: 0 !important; padding: 0 !important; }
-.hg-access-add-rule { display: flex; align-items: center; flex-wrap: nowrap; gap: .45em; margin: 0 0 .7em; min-width: 0; width: 100%; max-width: 100%; }
-.hg-access-add-rule .hg-control { flex: 1 1 auto; width: auto; min-width: 0; }
-.hg-access-add-rule .hg-access-rule-kind { flex: 0 0 110px !important; width: 110px !important; max-width: 110px !important; }
+.hg-access-toolbar-actions { display: flex; align-items: center; flex-wrap: wrap; gap: .45em; }
+.hg-access-rule-input .hg-control { width: 100%; max-width: 100%; min-width: 0; box-sizing: border-box; }
 .hg-access-table-wrap { overflow-x: hidden; box-sizing: border-box; }
 .hg-access-table-scroll { max-height: 306px; overflow-x: hidden; overflow-y: auto; }
 .hg-access-table-scroll .hg-access-table thead th { position: sticky; top: 0; z-index: 1; background: var(--hg-surface); }
@@ -391,10 +381,16 @@ html:lang(zh) .hg-log-actions .hg-btn-4, html:lang(zh) .hg-button-row .hg-btn-4 
 .hg-modal .hg-access-table th.hg-access-action-head, .hg-modal .hg-access-table td.hg-access-action { padding-left: 0 !important; padding-right: 0 !important; }
 .hg-access-table th { font-weight: 600 !important; }
 .hg-access-table .hg-access-source, .hg-access-table .hg-access-time { font-family: inherit !important; }
+.hg-access-table .hg-access-source { white-space: normal; overflow-wrap: anywhere; text-overflow: clip; }
+.hg-access-ip-edit {
+  padding: 0; border: 0; background: transparent; color: inherit; font: inherit;
+  text-align: left; white-space: normal; overflow-wrap: anywhere; max-width: 100%;
+  text-decoration: underline; cursor: pointer;
+}
 .hg-access-table .hg-access-action { overflow: visible; text-overflow: clip; white-space: nowrap; text-align: left !important; }
 .hg-access-action-group { width: 100%; max-width: 100%; }
 .hg-access-actions-col { width: var(--hg-access-actions-width); }
-.hg-access-footer { justify-content: flex-end; }
+.hg-access-footer { justify-content: space-between; }
 .hg-wol-table { table-layout: fixed; min-width: 720px; }
 .hg-wol-table thead, .hg-wol-table tbody, .hg-wol-table tr,
 .hg-wol-table th, .hg-wol-table td {
@@ -624,11 +620,6 @@ html.hg-theme-design .hg-maintenance-log-card .hg-log-actions { margin-top: var(
   .hg-access-table-scroll .hg-access-table thead th { position: static; }
   .hg-access-source { word-break: break-all; }
 
-  .hg-access-toolbar { padding-left: 0; padding-right: 0; flex-wrap: wrap; }
-  .hg-access-toolbar-actions { margin-left: auto; }
-  .hg-access-add-rule { width: 100%; margin-left: 0; margin-right: 0; flex-wrap: wrap; }
-  .hg-access-add-rule .hg-control { flex: 1 1 100%; width: 100%; }
-  .hg-access-add-rule .hg-access-rule-kind { flex: 0 0 100% !important; width: 100% !important; max-width: 100% !important; }
 
   /* Modals follow visualViewport and contain their own vertical overflow only. */
   .hg-modal-backdrop { left: var(--hg-modal-vv-left, 0px); top: var(--hg-modal-vv-top, 0px); right: auto; bottom: auto; width: var(--hg-modal-vv-width, 100vw); height: var(--hg-modal-vh, 100vh); padding: 8px; overflow: hidden; }
@@ -647,7 +638,6 @@ html.hg-theme-design .hg-maintenance-log-card .hg-log-actions { margin-top: var(
   html.hg-theme-foundation .hg-modal-grid { grid-template-columns: 1fr; gap: .3em; }
   html.hg-theme-foundation .hg-modal-grid > label { display: block; min-height: 0; text-align: left; margin-top: .4em; padding: 0; line-height: normal; color: var(--hg-modal-mobile-label-color); }
   .hg-modal-actions { white-space: normal; flex-wrap: wrap; }
-  .hg-public-hint { white-space: normal; }
 
   /* BOOT phone keeps the accepted full-width segmented page-action bar. */
 
@@ -804,14 +794,19 @@ function hgModalBackdrop(event) {
   var modal = e && (e.currentTarget || e.target);
   if (e && modal && e.target === modal && modal.id) hgSetModalOpen(modal.id, false);
 }
-function hgLoadText(url, targetId) {
-  var target = document.getElementById(targetId);
-  if (!target) return;
-  var request = target._hgTextRequest = (target._hgTextRequest || 0) + 1;
-  XHR.get(url, null, function(xhr) {
-    var e = document.getElementById(targetId);
-    if (e === target && target._hgTextRequest === request) e.textContent = xhr.responseText || '';
-  });
+function hgScheduleNoticeDismiss(node) {
+  window.clearTimeout(node._hgNoticeTimer);
+  if (node.hidden || node.classList.contains('hg-notice-error') || node.classList.contains('hg-notice-pending')) return;
+  node._hgNoticeTimer = window.setTimeout(function() { node.hidden = true; }, 3000);
+}
+function hgShowNotice(node, text, state) {
+  node.textContent = text || '';
+  node.classList.toggle('hg-notice-error', state === 'error');
+  node.classList.toggle('hg-notice-pending', state === 'pending');
+  node.hidden = !text;
+  hgScheduleNoticeDismiss(node);
+  node._hgNoticeSequence = (node._hgNoticeSequence || 0) + 1;
+  return node._hgNoticeSequence;
 }
 function hgGet(url, cb) {
   XHR.get(url, null, function(xhr, data) {
@@ -847,6 +842,12 @@ function hgFormDirtyTracker(formId, pendingId) {
   function current() { return hgFormSnapshot(formId); }
   function recompute() { var dirty = current() !== saved; hgSetPending(pendingId, dirty); return dirty; }
   function capture() { saved = current(); hgSetPending(pendingId, false); }
+  function captureField(name) {
+    function isField(line) { return line && JSON.parse(line)[0] === name; }
+    saved = saved.split('\n').filter(function(line) { return line && !isField(line); })
+      .concat(current().split('\n').filter(isField)).sort().join('\n');
+    recompute();
+  }
   if (form && form.elements) {
     for (var i = 0; i < form.elements.length; i++) {
       var e = form.elements[i];
@@ -856,7 +857,7 @@ function hgFormDirtyTracker(formId, pendingId) {
     }
   }
   capture();
-  return { capture: capture, recompute: recompute, current: current, saved: function(){ return saved; } };
+  return { capture: capture, captureField: captureField, recompute: recompute, current: current, saved: function(){ return saved; } };
 }
 function hgNarrowViewport() {
   return (window.innerWidth || document.documentElement.clientWidth || 0) <= 700;
@@ -976,10 +977,8 @@ function hgConsumeFlashQuery() {
   window.history.replaceState(null, document.title, clean);
 }
 function hgInitFlashNotices() {
-  var notices = document.querySelectorAll('.hg-notice:not(.hg-notice-error):not(.hg-notice-pending)');
-  for (var i = 0; i < notices.length; i++) (function(n) {
-    window.setTimeout(function() { if (n) n.style.display = 'none'; }, 3000);
-  })(notices[i]);
+  var notices = document.querySelectorAll('.hg-notice:not([role="status"])');
+  for (var i = 0; i < notices.length; i++) hgScheduleNoticeDismiss(notices[i]);
 }
 hgConsumeFlashQuery();
 if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',hgInitFlashNotices);

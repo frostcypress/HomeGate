@@ -68,6 +68,8 @@ function index()
         post("action_access_delete_entry")).leaf = true
     entry({"admin", "services", "homegate", "access_delete_rule"},
         post("action_access_delete_rule")).leaf = true
+    entry({"admin", "services", "homegate", "access_save_rule"},
+        post("action_access_save_rule")).leaf = true
     entry({"admin", "services", "homegate", "wol_apply"},
         post("action_wol_apply")).leaf = true
     entry({"admin", "services", "homegate", "wol_action"},
@@ -813,7 +815,7 @@ local function package_info()
         core = core_version,
         luci = package_field("luci-app-homegate", "Version"),
         i18n = package_field("luci-i18n-homegate-zh-cn", "Version"),
-        arch = trim(report.arch) ~= "" and trim(report.arch) or "-",
+        arch = trim(report.system_arch or report.arch) ~= "" and trim(report.system_arch or report.arch) or "-",
         package_arch = package_field("homegate", "Architecture")
     }
 end
@@ -1227,9 +1229,10 @@ local function access_region_cache_updated(key)
     local ok, fs = pcall(require, "nixio.fs")
     if not ok or not fs then return "" end
     local st = fs.stat("/etc/homegate/access/regions/" .. key .. ".cidr")
+    if st and st.updated then return st.updated end
     local mtime = st and tonumber(st.mtime) or nil
     if not mtime or mtime <= 0 then return "" end
-    return os.date("%Y/%m/%d", mtime)
+    return os.date("%Y/%m/%d %H:%M", mtime)
 end
 
 local function access_region_choices()
@@ -1244,17 +1247,26 @@ local function access_region_choices()
     return out
 end
 
-local function validate_access_allow(raw)
+local function validate_access_allow(raw, normalize)
     raw = trim(raw)
     if #raw > 4096 then return false end
-    if raw == "" then return true end
+    if raw == "" then return normalize and "" or true end
     local suffix = tostring(os.time()) .. tostring(math.random(1000, 9999))
     local path = "/tmp/homegate-access-validate-" .. suffix
     local f = io.open(path, "w")
     if not f then return false end
     f:write(raw)
     f:close()
-    local rc = sys().call("/usr/bin/homegate access-validate-file " .. path .. " >/dev/null 2>&1")
+    local command = "/usr/bin/homegate access-validate-file " .. path
+    if normalize then
+        local response = sys().exec(command .. " 2>/dev/null") or ""
+        os.remove(path)
+        local report = require("luci.jsonc").parse(response)
+        local canonical = type(report) == "table" and report.ok and report.normalized
+        if type(canonical) == "string" and #canonical <= 4096 then return canonical end
+        return false
+    end
+    local rc = sys().call(command .. " >/dev/null 2>&1")
     os.remove(path)
     return rc == 0
 end
@@ -1573,8 +1585,8 @@ function action_public_apply()
     end
 
     local access_scope = trim(h.formvalue("access_scope")):upper()
-    local access_allow = trim(h.formvalue("access_allow"))
-    local access_deny = trim(h.formvalue("access_deny"))
+    local access_allow = h.formvalue("access_allow")
+    local access_deny = h.formvalue("access_deny")
     local access_enabled, access_region = false, ""
     if access_scope == "__MANUAL__" then
         access_enabled = true
@@ -1583,8 +1595,8 @@ function action_public_apply()
         access_enabled = true
         access_region = access_scope
     end
-    if #access_allow > 4096 or not validate_access_allow(access_allow) then return fail("Invalid allowed IP or network") end
-    if #access_deny > 4096 or not validate_access_allow(access_deny) then return fail("Invalid denied IP or network") end
+    if access_allow ~= nil and not validate_access_allow(access_allow) then return fail("Invalid allowed IP or network") end
+    if access_deny ~= nil and not validate_access_allow(access_deny) then return fail("Invalid denied IP or network") end
 
     local original_web, original_ddns = {}, {}
     local original_web_rows, original_ddns_rows = {}, {}
@@ -1856,6 +1868,9 @@ function action_public_apply()
     if (#removed_web > 0 or #removed_ddns > 0) and mode ~= "apply" then
         return fail("Public service deletion requires Save & Apply")
     end
+    if mode == "apply" and access_enabled and access_region ~= "" and not action_core("access-update " .. access_region) then
+        return fail("Unable to update access region data")
+    end
     for _, id in ipairs(removed_ddns) do
         if not action_core("ddns-delete " .. id) then return fail("Unable to delete public DNS record") end
     end
@@ -1909,10 +1924,10 @@ function action_public_apply()
         end
     end
 
-    if access_enabled and access_region ~= "" and not action_core("access-update " .. access_region) then return fail("Unable to update access region data") end
     cur:set("homegate", "main", "access_enabled", access_enabled and "1" or "0")
-    cur:set("homegate", "main", "access_allow", access_allow)
-    cur:set("homegate", "main", "access_deny", access_deny)
+    -- New public forms edit access rules through their own serialized routes.
+    if access_allow ~= nil then cur:set("homegate", "main", "access_allow", trim(access_allow)) end
+    if access_deny ~= nil then cur:set("homegate", "main", "access_deny", trim(access_deny)) end
     cur:set("homegate", "main", "access_region", access_region)
 
     for _, pending in ipairs(pending_local) do
@@ -2195,10 +2210,6 @@ function action_access_clear_all()
     if not action_core("access-clear-all") then
         return redirect_page("public", nil, "Unable to clear access records")
     end
-    -- The daemon owns a bounded in-memory recorder. Reload after changing the
-    -- runtime file so cleared rows cannot reappear from the old in-memory copy.
-    local ok, err = apply_homegate()
-    if not ok then return redirect_page("public", nil, err) end
     return redirect_page("public", "Access records cleared")
 end
 
@@ -2211,8 +2222,6 @@ function action_access_clear_entry()
     if not action_core("access-clear-entry " .. ip .. " " .. host) then
         return redirect_page("public", nil, "Unable to clear access record")
     end
-    local ok, err = apply_homegate()
-    if not ok then return redirect_page("public", nil, err) end
     return redirect_page("public", "Access record cleared")
 end
 
@@ -2220,11 +2229,62 @@ function action_access_clear_denied()
     if not action_core("access-clear-denied") then
         return redirect_page("public", nil, "Unable to clear denied recent access")
     end
-    -- The daemon keeps a bounded in-memory recorder. Reload it from the freshly
-    -- filtered runtime file so cleared denied entries cannot reappear.
-    local ok, err = apply_homegate()
-    if not ok then return redirect_page("public", nil, err) end
     return redirect_page("public", "Denied recent access cleared")
+end
+
+local function save_access_rules(cur, allow, deny, notice)
+    local old_allow = cur:get("homegate", "main", "access_allow") or ""
+    local old_deny = cur:get("homegate", "main", "access_deny") or ""
+    if old_allow ~= allow or old_deny ~= deny then
+        cur:set("homegate", "main", "access_allow", allow)
+        cur:set("homegate", "main", "access_deny", deny)
+        local ok, err = commit(cur)
+        if not ok then return redirect_page("public", nil, err) end
+        local applied, apply_err = apply_homegate()
+        if not applied then return redirect_page("public", nil, apply_err) end
+    end
+    return redirect_page("public", notice)
+end
+
+function action_access_save_rule()
+    local h = http()
+    local kind, token = trim(h.formvalue("kind")), trim(h.formvalue("rule_token"))
+    local old_kind, old_token = trim(h.formvalue("old_kind")), trim(h.formvalue("old_rule_token"))
+    local function valid_kind(v) return v == "allow" or v == "deny" end
+    local function valid_token(v) return #v <= 256 and v:match("^[%x%.:/]+$") end
+    if not valid_kind(kind) or not valid_token(token)
+        or ((old_kind ~= "" or old_token ~= "") and (not valid_kind(old_kind) or not valid_token(old_token))) then
+        return redirect_page("public", nil, "Invalid access rule")
+    end
+    local cur = uci_cursor()
+    local rules = {
+        allow = cur:get("homegate", "main", "access_allow") or "",
+        deny = cur:get("homegate", "main", "access_deny") or ""
+    }
+    if old_kind ~= "" then
+        local found = false
+        for _, entry in ipairs(access_rule_tokens(rules[old_kind])) do
+            if entry:lower() == old_token:lower() then found = true; break end
+        end
+        if not found then return redirect_page("public", nil, "Access rule changed") end
+        rules[old_kind] = remove_access_token(rules[old_kind], old_token)
+    end
+    token = validate_access_allow(token, true)
+    rules.allow = validate_access_allow(rules.allow, true)
+    rules.deny = validate_access_allow(rules.deny, true)
+    if not token or not rules.allow or not rules.deny then
+        return redirect_page("public", nil, "Invalid access rule")
+    end
+    local other = kind == "allow" and "deny" or "allow"
+    rules[other] = remove_access_token(rules[other], token)
+    local target = access_rule_tokens(rules[kind])
+    local found = false
+    for _, entry in ipairs(target) do if entry == token then found = true; break end end
+    if not found then target[#target + 1] = token end
+    table.sort(target)
+    rules[kind] = table.concat(target, ", ")
+    if #rules[kind] > 4096 then return redirect_page("public", nil, "Invalid access rule") end
+    return save_access_rules(cur, rules.allow, rules.deny, "Access rule saved")
 end
 
 function action_access_delete_entry()
@@ -2236,18 +2296,10 @@ function action_access_delete_entry()
     if not cur:get_all("homegate", "main") then cur:section("homegate", "homegate", "main", {}) end
     local allow = remove_access_ip(cur:get("homegate", "main", "access_allow") or "", ip)
     local deny = remove_access_ip(cur:get("homegate", "main", "access_deny") or "", ip)
-    cur:set("homegate", "main", "access_allow", allow)
-    cur:set("homegate", "main", "access_deny", deny)
-
     if not action_core("access-clear-entry " .. ip .. " " .. host) then
-        cur:revert("homegate")
         return redirect_page("public", nil, "Unable to delete access entry")
     end
-    local ok, err = commit(cur)
-    if not ok then return redirect_page("public", nil, err or "Unable to delete access entry") end
-    local applied, apply_err = apply_homegate()
-    if not applied then return redirect_page("public", nil, apply_err) end
-    return redirect_page("public", "Access entry deleted")
+    return save_access_rules(cur, allow, deny, "Access entry deleted")
 end
 
 function action_access_delete_rule()
@@ -2263,28 +2315,18 @@ function action_access_delete_rule()
     local option = kind == "deny" and "access_deny" or "access_allow"
     local updated = remove_access_token(cur:get("homegate", "main", option) or "", token)
     if not validate_access_allow(updated) then return redirect_page("public", nil, "Invalid access rule") end
-    cur:set("homegate", "main", option, updated)
-    local ok, err = commit(cur)
-    if not ok then return redirect_page("public", nil, err or "Unable to delete access rule") end
-    local applied, apply_err = apply_homegate()
-    if not applied then return redirect_page("public", nil, apply_err) end
-    return redirect_page("public", "Access rule deleted")
+    local allow = kind == "allow" and updated or cur:get("homegate", "main", "access_allow") or ""
+    local deny = kind == "deny" and updated or cur:get("homegate", "main", "access_deny") or ""
+    return save_access_rules(cur, allow, deny, "Access rule deleted")
 end
 
 function action_access_delete_all()
     local cur = uci_cursor()
     if not cur:get_all("homegate", "main") then cur:section("homegate", "homegate", "main", {}) end
-    cur:set("homegate", "main", "access_allow", "")
-    cur:set("homegate", "main", "access_deny", "")
     if not action_core("access-clear-all") then
-        cur:revert("homegate")
         return redirect_page("public", nil, "Unable to delete all access entries")
     end
-    local ok, err = commit(cur)
-    if not ok then return redirect_page("public", nil, err or "Unable to delete all access entries") end
-    local applied, apply_err = apply_homegate()
-    if not applied then return redirect_page("public", nil, apply_err) end
-    return redirect_page("public", "All access entries deleted")
+    return save_access_rules(cur, "", "", "All access entries deleted")
 end
 
 function action_maintenance()
@@ -2302,7 +2344,7 @@ function action_maintenance_apply()
     local log_max_lines, err = parse_int("log_max_lines", 1024, 64, 20000)
     if not log_max_lines then return redirect_page("maintenance", nil, err) end
     local level = trim(h.formvalue("log_level")):lower()
-    if level ~= "debug" and level ~= "info" and level ~= "warn" and level ~= "error" then level = "info" end
+    if level ~= "warn" and level ~= "error" then level = "info" end
 
     cur:set("homegate", "main", "log_level", level)
     cur:set("homegate", "main", "log_max_lines", tostring(log_max_lines))
@@ -2548,6 +2590,7 @@ local native_write_routes = {
     access_clear_all="action_access_clear_all", access_clear_entry="action_access_clear_entry",
     access_clear_denied="action_access_clear_denied", access_delete_all="action_access_delete_all",
     access_delete_entry="action_access_delete_entry", access_delete_rule="action_access_delete_rule",
+    access_save_rule="action_access_save_rule",
     wol_apply="action_wol_apply", wol_action="action_wol_action",
     maintenance_apply="action_maintenance_apply", log_clear="action_log_clear",
     config_reset="action_config_reset"

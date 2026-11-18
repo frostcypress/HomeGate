@@ -1244,7 +1244,7 @@ case "$command" in
         projection_role=restore;;
     init|status|export|preview|cancel) [ "$#" -eq 0 ] || fail 'Unexpected arguments' 2;;
     editor-state-read) [ "$#" = 0 ] && [ "$persistent_mode:$native_editor_enabled" = true:true ] || fail 'Native editor reader is not ready' 2;;
-    editor-preview) [ "$#" = 1 ] && [ "$persistent_mode:$native_editor_enabled" = true:true ] && number "$1" 1 "$revision_limit" || fail 'Native editor is not ready' 2;editor_base=$1;;
+    editor-check|editor-preview) [ "$#" = 1 ] && [ "$persistent_mode:$native_editor_enabled" = true:true ] && number "$1" 1 "$revision_limit" || fail 'Native editor is not ready' 2;editor_base=$1;;
     writer-check) [ "$#" -eq 0 ] && [ "$persistent_mode" = true ] || fail 'Writer check requires persistent namespace' 2;;
     dns-recovery-check|dns-recovery-snapshot-read)
         [ "$#" -eq 0 ] && [ "$persistent_mode" = true ] && [ "$dns_recovery_read_enabled" = true ] || fail 'DNS recovery reader is not ready' 2;;
@@ -1417,6 +1417,14 @@ case "$command" in
     export)
         need_initialized
         cat "$store/gen-$head_revision/public.conf" || fail 'Unable to export public config'
+        ;;
+    editor-check)
+        need_initialized
+        [ "$head_revision" = "$editor_base" ] || fail 'Editor baseline changed' 5
+        # Validate the exact staged input against its baseline under the store
+        # locks, including inherited credentials, without allocating history.
+        lua "$codec" editor-check "$store/gen-$head_revision" 2>/dev/null || fail 'Editor candidate invalid'
+        printf '{"api_version":1,"ok":true,"phase":"editor-check","revision":%s,"effect":"none"}\n' "$head_revision"
         ;;
     editor-preview)
         need_initialized

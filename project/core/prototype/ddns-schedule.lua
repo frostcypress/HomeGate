@@ -77,6 +77,9 @@ function M.batch(raw,d,revision,rc,names,json,closeouts)
         expected=string.format('{"api_version":1,"prototype":true,"ok":false,"phase":"ddns-batch","effect":"%s","sampled":%s,"write_ready":false,"rules":[%s],"error":"DDNS batch is unavailable"}\n',d.effect,tostring(d.sampled),table.concat(rows,','))
     end
     if raw~=expected then return nil end
+    if rc=='75' then
+        return error and d.sampled==false and d.effect=='none' and #d.rules==0 and 'retry_sample' or nil
+    end
     return d.effect=='confirmed' and all_closed and not error and 'closed' or d.effect
 end
 return M

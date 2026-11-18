@@ -35,6 +35,23 @@ local function allowed(doc)
     end
     return slots
 end
+local function editor_candidate(raw,baseline)
+    local body,slots=codec.migration(raw)
+    if not body then fail() end
+    if baseline then
+        for _,slot in ipairs(allowed(codec.parse(body))) do
+            if slots[slot]==nil then
+                local f=io.open(baseline..'/credentials/'..slot,'rb')
+                if f then
+                    local value=f:read(4097)
+                    if not f:close() or not value or #value<1 or #value>4096 then fail() end
+                    slots[slot]=value
+                end
+            end
+        end
+    end
+    return body,slots
+end
 local function history(store, owner, selected, mode)
     local fs=require("nixio.fs")
     local function stat(path, kind, mode)
@@ -196,9 +213,10 @@ elseif arg[1]=="source-baseline" and arg[2] and arg[3] and not arg[4] then
             if value~=slots[name] then fail() end
         end
     end
+elseif arg[1]=='editor-check' and arg[2] and not arg[3] then
+    editor_candidate(read(),arg[2])
 elseif (arg[1]=="migrate" and not arg[4] or arg[1]=="editor-migrate" and arg[4] and not arg[5]) and arg[2] and arg[3] then
-    local body,slots=codec.migration(read(arg[2]))
-    if not body then fail() end
+    local body,slots=editor_candidate(read(arg[2]),arg[4])
     local function write(path,value)
         local f=io.open(path,"wb")
         if not f then fail() end
@@ -209,13 +227,6 @@ elseif (arg[1]=="migrate" and not arg[4] or arg[1]=="editor-migrate" and arg[4] 
     -- The Shell caller holds the store lock and allocated an empty 0700
     -- generation. These are generated slot names, never caller-supplied paths.
     write(arg[3].."/public.conf",body)
-    if arg[1]=='editor-migrate'then
-        for _,slot in ipairs(allowed(codec.parse(body)))do
-            if slots[slot]==nil then local f=io.open(arg[4]..'/credentials/'..slot,'rb');if f then
-                local value=f:read(4097);if not f:close() or not value or #value<1 or #value>4096 then fail()end;slots[slot]=value
-            end end
-        end
-    end
     for slot,value in pairs(slots) do write(arg[3].."/credentials/"..slot,value) end
 elseif arg[1]=='editor-state' and arg[2] and arg[3] and not arg[4]then
     local doc=parsed(arg[2]..'/public.conf');local flags={}

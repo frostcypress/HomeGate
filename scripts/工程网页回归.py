@@ -108,6 +108,8 @@ if mode=='hold':
  while not Path('/teststate/provider-release').exists():
   if time.monotonic()>=deadline:sys.exit(99)
   time.sleep(.03)
+if mode=='delete-denied':
+ print('{"success":false,"errors":[{"code":10000}]}');print('HGHTTP:403');sys.exit(0)
 if mode.startswith('delete-'):
  rec={'id':'2'*32,'name':'www.example.test','type':'AAAA','content':'2001:db8::2','ttl':120,'proxied':False}
  detail=re.search(r'/dns_records/[0-9a-f]{32}',raw)
@@ -991,7 +993,8 @@ def main():
              (s/'models',luci.LUA/'prefix/lib/lua/luci/model'),(s/'libexec','/usr/libexec'),(s/'tools','/usr/sbin'),
              (s/'curl-fixture','/usr/bin/curl')),
           extra_rw_mounts=lambda s:((s/'etc/homegate-engineering','/etc/homegate-engineering'),(s/'etc/config','/etc/config')),
-          state_setup=setup_state,guest_args=args)
+          state_setup=setup_state,guest_args=args,
+          guest_timeout=180 if group=='acme_accounts' else 90)
         if result:return result
     return 0
 

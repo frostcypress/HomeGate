@@ -70,6 +70,10 @@
       "handler": "action_access_delete_rule",
       "write": true
     },
+    "access_save_rule": {
+      "handler": "action_access_save_rule",
+      "write": true
+    },
     "access_update": {
       "handler": "action_access_update",
       "write": true

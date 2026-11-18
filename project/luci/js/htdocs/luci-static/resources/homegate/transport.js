@@ -67,6 +67,7 @@ function finish(result) {
 }
 function install(root) {
  window.homegateMaintenanceAction=action;
+ window.homegateAccessAction=action;
  window.homegatePreviewImport=async function(values) {
   const result=await action('config_import',values);
   if(!result.ok || result.redirect)throw new Error(_('Unable to preview configuration.'));

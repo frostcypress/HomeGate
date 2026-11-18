@@ -159,16 +159,17 @@ now=$(lua "$process" now 2>/dev/null) || exit 1
 deadline=$((now + budget))
 stop_family() {
     # Signal only this still-running session leader's own process group.
-    if [ "$action" = health-status ]; then trap '' TERM INT; fi
+    case "$action" in health-status|ddns-plan) trap '' TERM INT;; esac
     kill -TERM -- "-$$" 2>/dev/null || :
     sleep 1
-    if [ "$action" = health-status ] &&
+    if { [ "$action" = health-status ] || [ "$action" = ddns-plan ]; } &&
         [ "$(lua "$process" group "$$" "$$" 2>/dev/null)" = 0 ] &&
         [ "$(lua "$process" group "$$" "$$" 2>/dev/null)" = 0 ]; then
         # Let the caller discard an untouched observation after a proven stop.
         exit 125
     fi
     kill -KILL -- "-$$" 2>/dev/null
+    [ "$action" != ddns-plan ] || exit 124
     exit 1
 }
 { [ "$action" != cloudflare-check ] && [ "$action" != ddns-plan ] && [ "$action" != network-resolve ] && [ "$action" != health-status ] && [ "$action" != recovery-status ]; } || exec 5<&0
@@ -230,4 +231,7 @@ sleep_poll || stop_family
 members=$(lua "$process" group "$$" "$$" 2>/dev/null) || stop_family
 [ "$members" = 0 ] || stop_family
 if [ "$action" = health-status ] && [ "$result" -ne 0 ]; then exit 125; fi
+# Distinguish an invalid or interrupted sampler from an unverified family.
+# Codes 0 and 1 still carry the normal successful/failed plan reports.
+if [ "$action" = ddns-plan ] && [ "$result" -gt 1 ]; then exit 125; fi
 exit "$result"

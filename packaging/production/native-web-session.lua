@@ -15,7 +15,7 @@ end
 local core='/usr/libexec/homegate/project/core/prototype/'
 local watchdog=core..'homegate-service-observer-watchdog.sh'
 local arity={['read-owner']=2,owner=2,['observe-config-service']=2,
- ['observe-config-health']=4,['observe-network']=5,['observe-dns']=7,['dns-records']=7,
+ ['observe-config-health']=4,['observe-recovery']=6,['observe-network']=5,['observe-dns']=7,['dns-records']=7,
  ['ddns-plan']=5,['ddns-work']=2,['ddns-schedule']=2,
  ['acme-work']=2,['acme-cleanup']=2,['acme-schedule']=3,
  ['certificate-validate']=3,['certificate-preview']=2,
@@ -65,6 +65,11 @@ else
   if not number_arg(revision,9,1) or tonumber(revision)>999999999 or not number_arg(job,9,2) then refuse() end
   if action=='observe-config-health' then
    args={'--health-status',value,revision,job}
+  elseif action=='observe-recovery' then
+   local token,proof=arg[5],arg[6]
+   if #token==0 or #token>160 or token:find('[^a-z0-9:]') or #proof>110 or proof:find('[^a-z0-9:-]') then refuse() end
+   args={'--recovery-status',value,revision,job,token}
+   if proof~='' then args[#args+1]=proof end
   elseif action=='observe-network' then
    local bridge=arg[5]
    if #bridge==0 or #bridge>32 or bridge=='.' or bridge=='..' or bridge:find('[^a-zA-Z0-9_.:%-]') then refuse() end

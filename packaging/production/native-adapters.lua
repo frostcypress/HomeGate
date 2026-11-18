@@ -33,12 +33,13 @@ elseif mode=='access-row'then
  if read('/var/run/homegate/access-update/token',33)~=token..'\n' then fail()end
  local d=json.parse(input(16384));if type(d)~='table' or type(d.running)~='boolean' or type(d.state)~='string' or type(d.cache_valid)~='boolean'then fail()end
  if d.running or d.state=='starting' or d.state=='downloading'then os.exit(3)end
- local success=d.cache_valid and (d.state=='published' or d.state=='cached')
+ local success=d.cache_valid and (d.state=='published' or d.state=='cached' or d.state=='limited')
  local fallback=d.cache_valid and (d.state=='failed' or d.state=='stopped')
  local report={api_version=1,ok=success or fallback,phase='access',region='CN',label='China / Mainland',
-  ipv4=d.cache_valid and d.ipv4 or nil,ipv6=d.cache_valid and d.ipv6 or nil,native_state=d.state,
+  ipv4=d.cache_valid and d.ipv4 or nil,ipv6=d.cache_valid and d.ipv6 or nil,
+  cache_updated=d.cache_valid and d.cache_updated or nil,cache_updated_local=d.cache_updated_local,native_state=d.state,error_kind=d.error_kind,
   cache_retained=fallback or nil,effect=success and d.state=='published' and 'confirmed' or 'none',write_ready=false}
- if d.state=='cached'then report.source='cache'
+ if d.state=='cached' or d.state=='limited'then report.source='cache'
  elseif fallback then report.source='stale-cache';report.warning='Region download failed; last validated dual-stack cache retained'
  elseif success then report.native_source_unknown=true
  else report.error='Region download failed; validated cache unavailable'end

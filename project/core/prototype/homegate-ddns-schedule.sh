@@ -356,7 +356,19 @@ while :; do
     private_file "$work/batch" && [ "$(stat -c %s "$work/batch")" -le 65536 ] || fail
     selection=;for item in $names; do selection=${selection:+$selection,}$item;done
     effect=$(lua "$dir/homegate-ddns-schedule.lua" batch "$revision" "$rc" "$selection" ${closed:+"$closed"} < "$work/batch" 9>&- 2>/dev/null) || { last_effect=unknown;finish false failed 7; }
-    case "$effect" in unknown) last_effect=unknown;finish false reconciliation_required 4;; confirmed) last_effect=confirmed;finish false blocked 4;; closed) last_effect=confirmed;; none) ;; *) last_effect=unknown;finish false failed 7;; esac
+    case "$effect" in
+        retry_sample)
+            [ "$mode" = serve ] || finish false failed 7
+            business_unlock
+            emit true waiting '' || fail
+            sleep 5 || { [ "$interrupted" = true ] || finish false failed 7; }
+            continue;;
+        unknown) last_effect=unknown;finish false reconciliation_required 4;;
+        confirmed) last_effect=confirmed;finish false blocked 4;;
+        closed) last_effect=confirmed;;
+        none) ;;
+        *) last_effect=unknown;finish false failed 7;;
+    esac
     case "$rc" in 0|1|4) ;; *) finish false failed 7;; esac
     business_unlock
 done

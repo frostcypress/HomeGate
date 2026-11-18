@@ -11,7 +11,7 @@ local function load()local d=json.parse(read(root..'/plan.json',131072));if type
 local function quote(s)return '"'..s:gsub('\\','\\\\'):gsub('"','\\"')..'"'end
 local mode=arg[1]
 if mode=='plan' then
- local selection,policy=arg[2],arg[3];if arg[4] or (policy~='open' and policy~='allow') or type(selection)~='string' or #selection>1039 then fail()end
+ local selection,policy=arg[2],arg[3];if (arg[4] and arg[4]~='native') or (policy~='open' and policy~='allow') or type(selection)~='string' or #selection>1039 then fail()end
  local snapshot=assert(loadfile(dir..'/private-snapshot.lua'))().read(io.stdin,codec);if not snapshot then fail()end
  local indexed={};for _,s in ipairs(snapshot.configuration)do indexed[s.name]=s end
  local main=indexed.main.values
@@ -19,6 +19,7 @@ if mode=='plan' then
  local hp,sp=tonumber(main.proxy_http_port),tonumber(main.proxy_https_port)
  if not hp or hp<1024 or not sp or sp<1024 or hp==sp then fail()end
  local out={routes={},certificates={},policy=policy,http_port=hp,https_port=sp,public_https_port=tonumber(main.https_port),public_http_port=tonumber(main.http_port),auto_firewall=main.auto_firewall=='1',allow=main.access_allow,deny=main.access_deny,region=policy=='allow' and main.access_region or ''}
+ if arg[4]=='native' then out.optional_certificates={} end
  local seen,certs={},{}
  local function covers(pattern,name)return pattern==name or (pattern:sub(1,2)=='*.' and name:match('^[^.]+%.(.+)$')==pattern:sub(3))end
  for name in (selection..','):gmatch('(.-),')do
@@ -39,7 +40,10 @@ if mode=='plan' then
    end
    if not indexed[cert] or indexed[cert].kind~='certificate'then fail()end
    local covered=false;for _,d in ipairs(indexed[cert].values.domains)do if covers(d,v.domain)then covered=true end end;if not covered then fail()end
-   if not certs[cert]then certs[cert]=true;out.certificates[#out.certificates+1]=cert end
+   if not certs[cert]then
+    certs[cert]=true;out.certificates[#out.certificates+1]=cert
+    if out.optional_certificates and indexed[cert].values.source=='acme'then out.optional_certificates[cert]=true end
+   end
   end
   out.routes[#out.routes+1]={id=name,domain=v.domain,https=v.https=='1',certificate=cert,scheme=scheme,authority=authority,host=host,base=base,query=query}
  end
@@ -47,31 +51,59 @@ if mode=='plan' then
 end
 if mode=='selection-certificates'then local d=json.parse(io.stdin:read(131073));if type(d)~='table' or type(d.certificates)~='table'then fail()end;for _,c in ipairs(d.certificates)do if not id(c)then fail()end;io.write(c,'\n')end;return end
 if mode=='certificates'then for _,c in ipairs(load().certificates)do if not id(c)then fail()end;io.write(c,'\n')end;return end
-if mode=='certificate-ok'then local d=json.parse(io.stdin:read(16385));if type(d)~='table' or d.ok~=true or d.certificate~=arg[2] or d.valid~=true or d.pending~=false or d.identity_valid~=true then fail()end;return end
+if mode=='certificate-ok'then
+ local d=json.parse(io.stdin:read(16385));if type(d)~='table' or d.ok~=true or d.certificate~=arg[2] then fail()end
+ if arg[3]=='native' and d.source=='acme' and (d.exists==false or
+    (d.pending==false and (d.error_kind=='configuration_changed' or d.error_kind=='validity'))) then os.exit(3)end
+ if d.valid~=true or d.pending~=false or d.identity_valid~=true then fail()end;return
+end
+local function optional(p,id)return p.optional_certificates and p.optional_certificates[id]==true end
 local function material(which)
  if which~='accepted' and which~='candidate'then fail()end
  local d=json.parse(read(root..'/'..which..'.json',32768));local p=load()
- if type(d)~='table' or type(d.generation)~='number' or d.generation<1 or d.generation>2147483647 or d.generation%1~=0 or type(d.certificates)~='table' or #d.certificates~=#p.certificates then fail()end
- for i,c in ipairs(d.certificates)do
-  if type(c)~='table' or c.id~=p.certificates[i] or not id(c.id) or not c.pair:match('^pair%-[0-9a-f]+$') or #c.pair~=37 or not c.fingerprint:match('^[0-9a-f]+$') or #c.fingerprint~=64 or type(c.expires_epoch)~='number' or type(c.not_before_epoch)~='number'then fail()end
- end;return d
+ if type(d)~='table' or type(d.generation)~='number' or d.generation<1 or d.generation>2147483647 or d.generation%1~=0 or type(d.certificates)~='table' or type(d.waiting)~='table' then fail()end
+ local i=1
+ local waiting={}
+ for _,name in ipairs(p.certificates)do
+  local c=d.certificates[i]
+  if type(c)=='table' and c.id==name then
+   if not id(c.id) or type(c.pair)~='string' or not c.pair:match('^pair%-[0-9a-f]+$') or #c.pair~=37 or type(c.fingerprint)~='string' or not c.fingerprint:match('^[0-9a-f]+$') or #c.fingerprint~=64 or type(c.expires_epoch)~='number' or type(c.not_before_epoch)~='number'then fail()end
+   i=i+1
+  elseif optional(p,name) and d.waiting[name] then waiting[name]=true
+  else fail()end
+ end
+ if i~=#d.certificates+1 then fail()end
+ for name,v in pairs(d.waiting)do
+  if not waiting[name] or type(v)~='string' or (v~='absent\n' and (#v~=38 or not v:match('^pair%-[0-9a-f]+\n$'))) then fail()end
+ end
+ return d
+end
+if mode=='certificate-may-wait'then
+ local p=load();if not optional(p,arg[2]) then fail()end
+ if arg[3]~='1' then for _,c in ipairs(material('accepted').certificates)do if c.id==arg[2] then fail()end end end
+ return
 end
 if mode=='capture'then
  local generation=tonumber(arg[2]);if not generation or generation<1 or generation>2147483647 or generation%1~=0 then fail()end
- local out={generation=generation,certificates={}}
- for _,c in ipairs(load().certificates)do
+ local out={generation=generation,certificates={},waiting={}}
+ local p=load()
+ for _,c in ipairs(p.certificates)do
   local base=root..'/next/'..c..'/'
+  local f=io.open(base..'pointer','rb')
+  if f then f:close()
   local pair=read(base..'pointer',38):match('^(pair%-[0-9a-f]+)\n$');if not pair or #pair~=37 then fail()end
   local d=json.parse(read(base..'result.json',65536));local fingerprint=read(base..'fingerprint',65):match('^([0-9a-f]+)\n$')
   if type(d)~='table' or d.certificate~=c or d.identity_valid~=true or d.key_matches~=true or type(d.expires_epoch)~='number' or type(d.not_before_epoch)~='number' or os.time()<d.not_before_epoch or os.time()>=d.expires_epoch or not fingerprint or #fingerprint~=64 then fail()end
   out.certificates[#out.certificates+1]={id=c,pair=pair,fingerprint=fingerprint,expires_epoch=d.expires_epoch,not_before_epoch=d.not_before_epoch}
+  elseif optional(p,c) then out.waiting[c]=read(base..'waiting',38)
+  else fail()end
  end
  write(root..'/candidate.json',codec.json(out)..'\n');return
 end
 if mode=='probes'then
  local d=material(arg[2]);local certs={};for _,c in ipairs(d.certificates)do certs[c.id]=c end
  local p=load();local exact={};for _,r in ipairs(p.routes)do if r.domain:sub(1,2)~='*.'then exact[r.domain]=true end end
- for _,r in ipairs(p.routes)do if r.https then
+ for _,r in ipairs(p.routes)do if r.https and certs[r.certificate] then
   local host=r.domain
   if host:sub(1,2)=='*.'then
    host=nil;for i=1,17 do local candidate=string.char(96+i)..'.'..r.domain:sub(3);if not exact[candidate]then host=candidate;break end end
@@ -81,11 +113,17 @@ if mode=='probes'then
  end end;return
 end
 if mode=='port'then io.write(load().https_port,'\n');return end
+if mode=='access-port'then io.write(load().http_port,'\n');return end
 if mode=='generation'then io.write(material('accepted').generation,'\n');return end
 if mode=='material-check'then material('accepted');return end
-if mode=='render'then
- local m=material('candidate');local pairs={};for _,c in ipairs(m.certificates)do pairs[c.id]='/etc/homegate/certs/'..c.id..'/'..c.pair end
+if mode=='render' or mode=='render-access'then
+ local m=material(mode=='render-access' and 'accepted' or 'candidate');local pairs={};for _,c in ipairs(m.certificates)do pairs[c.id]='/etc/homegate/certs/'..c.id..'/'..c.pair end
  local d=load();local token=read(root..'/token',33):match('^([0-9a-f]+)\n$');if not token or #token~=32 then fail()end
+ local marker=token
+ if arg[2]=='native' then
+  local rules=assert(loadfile('/usr/libexec/homegate/native-access.lua'))().read(d.allow or '',d.deny or '')
+  if rules then d.allow,d.deny,marker=rules.allow,rules.deny,rules.stamp end
+ end
  local lines={};local function add(s)lines[#lines+1]=s end
  add('worker_processes 1;\nerror_log /dev/null crit;\npid '..root..'/nginx.pid;\nevents { worker_connections 128; }\nhttp {')
  -- Exact DNS names can reach 253 bytes before NGINX hash entry overhead.
@@ -97,7 +135,7 @@ if mode=='render'then
  add('geo $hg_dollar { default "$"; }')
  add('map $request_uri $hg_raw_path { ~^(?<hg_path>[^?]*) $hg_path; }\nmap $args $hg_join { "" ""; default "&"; }')
  for _,kind in ipairs({'allow','deny'})do
-  add('geo $hg_'..kind..' { default 0;');for cidr in d[kind]:gmatch('[^,; ]+')do add(cidr..' 1;')end;add('}')
+  add('geo $hg_'..kind..' { default 0;');for cidr in d[kind]:gmatch('[^,;%s]+')do add(cidr..' 1;')end;add('}')
  end
  add('geo $hg_cn { default 0; include '..root..'/cn.conf; }')
  if d.policy=='open'then
@@ -113,7 +151,11 @@ if mode=='render'then
   add('listen 0.0.0.0:'..port..(tls and ' ssl' or '')..(default and ' default_server' or '')..';')
   add('listen [::]:'..port..(tls and ' ssl' or '')..(default and ' default_server ipv6only=on' or '')..';')
  end
- add('server {');listeners(d.http_port,false,true);add('server_name ""; return 404; }')
+ add('server {');listeners(d.http_port,false,true);add('server_name "";')
+ if arg[2]=='native' then
+  add('location = /.homegate-'..token..' { if ($remote_addr != 127.0.0.1) { return 404; } return 200 "'..marker..'"; }')
+ end
+ add('location / { return 404; } }')
  if #d.certificates>0 then add('server {');listeners(d.https_port,true,true);add('server_name ""; ssl_reject_handshake on; return 404; }')end
  local function servername(domain)
   if domain:sub(1,2)=='*.'then return quote('~^[^.]+\\.'..domain:sub(3):gsub('%.','\\.')..'$')end
@@ -122,6 +164,11 @@ if mode=='render'then
  local function acl()logging();add('if ($hg_reason = manual-deny) { return 403; }');add('if ($hg_reason = denied) { return 403; }')end
  local function complex(s)return s:gsub('%$', '${hg_dollar}')end
  for _,r in ipairs(d.routes)do
+  if r.https and not pairs[r.certificate] then
+   -- Keep an exact pending name from falling through to a working wildcard.
+   add('server {');listeners(d.http_port,false,false);add('server_name '..servername(r.domain)..';');acl();add('return 503; }')
+   add('server {');listeners(d.https_port,true,false);add('server_name '..servername(r.domain)..'; ssl_reject_handshake on; return 503; }')
+  else
   add('upstream hg_up_'..r.id..' { server '..r.authority..'; keepalive 4; }')
   if r.https then
    add('server {');listeners(d.http_port,false,false);add('server_name '..servername(r.domain)..';');acl()
@@ -141,8 +188,11 @@ if mode=='render'then
   local uri=complex(r.base)..'$request_uri'
   if r.query then uri=complex(r.base)..'$hg_raw_path?'..complex(r.query)..'$hg_join$args' end
   add('proxy_pass '..quote(r.scheme..'://hg_up_'..r.id..uri)..'; } }')
+  end
  end
- add('}');write(root..'/candidate.conf',table.concat(lines,'\n')..'\n');return
+ add('}');write(root..'/candidate.conf',table.concat(lines,'\n')..'\n')
+ if mode=='render-access'then io.write(marker,'\n')end
+ return
 end
 if mode=='version'then
  local major,minor,patch=read(root..'/version',8192):match('^nginx version: nginx/(%d+)%.(%d+)%.(%d+) %(homegate%-ip%-san%-v1%)\n$')
@@ -153,18 +203,26 @@ if mode=='validity'then
  for _,d in ipairs(material('accepted').certificates)do if os.time()<d.not_before_epoch or os.time()>=d.expires_epoch then fail()end end;return
 end
 if mode=='changed'then
- local d=material('accepted');for _,c in ipairs(d.certificates)do
+ local d=material('accepted');local seen={};for _,c in ipairs(d.certificates)do
+  seen[c.id]=true
   if read('/etc/homegate/certs/'..c.id..'/current',38)~=c.pair..'\n' then os.exit(3)end
- end;return
+ end
+ for _,id in ipairs(load().certificates)do if not seen[id] then
+  local f=io.open('/etc/homegate/certs/'..id..'/current','rb')
+  local current=f and f:read(39) or 'absent\n';if f then f:close()end
+  if current~=d.waiting[id] then os.exit(3)end
+ end end;return
 end
 if mode=='report'then
  local state=arg[2];if not ({starting=true,running=true,stopped=true,failed=true,restart_required=true})[state]then fail()end
  local reload=arg[3] or 'idle';if not ({idle=true,reloading=true,verified=true,rejected=true})[reload]then fail()end
  local cleanup=arg[4];if cleanup and cleanup~='true' and cleanup~='false'then fail()end
- local report={state=state,reload_state=reload};if cleanup then report.firewall_cleanup_ok=cleanup=='true'end;write(root..'/report.next',codec.json(report)..'\n');if not os.rename(root..'/report.next',root..'/report')then fail()end;return
+ local step=arg[5];if step==''then step=nil end
+ if step and not ({worker=true,nginx_test=true,audit_start=true,nginx_start=true,nginx_identity=true,nginx_worker=true,nginx_reload=true})[step]then fail()end
+ local report={state=state,reload_state=reload,failure_step=step};if cleanup then report.firewall_cleanup_ok=cleanup=='true'end;write(root..'/report.next',codec.json(report)..'\n');if not os.rename(root..'/report.next',root..'/report')then fail()end;return
 end
 if mode=='status'then
  local d=json.parse(read(root..'/report',1024));if type(d)~='table' or type(d.state)~='string'then fail()end
- local p=load();io.write(codec.json({api_version=1,engineering=true,ok=true,phase='proxy',state=d.state,running=arg[2]=='true',routes=#p.routes,policy=p.policy,health_checked=false,automatic_reload=true,reload_state=d.reload_state or 'idle',generation=material('accepted').generation,cn_available=p.region=='CN',audit_available=arg[2]=='true' and read(root..'/audit-health',6)=='true\n',cn_snapshot=true,firewall_status_separate=true,firewall_cleanup_ok=d.firewall_cleanup_ok,effect='none',write_ready=false})..'\n');return
+ local p=load();io.write(codec.json({api_version=1,engineering=true,ok=true,phase='proxy',state=d.state,running=arg[2]=='true',routes=#p.routes,policy=p.policy,health_checked=false,automatic_reload=true,reload_state=d.reload_state or 'idle',failure_step=d.failure_step,generation=material('accepted').generation,cn_available=p.region=='CN',audit_available=arg[2]=='true' and read(root..'/audit-health',6)=='true\n',cn_snapshot=true,firewall_status_separate=true,firewall_cleanup_ok=d.firewall_cleanup_ok,effect='none',write_ready=false})..'\n');return
 end
 fail()

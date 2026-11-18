@@ -14,9 +14,11 @@ if [ "${1:-}" = --collect-work ]; then
     dir=$(CDPATH= cd "$(dirname "$0")" && pwd) || exit 1
     exec ash "$dir/homegate-ddns-work.sh" collect "$2" --confirm
 fi
-deleting=false
-if [ "${1:-}" = --runtime-delete ]; then
+deleting=false;close_delete=false;cleanup_delete=false
+if [ "${1:-}" = --runtime-delete ] || [ "${1:-}" = --runtime-delete-close ] || [ "${1:-}" = --runtime-cleanup-delete ]; then
     [ "$ddns_delete_enabled" = true ] && [ "$#" -eq 3 ] && [ "$3" = --confirm ] || exit 2
+    [ "$1" != --runtime-delete-close ] || close_delete=true
+    if [ "$1" = --runtime-cleanup-delete ]; then cleanup_delete=true;close_delete=true;fi
     deleting=true;set -- --runtime-sync "$2" --confirm
 fi
 runtime=false;batch=false
@@ -81,7 +83,9 @@ fi
 ash "$dir/homegate-config-prototype.sh" --persistent writer-check >/dev/null 2>/dev/null
 state=$?;case "$state" in 0) ;; 4) fail 4;; *) fail;; esac
 for orphan in "$run/".dns-check-* "$run/".ddns-plan-*; do [ ! -e "$orphan" ] && [ ! -L "$orphan" ] || fail 4;done
-if [ "$runtime" = true ]; then ash "$dir/homegate-ddns-authority.sh" check-rule "$rule" >/dev/null 2>/dev/null || { [ "$deleting" != true ] || fail 4;fail; };fi
+authority_check=check-rule;authority_snapshot=snapshot-rule
+if [ "$cleanup_delete" = true ]; then authority_check=cleanup-check-rule;authority_snapshot=cleanup-snapshot-rule;fi
+if [ "$runtime" = true ]; then ash "$dir/homegate-ddns-authority.sh" "$authority_check" "$rule" >/dev/null 2>/dev/null || { [ "$deleting" != true ] || fail 4;fail; };fi
 revision=$(lua "$dir/cloudflare-codec.lua" context < "$store/current" 2>/dev/null) || fail
 ticket=$(lua "$dir/cloudflare-codec.lua" nonce < /proc/sys/kernel/random/uuid 2>/dev/null) || fail
 job=$$;work=$run/.ddns-plan-$job
@@ -93,7 +97,7 @@ if [ "$sync" = true ]; then
     private_file "$work/input" && private_file "$work/provider" || fail
 fi
 snapshot() {
-    if [ "$runtime" = true ]; then ash "$dir/homegate-ddns-authority.sh" snapshot-rule "$rule";else ash "$dir/homegate-config-prototype.sh" --persistent ddns-plan-snapshot-read;fi
+    if [ "$runtime" = true ]; then ash "$dir/homegate-ddns-authority.sh" "$authority_snapshot" "$rule";else ash "$dir/homegate-config-prototype.sh" --persistent ddns-plan-snapshot-read;fi
 }
 result=0
 if [ "$deleting" = true ]; then
@@ -123,6 +127,7 @@ case "$result" in 0|1)
         [ "${#account}" -le 64 ] || fail
         bind=bind;dispatch=--ddns-sync-internal
         if [ "$runtime" = true ]; then bind=bind-runtime;dispatch=--ddns-runtime-sync-internal;fi
+        [ "$cleanup_delete" != true ] || dispatch=--ddns-runtime-delete-internal
         ash "$dir/homegate-ddns-work.sh" "$bind" "$job" "$revision" "$rule" "$provider" "$account" >/dev/null 2>/dev/null || fail
         effect=unknown;result=0
         cat < "$work/input" 5>&- 6>&- 7>&- 8>&- 9>&- |
@@ -143,6 +148,12 @@ case "$result" in 0|1)
     exec 5<"$work/public" || fail
     if [ "$sync" = true ]; then rm -f "$work/input" "$work/provider" "$work/binding" || fail;fi
     rm -f "$work/result" "$work/public" "$work/plan" "$work/intent" && rmdir "$work" || fail
+    if [ "$close_delete:$result" = true:0 ] && { [ -e "$store/dns-operation" ] || [ -L "$store/dns-operation" ]; }; then
+        # The collector requires the outer request to be closed first. Keep
+        # the business locks and collect only this operation's verified receipt.
+        ash "$dir/homegate-cloudflare-read.sh" --runtime-collect-receipt-internal "$provider" "$account" "$job" --confirm 5>&- 8>&- 9>&- >/dev/null 2>/dev/null || fail
+        ash "$dir/homegate-cloudflare-read.sh" --runtime-retire-archive-internal "$provider" "$account" "$job" --confirm 5>&- 8>&- 9>&- >/dev/null 2>/dev/null || fail
+    fi
     cat <&5;exec 5<&-;exit "$result";;
     *) fail;;
 esac

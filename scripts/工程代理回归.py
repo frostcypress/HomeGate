@@ -33,6 +33,7 @@ def setup_state(s):
     (s/'libexec/homegate-nginx/nginx').chmod(0o755)
     curl=s/'curl-fixture';raw=curl.read_text();anchor="if Path('/teststate/acme-enabled').exists():"
     injected=r"""if '--url' in sys.argv and sys.argv[sys.argv.index('--url')+1] in ['https://ftp.apnic.net/stats/apnic/delegated-apnic-latest','https://ftp.ripe.net/pub/stats/apnic/delegated-apnic-latest']:
+ if '--compressed' in sys.argv:sys.exit(2)
  mode=Path('/teststate/access-mode').read_text() if Path('/teststate/access-mode').exists() else 'valid'
  with open('/teststate/access-calls','a') as f:f.write('fetch\n')
  Path('/teststate/access-entered').touch()
@@ -40,13 +41,18 @@ def setup_state(s):
  if mode=='hold':
   import subprocess
   subprocess.Popen(['/usr/sbin/busybox','sleep','45']);time.sleep(45);sys.exit(1)
- if mode=='mirror' and 'ftp.apnic.net' in sys.argv[sys.argv.index('--url')+1]:sys.stdout.write('500');sys.exit(22)
+ if mode in ('mirror','large-mirror') and 'ftp.apnic.net' in sys.argv[sys.argv.index('--url')+1]:sys.stdout.write('500');sys.exit(22)
  address='127.0.0.2' if mode=='alternate' else '127.0.0.1'
  body='2|apnic|20261028|2|19830613|20261028|+1000\napnic|*|ipv4|*|1|summary\napnic|*|ipv6|*|1|summary\napnic|CN|ipv4|'+address+'|1|20261028|allocated\napnic|CN|ipv6|::1|128|20261028|assigned\n'
  if mode=='truncated':body=body.rsplit('apnic|CN|ipv6',1)[0]
  if mode=='single':body=body.replace('|CN|ipv6|','|US|ipv6|')
  if mode=='oversized':body='#'+('x'*25165825)
- os.write(3,body.encode());sys.stdout.write('206' if mode=='partial' else '200');sys.exit(0)
+ if mode=='large-mirror':body=('#'+('x'*1022)+'\n')*4500+body
+ sys.stdout.write('206' if mode=='partial' else '200');sys.stdout.flush()
+ output=Path(sys.argv[sys.argv.index('--output')+1])
+ try:output.write_bytes(body.encode())
+ except OSError:sys.exit(23)
+ sys.exit(0)
 """
     assert anchor in raw;curl.write_text(raw.replace(anchor,injected+anchor,1));curl.chmod(0o755)
 

@@ -30,32 +30,94 @@ local function request(path,writeflag)
  d=validate(d,types,writeflag);if not d then fail()end
  return d,raw
 end
-if ...=='library'then return {read=read,write=write,dir=dir,id=id,request=request,validate=validate,routes=routes,strict=strict,encode=codec.json,root=root,fail=fail}end
+local function web_operation(d)
+ local route,form=d.route,d.form
+ local apply=form.mode=='apply'
+ if route=='basic_apply' then
+  if not apply then return 'save_service' end
+  return form.enabled~=nil and 'enable_service' or 'disable_service'
+ elseif route=='public_apply' then return apply and 'apply_public' or 'save_public'
+ elseif route=='public_account_apply' then return 'save_dns_account'
+ elseif route=='public_action' then
+  local actions={ddns_sync=true,cert_renew=true,service_delete=true,account_delete=true,cert_delete=true}
+  return actions[form.op] and form.op or 'public_action'
+ elseif route=='access_save_rule' then
+  if form.old_rule_token and form.old_rule_token~='' and form.old_rule_token~=form.rule_token then return 'edit_access' end
+  return form.kind=='deny' and 'deny_access' or 'allow_access'
+ elseif route=='wol_action' then return form.op=='wake' and 'wake_host' or 'wol_action'
+ elseif route=='maintenance_apply' then return apply and 'apply_maintenance' or 'save_maintenance'
+ elseif route=='config_import' then return form.mode=='restore' and 'config_import' or nil
+ end
+ return ({access_update=route,access_delete_rule=route,access_delete_entry=route,access_delete_all=route,
+  wol_apply=route,update_url_save=route,config_reset=route,certificate_apply=route})[route]
+end
+if ...=='library'then return {read=read,write=write,dir=dir,id=id,request=request,validate=validate,routes=routes,strict=strict,encode=codec.json,root=root,fail=fail,web_operation=web_operation}end
 local mode=arg[1]
 if mode=='validate-request'then request(arg[2],true);return
-elseif mode=='start-options' or mode=='runtime-result'then
+elseif mode=='log-args'then
+ local token=arg[2];if not id(token) or not dir(root) or not dir(root..'/'..token)then fail()end
+ local path=root..'/'..token
+ local operation=web_operation(request(path..'/request',true));if not operation then return end
+ local d=strict(read(path..'/result',2097152))
+ if type(d)~='table' or type(d.ok)~='boolean' then fail()end
+ local outcome
+ if not d.ok then outcome=d.runtime_restored and 'restored' or d.uncertain and 'unknown' or d.configuration_saved and 'saved_failed' or 'failed'
+ elseif operation=='disable_service' then outcome='disabled'
+ elseif d.certificate_state then outcome='certificate_'..d.certificate_state
+ elseif d.runtime_applied then
+  local access=operation:match('access$') or operation:match('^access_delete')
+  outcome=operation=='access_update' and 'region_running' or access and 'proxy_applied' or 'running'
+ elseif d.runtime_stopped_for_save then outcome='saved_stopped'
+ elseif operation=='access_update' then outcome=({published='region_published',cached='region_cached',limited='region_limited'})[d.access_region_state]
+ end
+ if type(outcome)~='string' or not outcome:match('^[a-z_]+$') then outcome='ok' end
+ local reason=d.runtime_failure_reason or d.failure_stage
+ if type(reason)~='string' or #reason>64 or not reason:match('^[a-z_%-]+$') then reason='none' end
+ io.write(operation,':',outcome,':',reason,'\n');return
+elseif mode=='start-options' or mode=='start-restore' or mode=='runtime-result'then
  local token=arg[2];if not id(token) or not dir(root) or not dir(root..'/'..token)then fail()end
  local path=root..'/'..token..'/result.next';local d=strict(read(path,2097152));if not d or type(d.ok)~='boolean' or d.api_version~=1 then fail()end
  if mode=='start-options'then
-  if d.ok and d.runtime_start then local r=d.runtime_start.revision;if type(r)~='number' or r<1 or r>999999999 or r%1~=0 then fail()end;io.write(r,'\n')end;return
+  if d.runtime_start and (d.ok or d.runtime_start.restore==true) then local r=d.runtime_start.revision;if type(r)~='number' or r<1 or r>999999999 or r%1~=0 then fail()end;io.write(r,'\n')end;return
+ end
+ if mode=='start-restore'then
+  io.write(d.runtime_start and d.runtime_start.restore==true and 'true\n' or 'false\n');return
  end
  local raw=io.stdin:read(32769);local status=raw and #raw<=32768 and strict(raw)
  local revision=d.runtime_start and d.runtime_start.revision
+ local restoring=d.runtime_start and d.runtime_start.restore==true
  local verified=false
  if arg[3]=='true'then
   verified=status and status.ok==true and status.configuration_revision==revision and status.service and status.service.configured==true and status.service.enabled==true and status.service.running==true and status.service.healthy==true or false
  end
- d.runtime_start=nil;d.runtime_applied=verified
- if not verified then
+ d.runtime_start=nil;d.runtime_applied=verified and not restoring
+ if verified and (status.certificate_state=='pending' or status.certificate_state=='unknown' or status.certificate_state=='retry') then
+  d.certificate_state=status.certificate_state
+  local messages={pending='已保存并应用；证书正在后台签发。',unknown='已保存并应用；证书签发结果待核对。',retry='已保存并应用；证书签发失败，将稍后重试。'}
+  local encoded=messages[d.certificate_state]:gsub('([^a-zA-Z0-9_.~-])',function(c)return string.format('%%%02X',c:byte())end)
+  if d.redirect then d.redirect=d.redirect:gsub('([?&]notice=)[^&]*',function(prefix)return prefix..encoded end) end
+ end
+ if restoring then
+  d.runtime_restored=verified
+  if verified then d.error=d.error..'原有服务已恢复运行。'
+  else d.uncertain=true;d.error=d.error..'原有服务尚未确认恢复，请检查运行状态。' end
+ elseif not verified then
   local stages={['runtime-admission']=true,['runtime-start']=true,['boot-enable']=true}
   if not stages[arg[4]] then fail()end
   d.ok=false;d.uncertain=true;d.redirect=nil;d.failure_stage=arg[4]
   d.init_start_exit=tonumber(arg[5]);d.receipt_exit=tonumber(arg[6])
   d.error=arg[4]=='boot-enable' and '服务已运行，但开机自启尚未确认。请核对任务状态后再操作。'
    or '配置已保存，但服务尚未验证运行。请核对任务状态后再操作。'
-  if d.receipt_exit==1 and status and status.api_version==1 and status.native==true and status.ok==false and status.configuration_revision==revision and status.reason=='firewall_apply_failed' and status.cleanup_confirmed==true then
-   d.uncertain=false
-   d.error='配置已保存。IPv6 防火墙配置失败，HomeGate 未启动。'
+  if d.access_region_updated and arg[4]~='boot-enable' then
+   d.error='地区数据已更新，但服务尚未验证运行。请核对任务状态。'
+  end
+  if d.receipt_exit==1 and status and status.api_version==1 and status.native==true and status.ok==false and status.configuration_revision==revision and status.cleanup_confirmed==true then
+   d.runtime_failure_reason=status.reason
+   local message=({firewall_apply_failed='IPv6 防火墙配置失败，HomeGate 未启动。',proxy_start_failed='HTTPS 代理未能启动，请查看代理状态。'})[status.reason]
+   if message then
+    d.uncertain=false
+    d.error=(d.access_region_updated and '地区数据已更新。' or '配置已保存。')..message
+   end
   end
  end
  assert(fs.unlink(path));write(path,codec.json(d)..'\n');return

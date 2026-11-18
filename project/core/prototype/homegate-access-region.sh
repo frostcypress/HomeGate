@@ -9,8 +9,8 @@ fail() { printf '{"api_version":1,"engineering":true,"ok":false,"phase":"access-
 action=${1:-};case "$action" in
  update|refresh) [ "$access_region_enabled" = true ] && [ "$#" = 2 ] && [ "$2" = --confirm ] || fail 2;;
  worker) [ "$access_region_enabled" = true ] && [ "$#" = 2 ] || fail 2;token=$2;;
- status|quiescent) [ "$#" = 1 ] || fail 2;;
- stop|reap) [ "$#" = 2 ] && [ "$2" = --confirm ] || fail 2;;*) fail 2;;esac
+ status|progress|quiescent) [ "$#" = 1 ] || fail 2;;
+ stop|reap|clear-cache) [ "$#" = 2 ] && [ "$2" = --confirm ] || fail 2;;*) fail 2;;esac
 [ "$(id -u)" = 0 ] || fail 2
 exec 2>/dev/null
 HG_DIR=$(CDPATH= cd "$(dirname "$0")" && pwd) || fail
@@ -47,6 +47,11 @@ if [ "$action" = status ];then
  if hg_exists "$D";then check && live || fail;else running=false;fi
  lua "$HG_DIR/homegate-access.lua" status "$running";exit $?
 fi
+if [ "$action" = progress ];then
+ check && live || fail
+ if ! quiet;then printf 'pending\n';exit 0;fi
+ lua "$HG_DIR/homegate-access.lua" status false terminal;exit $?
+fi
 if [ "$action" = stop ] || [ "$action" = reap ] || [ "$action" = quiescent ];then
  if ! hg_exists "$D";then lua "$HG_DIR/homegate-access.lua" status false;exit $?;fi
  check && live || fail
@@ -61,15 +66,25 @@ fi
 if [ "$action" != worker ];then
  for f in "$LOCK" "$CONTROL";do if ! hg_exists "$f";then (set -C; : > "$f") || fail;fi;hg_file "$f" 0 && [ "$(stat -c %s "$f")" = 0 ] || fail;done
  control || fail 4
+ if [ "$action" = clear-cache ];then
+  if hg_exists "$BASE/.CN.next";then hg_file "$BASE/.CN.next" 25165824 || fail;fi
+  if hg_exists "$D";then reap || fail 4;else live && quiet || fail 4;fi
+  if hg_exists "$BASE";then rm -f "$BASE/CN.cidr" "$BASE/.CN.next" && fsync "$BASE" || fail;fi
+  fsync "$HG_RUN" || fail
+  exit 0
+ fi
  if hg_exists "$D";then reap || fail 4;fi
  exec 4>&- 9>>"$LOCK";hg_bound 9 "$LOCK" && flock -n 9 || fail 4
  if ! hg_exists "$BASE";then mkdir "$BASE" && fsync "$BASE" /etc/homegate || fail;fi
  hg_dir "$BASE" && mkdir "$D" || fail
  token=$(lua "$HG_DIR/cloudflare-codec.lua" nonce < /proc/sys/kernel/random/uuid) || fail
  printf '%s\n' "$token" > "$D/token" && cat /proc/sys/kernel/random/boot_id > "$D/boot" && printf '%s\n' "$action" > "$D/mode" && seal > "$D/seal" && lua "$HG_DIR/homegate-access.lua" report starting || fail
- if [ "$action" = update ] && lua "$HG_DIR/homegate-access.lua" cache-fresh;then lua "$HG_DIR/homegate-access.lua" report cached || fail;exec 9>&-;lua "$HG_DIR/homegate-access.lua" status false;exit $?;fi
+ reuse=
+ if [ "$action" = update ] && lua "$HG_DIR/homegate-access.lua" cache-fresh;then reuse=cached
+ elif lua "$HG_DIR/homegate-access.lua" cache-quota;then reuse=limited;fi
+ if [ -n "$reuse" ];then lua "$HG_DIR/homegate-access.lua" report "$reuse" || fail;exec 9>&-;lua "$HG_DIR/homegate-access.lua" status false;exit $?;fi
  setsid ash "$HG_DIR/homegate-access-region.sh" worker "$token" 3>&- 4>&- 5>&- 6>&- 7>&- 8>&- </dev/null >/dev/null 2>&1 &
- exec 9>&-;lua "$HG_DIR/homegate-access.lua" status true;exit $?
+ exec 9>&-;lua "$HG_DIR/homegate-access.lua" status true light;exit $?
 fi
 check && hg_bound 9 "$LOCK" && flock -n 9 && [ "$token" = "$(cat "$D/token")" ] || fail
 info=$(lua "$process" info "$$" "$token") || fail
@@ -77,26 +92,49 @@ old_ifs=$IFS;IFS=:;set -- $info;IFS=$old_ifs
 [ "$#" = 6 ] && [ "$3" = "$$" ] && [ "$4" = "$$" ] && [ "$6" = 1 ] || fail
 printf '%s:%s\n' "$$" "$5" > "$D/owner" || fail
 interrupted=false;trap 'interrupted=true' TERM INT
-finish() { lua "$HG_DIR/homegate-access.lua" report "$1" || :;kill -TERM -- "-$$" 2>/dev/null || :;sleep .2 || sleep 1 || :;kill -KILL -- "-$$" 2>/dev/null;exit 7; }
+finish() { lua "$HG_DIR/homegate-access.lua" report "$1" "${2:-}" || :;kill -TERM -- "-$$" 2>/dev/null || :;sleep .2 || sleep 1 || :;kill -KILL -- "-$$" 2>/dev/null;exit 7; }
 lua "$HG_DIR/homegate-access.lua" report downloading || fail
 (
  exec 9>&-
+ # POSIX ash counts 512-byte blocks. Bound even a chunked response to 24 MiB.
+ ulimit -f 49152 || exit 13
+ downloaded=false
  for source in https://ftp.apnic.net/stats/apnic/delegated-apnic-latest https://ftp.ripe.net/pub/stats/apnic/delegated-apnic-latest;do
   for n in download candidate http transport;do if hg_exists "$D/$n";then hg_file "$D/$n" 25165825 || exit 1;fi;done
-  ( /usr/bin/curl --disable --proto '=https' --proto-redir '=https' --location --fail --silent --show-error --connect-timeout 5 --max-time 20 --url "$source" --output /proc/self/fd/3 --write-out '%{http_code}' 3>&1 > "$D/http";printf '%s\n' "$?" > "$D/transport" ) | head -c 25165825 > "$D/download"
+  # Some target curl builds have no content decoder and reject --compressed
+  # before making a request. The official feeds are available uncompressed.
+  : > "$D/download" || exit 13
+  transport=0
+  /usr/bin/curl --disable --proto '=https' --proto-redir '=https' --location --fail --silent --show-error --connect-timeout 8 --max-time 70 --url "$source" --output "$D/download" --write-out '%{http_code}' > "$D/http" || transport=$?
+  printf '%s\n' "$transport" > "$D/transport" || exit 13
   hg_file "$D/transport" 4 && [ "$(cat "$D/transport")" = 0 ] && hg_file "$D/http" 3 && [ "$(cat "$D/http")" = 200 ] && hg_file "$D/download" 25165824 || continue
-  lua "$HG_DIR/homegate-access.lua" parse && hg_file "$D/candidate" 25165824 || continue
-  if hg_exists "$BASE/.CN.next";then hg_file "$BASE/.CN.next" 25165824 && rm "$BASE/.CN.next" || exit 1;fi
-  cp "$D/candidate" "$BASE/.CN.next" && fsync "$BASE/.CN.next" "$BASE" && mv -f "$BASE/.CN.next" "$BASE/CN.cidr" && fsync "$BASE/CN.cidr" "$BASE" || exit 1
+  downloaded=true
+  parsed=0
+  lua "$HG_DIR/homegate-access.lua" parse || parsed=$?
+  case "$parsed" in 0) ;;3) exit 14;;4) exit 15;;*) continue;;esac
+  hg_file "$D/candidate" 25165824 || continue
+  if hg_exists "$BASE/.CN.next";then hg_file "$BASE/.CN.next" 25165824 && rm "$BASE/.CN.next" || exit 13;fi
+  cp "$D/candidate" "$BASE/.CN.next" && fsync "$BASE/.CN.next" "$BASE" && mv -f "$BASE/.CN.next" "$BASE/CN.cidr" && fsync "$BASE/CN.cidr" "$BASE" || exit 13
   exit 0
  done
- exit 1
+ [ "$downloaded" = true ] && exit 12
+ exit 11
 ) 3>&- 4>&- 5>&- 6>&- 7>&- 8>&- </dev/null >/dev/null 2>&1 &
-child=$!;now=$(lua "$process" now) || finish failed;deadline=$((now+60))
+child=$!;now=$(lua "$process" now) || finish failed;deadline=$((now+150))
 while kill -0 "$child" 2>/dev/null;do
  [ "$interrupted" = false ] && ! hg_exists "$D/stop" || finish stopped
- now=$(lua "$process" now) || finish failed;[ "$now" -lt "$deadline" ] || finish failed;sleep .1 || sleep 1 || finish failed
+ now=$(lua "$process" now) || finish failed;[ "$now" -lt "$deadline" ] || finish failed timeout;sleep .1 || sleep 1 || finish failed
 done
-result=failed;if wait "$child";then result=published;fi
+code=0;wait "$child" || code=$?
+result=failed;reason=
+case "$code" in
+ 0) result=published;;
+ 11) reason=transport;;
+ 12) reason=invalid_data;;
+ 13) reason=publish;;
+ 14) result=cached;;
+ 15) result=limited;;
+ *) reason=worker_exit;;
+esac
 [ "$(lua "$process" group "$$" 0)" = 0 ] || finish failed
-lua "$HG_DIR/homegate-access.lua" report "$result" || fail
+lua "$HG_DIR/homegate-access.lua" report "$result" "$reason" || fail

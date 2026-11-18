@@ -1,5 +1,5 @@
 #!/bin/sh
-# Explicit isolated nginx owner. Only a live owner signals its own session.
+# Explicit isolated nginx owner. Reloads verify the master's session and identity.
 set -u
 umask 077
 PATH=/usr/sbin:/usr/bin:/sbin:/bin;export PATH LC_ALL=C TZ=UTC0
@@ -7,12 +7,13 @@ unset IPKG_INSTROOT INIT_TRACE LUA_INIT LUA_PATH LUA_CPATH HOMEGATE_CONFIG_PROTO
 unset HTTP_PROXY HTTPS_PROXY ALL_PROXY http_proxy https_proxy all_proxy SSL_CERT_FILE SSL_CERT_DIR
 proxy_runtime_enabled=false
 native_proxy_reads=false
-fail() { printf '{"api_version":1,"engineering":true,"ok":false,"phase":"proxy","effect":"none","write_ready":false,"error":"Proxy unavailable; inspect retained session"}\n';exit "${1:-7}"; }
+fail() { printf '{"api_version":1,"engineering":true,"ok":false,"phase":"proxy","effect":"none","write_ready":false,"step":"%s","error":"Proxy unavailable; inspect retained session"}\n' "${step:-admission}";exit "${1:-7}"; }
 action=${1:-}
 case "$action" in
  start) [ "$proxy_runtime_enabled" = true ] && [ "$#" -eq 4 ] && [ "$4" = --confirm ] || fail 2;selection=$2;policy=$3;;
  serve) [ "$proxy_runtime_enabled" = true ] && [ "$#" -eq 2 ] || fail 2;token=$2;;
  status|quiescent) [ "$#" -eq 1 ] || fail 2;;
+ access-reload) [ "$native_proxy_reads" = true ] && [ "$#" -eq 1 ] || fail 2;;
  stop|reap) [ "$#" -eq 2 ] && [ "$2" = --confirm ] || fail 2;;
  *) fail 2;;esac
 [ "$(id -u)" = 0 ] || fail 2
@@ -26,13 +27,20 @@ pause_startup() { lua "$process" pause 100 9>&- || sleep .1 9>&- || sleep 1 9>&-
 idle() { printf '{"api_version":1,"engineering":true,"ok":true,"phase":"proxy","state":"idle","running":false,"effect":"none","write_ready":false}\n'; }
 seal() { (cd "$P" && sha256sum plan.json binding intent token boot snapshots cn.conf audit-token); }
 control() { hg_file "$CONTROL" 0 && [ "$(stat -c %s "$CONTROL")" -eq 0 ] || return 1;exec 5>>"$CONTROL";hg_bound 5 "$CONTROL" && flock -n 5; }
+reload_lock() { hg_file "$P/reload.lock" 0 || return 1;exec 3>>"$P/reload.lock";hg_bound 3 "$P/reload.lock" && flock -n 3; }
 business() { hg_file "$HG_RUN/frontend.lock" 0 && hg_file "$HG_STORE/.supervisor.lock" 0 || return 1;exec 6>>"$HG_RUN/frontend.lock" 7>>"$HG_STORE/.supervisor.lock";hg_bound 6 "$HG_RUN/frontend.lock" && hg_bound 7 "$HG_STORE/.supervisor.lock" && flock -n 6 && flock -n 7; }
-unlock() { exec 6>&- 7>&-; }
+unlock() { exec 3>&- 6>&- 7>&-; }
 intent() {
  if hg_exists "$HG_STORE/startup-active";then hg_file "$HG_STORE/startup-active" 16384 && sha256sum "$HG_STORE/startup-active";else printf 'absent\n';fi
 }
 certificates() { lua "$HG_DIR/homegate-proxy.lua" certificates; }
-snapshots() { (cd "$P" && for c in $(certificates);do sha256sum "$c/fullchain.pem" "$c/privkey.pem" "$c/result.json" "$c/pointer" || exit 1;done); }
+may_wait() { lua "$HG_DIR/homegate-proxy.lua" certificate-may-wait "$1" "$2"; }
+certificate_ok() {
+ ash "$HG_DIR/homegate-certificate.sh" admission-status-internal "$1" --confirm |
+  lua "$HG_DIR/homegate-proxy.lua" certificate-ok "$1" ${proxy_mode:+"$proxy_mode"}
+}
+proxy_mode=;[ "$native_proxy_reads" != true ] || proxy_mode=native
+snapshots() { (cd "$P" && for c in $(certificates);do if ! hg_exists "$c";then continue;fi;sha256sum "$c/fullchain.pem" "$c/privkey.pem" "$c/result.json" "$c/pointer" || exit 1;done); }
 clear_next() {
  if ! hg_exists "$P/next";then return 0;fi
  hg_dir "$P/next" || return 1
@@ -41,17 +49,29 @@ clear_next() {
   for c in $(certificates);do [ "${f##*/}" != "$c" ] || found=true;done
   [ "$found" = true ] && hg_dir "$f" || return 1
   for cf in "$f/"* "$f/".[!.]* "$f/"..?*;do
-   hg_exists "$cf" || continue;case "${cf##*/}" in pointer|result.json|fingerprint|leaf.der) hg_file "$cf" 65536 || return 1;;*) return 1;;esac
+   hg_exists "$cf" || continue;case "${cf##*/}" in pointer|result.json|fingerprint|leaf.der|waiting) hg_file "$cf" 65536 || return 1;;*) return 1;;esac
   done
  done
- for f in "$P/next/"*;do [ -d "$f" ] || continue;for n in pointer result.json fingerprint leaf.der;do rm -f "$f/$n" || return 1;done;rmdir "$f" || return 1;done
+ for f in "$P/next/"*;do [ -d "$f" ] || continue;for n in pointer result.json fingerprint leaf.der waiting;do rm -f "$f/$n" || return 1;done;rmdir "$f" || return 1;done
  rmdir "$P/next"
 }
-pointers() { for c in $(certificates);do hg_file "/etc/homegate/certs/$c/current" 38 && [ "$(stat -c %s "/etc/homegate/certs/$c/current")" = 38 ] && sha256sum "/etc/homegate/certs/$c/current" || return 1;done; }
+pointers() { for c in $(certificates);do
+ pointer=/etc/homegate/certs/$c/current
+ if ! hg_exists "$pointer" && may_wait "$c" 0;then continue;fi
+ hg_file "$pointer" 38 && [ "$(stat -c %s "$pointer")" = 38 ] && sha256sum "$pointer" || return 1
+done; }
 capture_next() {
  clear_next && mkdir "$P/next" || return 1
  for c in $(certificates);do
-  ash "$HG_DIR/homegate-certificate.sh" admission-status-internal "$c" --confirm | lua "$HG_DIR/homegate-proxy.lua" certificate-ok "$c" || return 1
+  certificate_ok "$c";rc=$?
+  if [ "$rc" = 3 ] && may_wait "$c" "$1";then
+   mkdir "$P/next/$c" || return 1
+   pointer=/etc/homegate/certs/$c/current
+   if hg_exists "$pointer";then hg_file "$pointer" 38 && cp "$pointer" "$P/next/$c/waiting" || return 1
+   else printf 'absent\n' > "$P/next/$c/waiting" || return 1;fi
+   continue
+  fi
+  [ "$rc" = 0 ] || return 1
   base=/etc/homegate/certs/$c;hg_dir /etc/homegate/certs && hg_dir "$base" && hg_file "$base/current" 38 && [ "$(stat -c %s "$base/current")" = 38 ] || return 1
   pair=$(cat "$base/current");case "$pair" in pair-*) ;;*) return 1;;esac
   hg_hex "${pair#pair-}" 32 && hg_dir "$base/$pair" || return 1
@@ -61,7 +81,11 @@ capture_next() {
   /usr/bin/openssl x509 -in "$base/$pair/fullchain.pem" -outform DER -out "$P/next/$c/leaf.der" 2>/dev/null || return 1
   sum=$(sha256sum "$P/next/$c/leaf.der");printf '%s\n' "${sum%% *}" > "$P/next/$c/fingerprint" || return 1
  done
- lua "$HG_DIR/homegate-proxy.lua" capture "$1" && lua "$HG_DIR/homegate-proxy.lua" render && clear_next
+ if [ "$native_proxy_reads" = true ];then
+  lua "$HG_DIR/homegate-proxy.lua" capture "$1" && lua "$HG_DIR/homegate-proxy.lua" render native && clear_next
+ else
+  lua "$HG_DIR/homegate-proxy.lua" capture "$1" && lua "$HG_DIR/homegate-proxy.lua" render && clear_next
+ fi
 }
 check() {
  hg_dir "$HG_RUN" && hg_dir "$P" || return 1
@@ -69,7 +93,13 @@ check() {
  hg_file "$P/cn.conf" 33554432 || return 1
  t=$(cat "$P/token");hg_hex "$t" 32 && [ "$(stat -c %s "$P/token")" -eq 33 ] || return 1
  [ "$(cat "$P/boot")" = "$(cat /proc/sys/kernel/random/boot_id)" ] && [ "$(cat "$P/seal")" = "$(seal)" ] && [ "$(stat -c %s "$P/seal")" -eq "$(seal | wc -c)" ] || return 1
- for c in $(certificates);do hg_dir "$P/$c" || return 1;for n in fullchain.pem privkey.pem result.json pointer;do hg_file "$P/$c/$n" 65536 || return 1;done;done
+ for c in $(certificates);do
+  # New ACME material can enter accepted.json later without changing the
+  # original sealed set of startup snapshots.
+  if ! hg_exists "$P/$c";then may_wait "$c" 1 || return 1;continue;fi
+  hg_dir "$P/$c" || return 1
+  for n in fullchain.pem privkey.pem result.json pointer;do hg_file "$P/$c/$n" 65536 || return 1;done
+ done
  [ "$(cat "$P/snapshots")" = "$(snapshots)" ] && [ "$(stat -c %s "$P/snapshots")" -eq "$(snapshots | wc -c)" ] && lua "$HG_DIR/homegate-proxy.lua" material-check
 }
 live() {
@@ -86,6 +116,67 @@ quiet() {
  [ "$running" = false ] || return 1
  if hg_exists "$P/owner";then owner && [ "$(lua "$process" group "$pid" 0)" = 0 ];else return 0;fi
 }
+if [ "$action" = access-reload ];then
+ step=web-lock
+ hg_file "$HG_RUN/frontend-web.lock" 0 && hg_bound 8 "$HG_RUN/frontend-web.lock" && flock -n 8 || fail 4
+ step=proxy-session
+ check && live && [ "$running" = true ] && owner || fail 4
+ step=proxy-lock
+ # Share a lock with certificate reloads without waiting for DDNS/provider IO.
+ reload_lock && control || fail 4
+ step=source-binding
+ ! hg_exists "$P/stop" && ! hg_exists "$HG_RUN/native-service.stop" &&
+   [ "$(cat "$P/binding")" = "$(hg_binding)" ] && [ "$(cat "$P/intent")" = "$(intent)" ] || fail 4
+ step=proxy-identity
+ token=$(cat "$P/token")
+ owner_info=$(lua "$process" info "$pid" "$token") || fail 4
+ case "$owner_info" in Z:*|X:*|'') fail 4;; *":$pid:$pid:$birth:1") ;; *) fail 4;;esac
+ hg_file "$P/nginx.pid" 24 || fail 4
+ master=$(cat "$P/nginx.pid")
+ master_info=$(lua "$process" info "$master" none) || fail 4
+ case "$master_info" in Z:*|X:*|'') fail 4;; *":$pid:$pid:$pid:"*':0') ;; *) fail 4;;esac
+ step=rule-config
+ port=$(lua "$HG_DIR/homegate-proxy.lua" access-port) || fail
+ marker=$(lua "$HG_DIR/homegate-proxy.lua" render-access native) || fail
+ hg_hex "$marker" 32 || fail
+ signal_master() {
+  actual=$(lua "$process" info "$master" none) || return 1
+  case "$actual" in Z:*|X:*|'') return 1;;esac
+  [ "${actual#*:}" = "${master_info#*:}" ] && kill -HUP "$master"
+ }
+ probe() {
+  # The synchronous resolver on some routers refuses subsecond timeouts,
+  # including for this numeric loopback address.
+  /usr/bin/curl --disable --noproxy '*' --silent --fail --connect-timeout 2 --max-time 3 \
+   "http://127.0.0.1:$port/.homegate-$token"
+ }
+ wait_policy() {
+  target_marker=$1
+  now=$(lua "$process" now) || return 1
+  deadline=$((now+4))
+  while :;do
+   [ "$(probe)" != "$target_marker" ] || return 0
+   now=$(lua "$process" now) || return 1
+   [ "$now" -lt "$deadline" ] || return 1
+   lua "$process" pause 100 || sleep 1 || return 1
+  done
+ }
+ step=active-policy
+ old_marker=$(probe) || fail 4
+ hg_hex "$old_marker" 32 || fail 4
+ if [ "$old_marker" = "$marker" ];then rm -f "$P/candidate.conf";exit 0;fi
+ step=validate-policy
+ hg_file "$P/active.conf" 131072 && /usr/libexec/homegate-nginx/nginx -t -p "$P/" -c "$P/candidate.conf" -g 'daemon off;' >/dev/null || fail
+ if hg_exists "$P/rollback.conf";then fail;fi
+ cp "$P/active.conf" "$P/rollback.conf" && mv -f "$P/candidate.conf" "$P/active.conf" || fail
+ step=reload-policy
+ if signal_master && wait_policy "$marker";then
+  rm "$P/rollback.conf" || fail
+  exit 0
+ fi
+ mv -f "$P/rollback.conf" "$P/active.conf" && signal_master && wait_policy "$old_marker" || fail
+ fail
+fi
 if [ "$action" != serve ];then exec 3>&- 4>&- 5>&- 6>&- 7>&- 8>&- 9>&-;fi
 if [ "$action" = status ] || [ "$action" = stop ] || [ "$action" = quiescent ] || [ "$action" = reap ];then
  if ! hg_exists "$P";then
@@ -113,7 +204,7 @@ if [ "$action" = status ] || [ "$action" = stop ] || [ "$action" = quiescent ] |
  # Validate every removable entry first; preserve unexpected files for recovery.
  for f in "$P/"* "$P/".[!.]* "$P/"..?*;do
   hg_exists "$f" || continue;name=${f##*/}
-  case "$name" in plan.json|binding|intent|token|boot|active.conf|snapshots|seal|report|report.next|owner|nginx.pid|stop|version|audit-token|audit-health|audit-clear|audit-clear.next|accepted.json|candidate.json|candidate.conf|rollback.conf|rejected) hg_file "$f" 131072 || fail;;
+  case "$name" in plan.json|binding|intent|token|boot|active.conf|snapshots|seal|report|report.next|owner|nginx.pid|stop|version|audit-token|audit-health|audit-clear|audit-clear.next|accepted.json|candidate.json|candidate.conf|rollback.conf|rejected|reload.lock) hg_file "$f" 131072 || fail;;
    cn.conf) hg_file "$f" 33554432 || fail;;
    probe) hg_dir "$f" || fail
     for cf in "$f/"* "$f/".[!.]* "$f/"..?*;do hg_exists "$cf" || continue;case "${cf##*/}" in peer.pem|peer.der|error) hg_file "$cf" 131072 || fail;;*) fail;;esac;done;;
@@ -142,8 +233,12 @@ if [ "$action" = status ] || [ "$action" = stop ] || [ "$action" = quiescent ] |
   rm -f "$AUDIT/socket" && rmdir "$AUDIT" || fail
  fi
  for n in peer.pem peer.der error;do rm -f "$P/probe/$n" || fail;done;rmdir "$P/probe" || fail
- for c in $(certificates);do for n in fullchain.pem privkey.pem result.json pointer;do rm "$P/$c/$n" || fail;done;rmdir "$P/$c" || fail;done
- for n in plan.json binding intent token boot active.conf snapshots seal report report.next owner nginx.pid stop version cn.conf audit-token audit-health audit-clear audit-clear.next accepted.json candidate.json candidate.conf rollback.conf rejected;do rm -f "$P/$n" || fail;done
+ for c in $(certificates);do
+  if ! hg_exists "$P/$c";then may_wait "$c" 1 || fail;continue;fi
+  for n in fullchain.pem privkey.pem result.json pointer;do rm "$P/$c/$n" || fail;done
+  rmdir "$P/$c" || fail
+ done
+ for n in plan.json binding intent token boot active.conf snapshots seal report report.next owner nginx.pid stop version cn.conf audit-token audit-health audit-clear audit-clear.next accepted.json candidate.json candidate.conf rollback.conf rejected reload.lock;do rm -f "$P/$n" || fail;done
  rmdir "$P" && fsync "$HG_RUN" || fail;idle;exit 0
 fi
 if [ "$action" = start ];then
@@ -159,15 +254,17 @@ if [ "$action" = start ];then
  [ -f /usr/libexec/homegate-nginx/nginx ] && [ ! -L /usr/libexec/homegate-nginx/nginx ] && [ -x /usr/libexec/homegate-nginx/nginx ] && [ "$(stat -c %u /usr/libexec/homegate-nginx/nginx)" = 0 ] || fail 7
  for f in "$LOCK" "$CONTROL";do if ! hg_exists "$f";then (set -C; : > "$f") && fsync "$f" "$HG_RUN" || fail;fi;hg_file "$f" 0 && [ "$(stat -c %s "$f")" = 0 ] || fail;done
  exec 9>>"$LOCK";hg_bound 9 "$LOCK" && flock -n 9 && control || fail 4
- plan=$(ash "$HG_DIR/homegate-config-prototype.sh" --persistent "$snapshot_command" 3>&1 4>&- 5>&- 8>&- 9>&- >/dev/null | lua "$HG_DIR/homegate-proxy.lua" plan "$selection" "$policy" 3>&- 4>&- 5>&- 6>&- 7>&- 8>&- 9>&-) || fail
+ plan=$(ash "$HG_DIR/homegate-config-prototype.sh" --persistent "$snapshot_command" 3>&1 4>&- 5>&- 8>&- 9>&- >/dev/null | lua "$HG_DIR/homegate-proxy.lua" plan "$selection" "$policy" ${proxy_mode:+"$proxy_mode"} 3>&- 4>&- 5>&- 6>&- 7>&- 8>&- 9>&-) || fail
  selected_certificates=$(printf '%s\n' "$plan" | lua "$HG_DIR/homegate-proxy.lua" selection-certificates) || fail
- for c in $selected_certificates;do ash "$HG_DIR/homegate-certificate.sh" admission-status-internal "$c" --confirm | lua "$HG_DIR/homegate-proxy.lua" certificate-ok "$c" || fail;done
  ! hg_exists "$AUDIT" || fail 4
- ! hg_exists "$P" && mkdir "$P" && printf '%s\n' "$plan" > "$P/plan.json" || fail 4
+ ! hg_exists "$P" && mkdir "$P" && : > "$P/reload.lock" && printf '%s\n' "$plan" > "$P/plan.json" || fail 4
  token=$(lua "$HG_DIR/cloudflare-codec.lua" nonce < /proc/sys/kernel/random/uuid) || fail
  printf '%s\n' "$token" > "$P/token" && hg_binding > "$P/binding" && intent > "$P/intent" && cat /proc/sys/kernel/random/boot_id > "$P/boot" || fail
  # The admission above and the manifest-checked copies below share FD6/7.
  for c in $selected_certificates;do
+  certificate_ok "$c";rc=$?
+  if [ "$rc" = 3 ] && may_wait "$c" 1;then continue;fi
+  [ "$rc" = 0 ] || fail
   base=/etc/homegate/certs/$c;hg_dir /etc/homegate/certs && hg_dir "$base" && hg_file "$base/current" 38 && [ "$(stat -c %s "$base/current")" = 38 ] || fail
   pair=$(cat "$base/current");case "$pair" in pair-*) ;;*) fail;;esac;hg_hex "${pair#pair-}" 32 && hg_dir "$base/$pair" || fail
   for n in fullchain.pem privkey.pem scope.json result.json manifest;do hg_file "$base/$pair/$n" 65536 || fail;done
@@ -193,10 +290,13 @@ old_ifs=$IFS;IFS=:;set -- $info;IFS=$old_ifs
 [ "$#" = 6 ] && [ "$3" = "$$" ] && [ "$4" = "$$" ] && [ "$6" = 1 ] || fail
 printf '%s:%s\n' "$$" "$5" > "$P/owner" || fail
 interrupted=false;trap 'interrupted=true' TERM INT
+failure_step=worker
 finish() {
  unlock
  cleanup_ok=true;ash "$HG_DIR/homegate-firewall.sh" cleanup-if-owned --confirm >/dev/null || cleanup_ok=false
- lua "$HG_DIR/homegate-proxy.lua" report "$1" idle "$cleanup_ok" || :
+ step=
+ [ "$1" != failed ] || step=$failure_step
+ lua "$HG_DIR/homegate-proxy.lua" report "$1" idle "$cleanup_ok" "$step" || :
  # This process is still the validated session/group leader. Never signal a
  # recorded PID or any global nginx service. The hard tail covers all workers.
  kill -TERM -- "-$$" 2>/dev/null || :
@@ -206,6 +306,7 @@ finish() {
 }
 # Both version identification and nginx's complete syntax/DNS/cert check share
 # one ten-second process-family deadline. No unbounded admission subprocess.
+failure_step=nginx_test
 ( /usr/libexec/homegate-nginx/nginx -v > "$P/version" 2>&1 && lua "$HG_DIR/homegate-proxy.lua" version && exec /usr/libexec/homegate-nginx/nginx -t -p "$P/" -c "$P/active.conf" -g 'daemon off;' ) 3>&- 4>&- 5>&- 6>&- 7>&- 8>&- 9>&- >/dev/null 2>&1 &
 child=$!;now=$(lua "$process" now) || finish failed;deadline=$((now+10))
 while kill -0 "$child" 2>/dev/null;do
@@ -215,6 +316,7 @@ done
 wait "$child" || finish failed
 [ "$interrupted" = false ] && ! hg_exists "$P/stop" || finish stopped
 [ "$(cat "$P/binding")" = "$(hg_binding)" ] && ash "$HG_DIR/homegate-startup-active.sh" check >/dev/null || finish failed
+failure_step=audit_start
 lua "$HG_DIR/homegate-access-audit.lua" serve "$token" 3>&- 4>&- 5>&- 6>&- 7>&- 8>&- 9>&- </dev/null >/dev/null 2>&1 &
 audit_child=$!;now=$(lua "$process" now) || finish failed;deadline=$((now+3))
 while [ "$(cat "$P/audit-health")" != true ];do
@@ -226,14 +328,23 @@ audit_info=$(lua "$process" info "$audit_child" none) || finish failed
 old_ifs=$IFS;IFS=:;set -- $audit_info;IFS=$old_ifs
 [ "$#" = 6 ] && [ "$2" = "$$" ] && [ "$3" = "$$" ] && [ "$4" = "$$" ] || finish failed
 audit_birth=$5
+failure_step=nginx_start
 /usr/libexec/homegate-nginx/nginx -p "$P/" -c "$P/active.conf" -g 'daemon off;' 3>&- 4>&- 5>&- 6>&- 7>&- 8>&- 9>&- </dev/null >/dev/null 2>&1 &
-child=$!;pause_startup || finish failed
-kill -0 "$child" 2>/dev/null || finish failed
-lua "$HG_DIR/homegate-proxy.lua" report running || finish failed
+child=$!;now=$(lua "$process" now) || finish failed;deadline=$((now+5))
+while :;do
+ [ "$interrupted" = false ] && ! hg_exists "$P/stop" || finish stopped
+ kill -0 "$child" 2>/dev/null || finish failed
+ if hg_file "$P/nginx.pid" 24 && [ "$(cat "$P/nginx.pid")" = "$child" ];then break;fi
+ now=$(lua "$process" now) || finish failed
+ [ "$now" -lt "$deadline" ] && pause_startup || finish failed
+done
+failure_step=nginx_identity
 child_info=$(lua "$process" info "$child" none) || finish failed
 old_ifs=$IFS;IFS=:;set -- $child_info;IFS=$old_ifs
 [ "$#" = 6 ] && [ "$2" = "$$" ] && [ "$3" = "$$" ] && [ "$4" = "$$" ] || finish failed
+case "$1" in Z|X) finish failed;;esac
 child_birth=$5
+lua "$HG_DIR/homegate-proxy.lua" report running || finish failed
 child_live() {
  actual=$(lua "$process" info "$child" none) || return 1
  case "$actual" in Z:*|X:*|'') return 1;;esac
@@ -251,6 +362,7 @@ reject() {
 retry_at=0;firewall_tick=0
 while :;do
  [ "$interrupted" = false ] && ! hg_exists "$P/stop" || finish stopped
+ failure_step=nginx_worker
  child_live || finish failed
  audit_actual=$(lua "$process" info "$audit_child" none) || audit_actual=
  if [ "${audit_actual#*:}" != "$$:$$:$$:$audit_birth:0" ] || [ "${audit_actual%%:*}" = Z ] || [ "${audit_actual%%:*}" = X ];then
@@ -264,9 +376,10 @@ while :;do
  fi
  firewall_tick=$((firewall_tick-1))
  if ! lua "$HG_DIR/homegate-proxy.lua" changed;then
+  failure_step=nginx_reload
   signature=$(pointers) || finish restart_required
   if hg_exists "$P/rejected";then hg_file "$P/rejected" 32768 || finish failed;[ "$(cat "$P/rejected")" != "$signature" ] || { now=$(lua "$process" now) || finish failed;if [ "$now" -lt "$retry_at" ];then sleep 1 || :;continue;fi; };fi
-  if ! business;then unlock;sleep 1 || :;continue;fi
+  if ! business || ! reload_lock;then unlock;sleep 1 || :;continue;fi
   [ "$(cat "$P/binding")" = "$(hg_binding)" ] && [ "$(cat "$P/intent")" = "$(intent)" ] && ash "$HG_DIR/homegate-startup-active.sh" check >/dev/null || finish restart_required
   signature=$(pointers) || finish restart_required
   generation=$(lua "$HG_DIR/homegate-proxy.lua" generation) || finish failed
@@ -280,11 +393,11 @@ while :;do
   # A HUP is only a request. Verify new SNI leaf fingerprints through actual
   # TLS; nginx may need one event-loop turn before the new workers accept.
   attempt=0
-  while [ "$attempt" -lt 3 ];do
+  while [ "$attempt" -lt 8 ];do
    [ "$interrupted" = false ] && ! hg_exists "$P/stop" || finish stopped
    child_live || finish failed
    if validate candidate-probe;then verified=true;break;fi
-   attempt=$((attempt+1));sleep .2 || :
+   attempt=$((attempt+1));pause_startup || :
   done
   if [ "$verified" = true ];then
    mv "$P/candidate.json" "$P/accepted.json" && rm -f "$P/rollback.conf" "$P/rejected" || finish failed
@@ -294,11 +407,11 @@ while :;do
    [ "$interrupted" = false ] && ! hg_exists "$P/stop" || finish stopped
    child_live && mv "$P/rollback.conf" "$P/active.conf" && kill -HUP "$child" || finish failed
    restored=false;attempt=0
-   while [ "$attempt" -lt 3 ];do
+   while [ "$attempt" -lt 8 ];do
     [ "$interrupted" = false ] && ! hg_exists "$P/stop" || finish stopped
     child_live || finish failed
     if validate accepted-probe;then restored=true;break;fi
-    attempt=$((attempt+1));sleep .2 || :
+    attempt=$((attempt+1));pause_startup || :
    done
    [ "$restored" = true ] || finish failed
    reject

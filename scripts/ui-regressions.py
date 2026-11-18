@@ -10,6 +10,7 @@ from lupa.lua51 import LuaRuntime
 app=SRC/'project/luci/lua/luasrc/view/homegate'
 common=(app/'common.htm').read_text(encoding='utf-8')
 public=(app/'public.htm').read_text(encoding='utf-8')
+maintenance=(app/'maintenance.htm').read_text(encoding='utf-8')
 css=re.search(r'<style type="text/css">(.*?)</style>',common,re.S)[1]
 script=re.search(r'<script type="text/javascript">(.*?)</script>',common,re.S)[1]
 def extract(text,name):
@@ -82,12 +83,14 @@ with sync_playwright() as pw:
       form.elements.a.value='x';form.elements.b.value='y\\nb=z';const second=hgFormSnapshot('test');
       if(first===second)throw new Error('multiline form changes collide');return true;
     }''')
+    log_functions='\n'.join(extract(maintenance,n) for n in ('hgMaintenanceLogLocalTime','hgMaintenanceRefreshLog'))
+    page.add_script_tag(content=re.sub(r'<%.*?%>','TEMPLATE',log_functions,flags=re.S))
     results['latest_log_response']=page.evaluate('''() => {
-      document.body.innerHTML='<div id="log"></div>';let pending=[];
+      document.body.innerHTML='<div id="hg-maintenance-log"></div>';let pending=[];
       window.XHR={get:(u,p,cb)=>pending.push(cb)};
-      hgLoadText('/logs','log');hgLoadText('/logs','log');
-      pending[1]({responseText:'new'});pending[0]({responseText:'old'});
-      if(document.getElementById('log').textContent!=='new')throw new Error('old log response overwrote new response');return true;
+      hgMaintenanceRefreshLog();hgMaintenanceRefreshLog();
+      pending[1]({status:200,responseText:'new'});pending[0]({status:200,responseText:'old'});
+      if(document.getElementById('hg-maintenance-log').textContent!=='new')throw new Error('old log response overwrote new response');return true;
     }''')
     page.wait_for_timeout(100)
     page.evaluate('window.syncCount=0;window.hgSyncOpenModals=()=>{syncCount++;};for(let i=0;i<200;i++)window.dispatchEvent(new Event("resize"));')
@@ -118,16 +121,17 @@ with sync_playwright() as pw:
       if(commits!==1)throw new Error('cancelled dialog committed');
       return {reads:callbacks.length,commits};
     }''')
-    access_fn=re.sub(r'<%.*?%>','TEMPLATE',extract(public,'hgPublicAccessOpen'),flags=re.S)
+    access_fn='\n'.join(extract(public,n) for n in ('hgPublicAccessOpen','hgPublicAccessRefresh'))
+    access_fn=re.sub(r'<%.*?%>','TEMPLATE',access_fn,flags=re.S)
     page.set_content('''<html><body><div id="hg-public-access-modal" class="hg-modal-backdrop"><input id="hg-public-access-allow-editor"><input id="hg-public-access-deny-editor"><input id="hg-public-access-allow-source"><input id="hg-public-access-deny-source"><table><tbody id="hg-public-access-body"></tbody></table></div><script>'''+script+'</script><script>'+access_fn+'''
-      var hgPublicRecentRows=[],requests=[],renderCount=0;
-      function hgPublicAccessHideAddRule(){}function hgGet(u,cb){requests.push(cb);}
+      var hgPublicRecentRows=[],requests=[],renderCount=0,hgPublicAccessBusy=false,hgPublicAccessDraft;
+      function hgPublicAccessMessage(){}function hgGet(u,cb){requests.push(cb);}
       function hgPublicAccessSummaries(rows){return rows;}function hgPublicAccessRenderRecent(){renderCount++;}
     </script></body></html>''')
     results['latest_access_response']=page.evaluate('''() => {
       hgPublicAccessOpen();hgSetModalOpen('hg-public-access-modal',false);hgPublicAccessOpen();
       requests[1]({ok:true,entries:['new']});requests[0]({ok:true,entries:['old']});
-      if(hgPublicRecentRows[0]!=='new'||renderCount!==1)throw new Error('old access response overwrote new session');return true;
+      if(hgPublicRecentRows[0]!=='new'||renderCount!==3)throw new Error('old access response overwrote new session');return true;
     }''')
     geometry={}
     for theme in ('generic','boot','design'):
@@ -136,7 +140,8 @@ with sync_playwright() as pw:
             for kind,rows in [('short',2),('long',34)]:
                 fields=''.join('<label>字段</label><input class="hg-control" value="test">' for _ in range(rows))
                 doc=f'''<html class="hg-theme-foundation hg-theme-{theme}"><head><meta name="viewport" content="width=device-width,initial-scale=1"><style>body{{margin:0}} button:hover,button:focus{{height:52px!important;position:relative;top:2px}}</style><style>{css}</style></head><body><div class="hg-modal-backdrop hg-open"><div class="hg-modal hg-public-service-modal"><div class="hg-public-service-scroll" id="scroll"><div class="hg-modal-grid">{fields}</div></div><div class="hg-modal-actions hg-public-service-footer" id="footer"><button class="cbi-button hg-btn-4" id="cancel">取消</button><button class="cbi-button hg-btn-4" id="confirm">确定</button></div></div></div></body></html>'''
-                page.set_content(doc)
+                page.set_content(doc.replace('hg-modal-actions hg-public-service-footer',
+                                             'hg-modal-actions hg-modal-actions-compact hg-public-service-footer'))
                 page.evaluate('scroll.scrollTop=scroll.scrollHeight')
                 before=page.evaluate('''() => {let s=document.getElementById('scroll'),f=document.getElementById('footer'),inputs=s.querySelectorAll('input');let r=s.getBoundingClientRect();return {gap:r.left+s.clientLeft+s.clientWidth-inputs[0].getBoundingClientRect().right,overflow:document.documentElement.scrollWidth>innerWidth,scrollTop:s.scrollTop,footerTop:f.getBoundingClientRect().top};}''')
                 assert before['gap']>=11.5,(theme,size,kind,before)
@@ -173,7 +178,8 @@ with sync_playwright() as pw:
     assert page.locator('#hg-public-renew-days').input_value()==''
     assert page.locator('#hg-public-renew-days').get_attribute('placeholder')
     assert '5' in page.locator('#hg-public-renew-days').get_attribute('placeholder')
-    assert page.locator('#hg-public-renew-days').evaluate('(e)=>getComputedStyle(e,"::placeholder").color')=='rgb(156, 169, 183)'
+    placeholder_style='e=>{const style=getComputedStyle(e,"::placeholder");return [style.color,style.opacity];}'
+    assert page.locator('#hg-public-renew-days').evaluate(placeholder_style)==page.locator('#hg-public-target').evaluate(placeholder_style)
     assert page.locator('#hg-public-access-label-time').inner_text()=='访问时间'
     assert page.locator('#hg-public-renew-note').count()==0
     assert page.locator('#hg-public-renew-days').evaluate('(e)=>getComputedStyle(e).appearance')=='textfield'

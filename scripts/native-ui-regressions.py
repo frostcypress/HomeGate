@@ -89,14 +89,27 @@ with sync_playwright() as pw:
         page.set_content('<script>window.homegateXHR={get:(u,f,cb)=>cb({status:200,responseText:"{}"},{})};</script>'+text)
         page.wait_for_timeout(100)
         assert not errors,(name,errors)
-    public_fixture={**data,'services':[{'web_id':'web_a','ddns_id':'rule_a','account_id':'dns_a','cert_id':'cert_a',
-        'enabled':'1','https':'1','domain':'files.example.test','zone':'example.test','host':'files','target':'http://192.168.1.2'}],
-        'dns_accounts':[{'id':'dns_a','label':'Existing'}, {'id':'dns_b','label':'Other'}],
-        'acme_ca_catalog':[{'name':'letsencrypt','display_name':"Let's Encrypt"}]}
     installed=payload(ROOT)
-    installed_views={f:installed['usr/lib/lua/luci/view/homegate_legacy/'+f+'.htm'].decode() for f in ('public','common')}
     context.route('**/homegate/native-operations.js',lambda route:route.fulfill(
         status=200,content_type='application/javascript',body=installed['www/luci-static/resources/homegate/native-operations.js']))
+    wol_views={f:installed['usr/lib/lua/luci/view/homegate_legacy/'+f+'.htm'].decode() for f in ('wol','common')}
+    page.set_content('<script>window.confirmCalls=0;window.confirm=()=>{++confirmCalls;return false;};</script>'+
+                     legacy('wol',fixtures[1],wol_views))
+    page.evaluate("hgShowNotice(document.getElementById('hg-operation-status'),'Wake packet sent','success')")
+    page.get_by_role('button',name='Delete',exact=True).click()
+    assert page.evaluate('confirmCalls')==0
+    assert page.locator('#hg-wol-hosts .hg-wol-row').count()==0
+    assert page.locator('input[name=wol_host_count]').input_value()=='0'
+    assert page.locator('#hg-wol-dirty').is_visible()
+    assert page.locator('#hg-operation-status').is_hidden()
+    page.locator('.hg-wrap > .hg-notice').first.wait_for(state='hidden',timeout=5000)
+    assert page.locator('#hg-wol-dirty').is_visible()
+    public_fixture={**data,'services':[{'web_id':'web_a','ddns_id':'rule_a','account_id':'dns_a','cert_id':'cert_a',
+        'enabled':'1','https':'1','domain':'files.example.test','zone':'example.test','host':'files.example.test',
+        'target':'https://255.255.255.255:999999','cert_environment':'staging'}],
+        'dns_accounts':[{'id':'dns_a','label':'Existing'}, {'id':'dns_b','label':'Other'}],
+        'acme_ca_catalog':[{'name':'letsencrypt','display_name':"Let's Encrypt"}]}
+    installed_views={f:installed['usr/lib/lua/luci/view/homegate_legacy/'+f+'.htm'].decode() for f in ('public','common')}
     public_html=legacy('public',public_fixture,installed_views)
     (OUT/'public-zones.html').write_text(public_html,encoding='utf-8')
     page.set_content('''<script>
@@ -109,7 +122,134 @@ with sync_playwright() as pw:
     }}
     </script>'''+public_html)
     assert not errors,errors
-    assert 'Certificate 42 days' in page.locator('.hg-public-table').inner_text()
+    address=page.locator('.hg-public-url')
+    hint=page.locator('.hg-public-hint')
+    assert address.inner_text()=='https://files.example.test'
+    assert 'Staging Environment' in hint.inner_text() and 'Certificate 42 days' in hint.inner_text()
+    assert hint.bounding_box()['y']>address.bounding_box()['y']
+    sizes=page.evaluate("""['.hg-public-hint','.hg-public-url','.hg-public-target']
+      .map(s=>parseFloat(getComputedStyle(document.querySelector(s)).fontSize))""")
+    assert sizes[0]<sizes[1]<sizes[2],sizes
+    row=address.locator('xpath=ancestor::tr')
+    centers=[]
+    for cell in (row.locator('input[type=checkbox]'),row.locator('.hg-public-target'),row.get_by_role('button',name='Edit')):
+        box=cell.bounding_box()
+        centers.append(box['y']+box['height']/2)
+    assert max(centers)-min(centers)<=2,centers
+    page.evaluate("hgPublicRows[0].cert_environment='production';hgPublicRender()")
+    assert 'Production Environment' in hint.inner_text()
+    page.evaluate("hgPublicRows[0].cert_environment='staging';hgPublicRender()")
+    assert page.locator('.hg-public-target').evaluate('''cell=>{
+      const range=document.createRange();
+      range.selectNodeContents(cell);
+      return range.getClientRects().length===1 && range.getBoundingClientRect().right<=cell.getBoundingClientRect().right;
+    }''')
+    assert hint.evaluate('''node => {
+      const original=node.textContent;
+      node.textContent='正式环境 · DDNS 异常 · 续期失败（证书剩余 3650 天） · 代理异常';
+      const range=document.createRange();
+      range.selectNodeContents(node);
+      const cell=node.closest('td').getBoundingClientRect();
+      const visible=[...range.getClientRects()].every(rect=>rect.right<=cell.right && rect.bottom<=cell.bottom);
+      node.textContent=original;
+      return visible;
+    }'''), 'Long Chinese status is clipped or crosses into the next column'
+    page.evaluate('''() => {
+      window.accessActions=[];
+      const get=XHR.get;
+      XHR.get=(u,f,cb)=>u.endsWith('/access_recent')?cb({status:200},{ok:true,entries:[
+        {ip:'2409:aaaa:bbbb:cccc:dddd:eeee:ffff:1234',host:'files.example.test',
+         allowed:true,reason:'region',time:'2026-11-16T09:04:41Z'}
+      ]}):get(u,f,cb);
+      window.homegateAccessAction=async (route,form)=>{
+        accessActions.push({route,form});
+        if(route==='access_update'){
+          if(window.failRegionUpdate)return {ok:false,error:'Region data download failed'};
+          return {ok:true,access_region_state:window.regionState||'published',access_region_updated:'2026/11/16 15:10'};
+        }
+        return {ok:true,access_rules:{
+          allow:form.kind==='allow'?form.rule_token:'',
+          deny:form.kind==='deny'?form.rule_token:'',
+          origins:form.rule_token?{[form.rule_token]:form.rule_origin||'custom'}:{}
+        }};
+      };
+      window.confirmCalls=0;
+      confirm=()=>{++window.confirmCalls;return true;};
+      hgPublicAccessOpen();
+    }''')
+    modal=page.locator('#hg-public-access-modal')
+    assert 'Access Management' not in modal.inner_text()
+    footer=modal.locator('.hg-access-footer')
+    add=footer.get_by_role('button',name='Add Rule')
+    close=footer.get_by_role('button',name='Close')
+    assert abs(add.bounding_box()['y']-close.bounding_box()['y'])<3
+    assert add.bounding_box()['x']<close.bounding_box()['x']
+    page.locator('#hg-public-access-scope').select_option('CN', force=True)
+    observed=modal.locator('tbody tr').last
+    assert '2409:aaaa:bbbb:cccc:dddd:eeee:ffff:1234' in observed.inner_text()
+    assert 'Allowed' in observed.inner_text()
+    assert observed.locator('.hg-access-ip-edit').count()==0
+    page.evaluate('window.savedRecent=hgPublicRecentRows;hgPublicRecentRows=[];hgPublicAccessRenderRecent()')
+    assert modal.locator('tbody tr').count()==1
+    assert observed.locator('.hg-access-ip-edit').count()==0
+    page.evaluate('hgPublicRecentRows=savedRecent;hgPublicAccessRenderRecent()')
+    assert observed.locator('.hg-access-action button').count()==2
+    observed.get_by_role('button',name='Deny Access').click()
+    assert modal.locator('tbody tr').count()==1
+    assert 'Denied' in observed.inner_text()
+    assert 'files.example.test' in observed.inner_text()
+    assert observed.locator('.hg-access-ip-edit').count()==0
+    assert page.evaluate('accessActions[0].form.rule_origin')=='observed'
+    observed.get_by_role('button',name='Allow Access').click()
+    assert modal.locator('tbody tr').count()==1
+    assert 'Allowed' in observed.inner_text()
+    assert observed.locator('.hg-access-ip-edit').count()==0
+    add.click()
+    draft=modal.locator('tbody tr').first
+    assert draft.locator('input').input_value()==''
+    assert draft.get_by_role('button',name='Deny Access').count()==1
+    assert draft.locator('.hg-access-action button').count()==2
+    assert page.evaluate('accessActions.length')==2
+    draft.locator('input').fill('2001:db8::1')
+    modal.locator('th').first.click()
+    modal.get_by_role('button',name='2001:db8::1',exact=True).wait_for()
+    assert page.locator('#hg-public-access-allow-source').input_value()=='2001:db8::1'
+    assert page.locator('#hg-public-access-scope').input_value()=='CN'
+    assert page.evaluate('hgPublicHasUnsaved')
+    modal.get_by_role('button',name='2001:db8::1',exact=True).click()
+    draft.locator('input').fill('2001:db8::2')
+    draft.get_by_role('button',name='Deny Access').click()
+    modal.get_by_text('2001:db8::2',exact=True).wait_for()
+    assert page.locator('#hg-public-access-deny-source').input_value()=='2001:db8::2'
+    footer.get_by_role('button',name='Clear Rules',exact=True).click()
+    modal.get_by_text('2001:db8::2',exact=True).wait_for(state='hidden')
+    assert page.evaluate('confirmCalls')==0
+    close.click()
+    page.wait_for_timeout(3100)
+    update_region=page.locator('#hg-public-region-data-row').get_by_role('button',name='Update')
+    update_region.click()
+    region_status=page.locator('#hg-public-region-data-status')
+    region_notice=page.locator('#hg-public-region-message')
+    assert region_status.inner_text()=='Updated on 2026/11/16 15:10'
+    assert region_notice.is_visible()
+    access_heading=page.get_by_role('heading',name='Access Restriction')
+    assert region_notice.bounding_box()['y']<access_heading.bounding_box()['y']
+    assert page.evaluate('accessActions.map(action=>action.route)')==[
+        'access_save_rule','access_save_rule','access_save_rule','access_save_rule','access_delete_all','access_update'
+    ]
+    region_notice.wait_for(state='hidden',timeout=5000)
+    for state, message in (('cached','Region data is up to date'),('limited','Two region data updates have been applied today')):
+        page.evaluate('value=>window.regionState=value',state)
+        update_region.click()
+        assert region_status.inner_text()=='Updated on 2026/11/16 15:10'
+        assert message in region_notice.inner_text()
+    assert 'hg-notice-pending' in region_notice.get_attribute('class')
+    page.evaluate('window.failRegionUpdate=true')
+    update_region.click()
+    assert region_status.inner_text()=='Updated on 2026/11/16 15:10'
+    assert region_notice.is_visible() and region_notice.inner_text()=='Region data download failed'
+    page.wait_for_timeout(3100)
+    assert region_notice.is_visible() and 'hg-notice-error' in region_notice.get_attribute('class')
     assert page.evaluate('zones.length')==0,'Background DNS query before opening the modal'
     timing=page.evaluate('''() => {
       const start=performance.now();
@@ -117,6 +257,10 @@ with sync_playwright() as pw:
       return [performance.now()-start,document.getElementById('hg-public-zone').value];
     }''')
     assert timing[0]<3000 and timing[1]=='example.test',timing
+    assert page.locator('#hg-public-host').input_value()=='files'
+    assert page.locator('#hg-public-domain-preview').inner_text()=='files.example.test'
+    assert page.evaluate("hgPublicHostPrefix('example.test','EXAMPLE.TEST.')")=='@'
+    assert page.evaluate("hgPublicHostPrefix('example.test','deep.files.example.test')")=='deep.files'
     page.evaluate("hgPublicClose(); hgPublicOpenAdd()")
     assert page.locator('#hg-public-zone').input_value()=='example.test'
     assert page.evaluate('zones.length')==1,'Same account launched a duplicate fetch'
@@ -131,15 +275,27 @@ with sync_playwright() as pw:
     page.evaluate("zones[1].reply({status:200},{ok:false,error_kind:'busy'})")
     page.wait_for_function('zones.length===3')
     assert not page.locator('#hg-public-zone-retry').is_visible()
-    page.evaluate("zones[2].reply({status:200},{ok:false,error:'DNS status request refused'})")
+    page.evaluate("zones[2].reply({status:503,responseText:''},null)")
+    page.wait_for_function('zones.length===4')
+    assert not page.locator('#hg-public-zone-retry').is_visible()
+    page.evaluate("zones[3].reply({status:200},{ok:false,error_kind:'rate_limit',retryable:true})")
     assert page.locator('#hg-public-zone-retry').is_visible()
     assert page.locator('#hg-public-zone-retry').evaluate("b=>parseInt(getComputedStyle(b).marginTop,10)")>=6
-    assert 'DNS status request refused' not in page.locator('#hg-public-modal').inner_text()
+    assert 'Unable to load primary domains' in page.locator('#hg-public-zone').inner_text()
     page.locator('#hg-public-zone-retry').click()
-    assert page.evaluate('zones.length')==4,'Retry did not send a new request'
-    page.evaluate("zones[3].reply({status:200},{ok:true,zones:{}})")
+    assert page.evaluate('zones.length')==5,'Retry did not send a new request'
+    page.evaluate("zones[4].reply({status:200},{ok:true,zones:{}})")
     assert not page.locator('#hg-public-zone-retry').is_visible()
     assert 'No managed primary domains' in page.locator('#hg-public-zone').inner_text()
+    page.evaluate("hgPublicClose(); hgPublicZoneCache.dns_a.expires=0; hgPublicOpenIndex(0)")
+    assert page.locator('#hg-public-zone').input_value()=='example.test'
+    page.evaluate("zones[5].reply({status:200},{ok:false,error:'DNS status request refused'})")
+    page.wait_for_function('zones.length===7')
+    assert not page.locator('#hg-public-zone-retry').is_visible()
+    assert page.locator('#hg-public-domain-preview').inner_text()=='files.example.test'
+    page.evaluate("zones[6].reply({status:200},{ok:true,zones:['example.test','other.test']})")
+    assert page.locator('#hg-public-zone option').all_text_contents()==['example.test','other.test']
+    assert page.locator('#hg-public-zone').input_value()=='example.test'
     assert not errors,errors
     print('SAVED_PRIMARY_DOMAIN_MS='+str(round(timing[0],2)),flush=True)
     # Actual native transport, RPC responses mocked only at the ubus boundary.
@@ -168,7 +324,7 @@ with sync_playwright() as pw:
     base='/cgi-bin/luci/admin/services/homegate'
     files=payload(ROOT)
     templates={name:files[f'usr/lib/lua/luci/view/homegate_legacy/{name}.htm'].decode()
-               for name in ('overview','maintenance','common')}
+               for name in ('overview','public','maintenance','common')}
     operations=files['www/luci-static/resources/homegate/native-operations.js'].decode()
     context.unroute('http://homegate.test/**')
     for name, mode, failure in [('maintenance','save',None),('overview','save',None),
@@ -184,9 +340,13 @@ with sync_playwright() as pw:
             if path=='/luci-static/resources/homegate/native-operations.js' or path.endswith('/homegate/native-operations.js'):
                 route.fulfill(content_type='application/javascript',body=operations);return
             if path=='/'+name:
-                markup=legacy(name,{**fixtures[0],'main':{'enabled':'1' if stopping else '0','log_max_lines':'1024'}},templates)
-                route.fulfill(content_type='text/html; charset=utf-8',body='<script>window.XHR={get:(u,f,cb)=>cb({status:200,responseText:"{}"},{})};</script>'+markup);return
-            if path in ('/basic_apply','/maintenance_apply'):
+                markup=legacy(name,{**fixtures[0],'runtime_enabled':'1' if stopping else '0','main':{'log_max_lines':'1024'}},templates)
+                route.fulfill(content_type='text/html; charset=utf-8',body='<script>window.XHR={get:async(u,f,cb)=>{const r=await fetch(u);cb({status:r.status},await r.json())}};</script>'+markup);return
+            if path=='/api/overview_status':
+                completed=any(p.startswith('/compat_ack/') for p,_ in calls)
+                running=stopping if not completed else mode=='apply' and not failure and not stopping
+                data={'ok':True,'service':{'running':running,'healthy':True}}
+            elif path in ('/basic_apply','/maintenance_apply'):
                 data={'ok':True,'pending':True,'job':'b'*32}
             elif path.startswith('/compat_job/'):
                 if sum(p.startswith('/compat_job/') for p,_ in calls)==1:
@@ -219,7 +379,8 @@ with sync_playwright() as pw:
         assert button.input_value()==('正在应用…' if mode=='apply' else '正在保存…')
         assert other.input_value()==other_label
         assert button.is_disabled() and other.is_disabled() and reset.is_disabled()
-        status=page.locator('#hg-operation-status')
+        status=page.locator('.hg-operation-status')
+        assert status.count()==1
         assert status.evaluate("node => node.parentElement.classList.contains('hg-wrap') && node.nextElementSibling.classList.contains('hg-notice-pending')")
         assert not dirty.is_visible()
         if mode=='apply':
@@ -232,7 +393,7 @@ with sync_playwright() as pw:
         assert button.is_enabled() and other.is_enabled() and reset.is_enabled()
         assert page.url.endswith('/'+name) and not dirty.is_visible()
         assert status.evaluate("node => node.classList.contains('hg-notice') && getComputedStyle(node).borderLeftWidth === '3px'")
-        assert not page.locator('.cbi-page-actions #hg-operation-status').count()
+        assert not page.locator('.cbi-page-actions .hg-operation-status').count()
         if name=='maintenance':
             page.locator('input[name=log_max_lines]').fill('1026')
             assert dirty.is_visible() and not status.is_visible()
@@ -243,6 +404,53 @@ with sync_playwright() as pw:
         assert len(applied)==1 and 'mode='+mode in applied[0],calls
         assert any(p.startswith('/compat_ack/') for p,_ in calls) == (failure!='apply')
         context.unroute('http://homegate.test/**',operation_response)
+    # Account saving uses the production job bridge while the modal owns its feedback.
+    account_requests=[]
+    account_result={'ok':False,'error':'Account save failed in fixture'}
+    account_redirect=base+'/public?resume_public=add&resume_account=dns_saved'
+    def account_response(route):
+        path=route.request.url.split(base,1)[-1]
+        if path.endswith('/homegate/native-operations.js'):
+            route.fulfill(content_type='application/javascript',body=operations);return
+        if path.startswith('/public') and not path.startswith('/public_account_apply'):
+            fixture=fixtures[1]
+            if '?resume_public=' in path:
+                fixture={**fixture,'resume_public':'add','resume_account':'dns_saved',
+                         'dns_accounts':[{'id':'dns_saved','label':'Saved Account'}]}
+            markup=legacy('public',fixture,templates)
+            route.fulfill(content_type='text/html; charset=utf-8',body='<script>window.XHR={get:async(u,f,cb)=>{const r=await fetch(u);cb({status:r.status},await r.json())}};</script>'+markup);return
+        if path=='/public_account_apply':
+            account_requests.append(route.request.post_data)
+            data={'ok':True,'pending':True,'job':'c'*32}
+        elif path.startswith('/compat_job/'):
+            data={'ok':True,'pending':not account_result,'result':account_result}
+        elif path=='/api/dns_zones':
+            data={'ok':True,'zones':['example.test']}
+        else:
+            data={'ok':True}
+        route.fulfill(json=data)
+    context.route('http://homegate.test/**',account_response)
+    page.goto('http://homegate.test'+base+'/public')
+    page.evaluate('hgPublicOpenAdd()')
+    account_result={}
+    account_save=page.get_by_role('button',name='Save Account',exact=True)
+    page.locator('#hg-public-key-id').fill('fixture-key-id')
+    page.locator('#hg-public-secret').fill('fixture-secret')
+    account_save.click()
+    assert account_save.is_disabled()
+    page.wait_for_timeout(400)
+    assert page.locator('#hg-operation-status').is_hidden()
+    assert page.locator('#hg-public-account-result').is_hidden() and len(account_requests)==1
+    account_result={'ok':False,'error':'Account save failed in fixture'}
+    page.locator('#hg-public-account-result').filter(has_text=account_result['error']).wait_for()
+    assert account_save.is_enabled() and page.locator('#hg-operation-status').is_hidden()
+    assert page.locator('#hg-public-key-id').input_value()=='fixture-key-id'
+    account_result={'ok':True,'redirect':account_redirect}
+    account_save.click()
+    page.get_by_role('dialog',name='Add Public Service').wait_for(state='visible')
+    page.wait_for_function("document.getElementById('hg-public-account').value==='dns_saved'")
+    assert len(account_requests)==2 and all('token=rpc' in body for body in account_requests)
+    context.unroute('http://homegate.test/**',account_response)
     # WAN information must arrive independently of runtime status retries.
     status_calls=[]
     stopped={'ok':True,'service':{'running':False,'healthy':True}}
@@ -269,17 +477,53 @@ with sync_playwright() as pw:
     service=page.locator('#hg_service')
     page.locator('#hg_ipv6').filter(has_text='2001:db8::1').wait_for(timeout=5000)
     service.filter(has_text='Stopped').wait_for(timeout=5000)
+    enabled=page.locator('input[name=enabled]')
+    assert enabled.is_enabled() and not enabled.is_checked()
+    interval=page.locator('input[name=ddns_interval]')
+    original=interval.input_value()
+    interval.fill('900')
     assert status_calls.count('/api/overview_ipv6')==1,status_calls
     assert status_calls.index('/api/overview_ipv6') < [i for i,p in enumerate(status_calls) if p=='/api/overview_status'][1],status_calls
     page.evaluate('window.hgRefreshService()')
     page.locator('#hg_pid').filter(has_text='PID 123').wait_for(timeout=5000)
+    assert enabled.is_checked() and page.locator('#hg-basic-dirty').is_visible()
+    interval.fill(original)
+    assert not page.locator('#hg-basic-dirty').is_visible()
     page.evaluate('window.hgRefreshService()')
     service.filter(has_text='Service status temporarily unavailable').wait_for(timeout=5000)
     assert page.locator('#hg_pid').inner_text()=='-'
+    assert enabled.is_disabled()
     assert status_calls.count('/api/overview_status')==7,status_calls
     assert status_calls.count('/api/overview_ipv6')==1,status_calls
     assert not errors,errors
+    # Bootstrap's form margin must not add space below the URL buttons.
+    theme=(ROOT/'scripts/fixtures/legacy-bootstrap/cascade.css').read_text(encoding='utf-8')
+    def footer_geometry(markup,backdrop,open_dialog):
+        page.set_content(xhr+markup)
+        page.evaluate("document.documentElement.lang='zh-cn'")
+        page.add_style_tag(content=theme)
+        page.evaluate(open_dialog)
+        return page.locator(backdrop+' .hg-modal').evaluate('''modal => {
+            const rect=modal.getBoundingClientRect();
+            return [...modal.querySelectorAll('.hg-modal-actions button')].map(button => {
+                const b=button.getBoundingClientRect();
+                return [b.width,b.height,rect.bottom-b.bottom];
+            });
+        }''')
+    context.unroute('http://homegate.test/**',status_response)
+    context.route('http://homegate.test/**',lambda route: route.fulfill(json={'ok':True}))
+    for width in (1200,390):
+        page.set_viewport_size({'width':width,'height':700})
+        public_footer=footer_geometry(legacy('public',fixtures[1]),'#hg-public-modal','hgPublicOpenAdd()')
+        placeholder_style='e=>{const style=getComputedStyle(e,"::placeholder");return [style.color,style.opacity];}'
+        assert page.locator('#hg-public-renew-days').evaluate(placeholder_style)==page.locator('#hg-public-target').evaluate(placeholder_style)
+        maintenance=legacy('maintenance',fixtures[0])
+        url_footer=footer_geometry(maintenance,'#hg-plugin-update-modal','hgMaintenanceOpenUpdateUrl()')
+        license_footer=footer_geometry(maintenance,'#hg-plugin-license-modal',"hgSetModalOpen('hg-plugin-license-modal',true)")
+        assert public_footer[0][0]>=60 and public_footer[0][1]>=28
+        assert url_footer==public_footer and license_footer==public_footer[:1],(width,public_footer,url_footer,license_footer)
+    assert not errors,errors
     browser.close()
-(OUT/'results.json').write_text(json.dumps({'html_parity':parity,'transport':['submitter-mode','job-poll-ack','duplicate-suppression','dynamic-form'],'production_http':['delayed-maintenance-save','delayed-overview-save','delayed-overview-save-error','delayed-inline-start-success','delayed-inline-uncertain-start','delayed-inline-stop','network-independent-of-status-retry','status-unknown-clears-pid']},indent=2),encoding='utf-8')
-print('Native/Lua HTML parity: PASS (10); native transport: PASS (4); production HTTP: PASS (8)')
+(OUT/'results.json').write_text(json.dumps({'html_parity':parity,'transport':['submitter-mode','job-poll-ack','duplicate-suppression','dynamic-form'],'production_http':['delayed-maintenance-save','delayed-overview-save','delayed-overview-save-error','delayed-inline-start-success','delayed-inline-uncertain-start','delayed-inline-stop','network-independent-of-status-retry','status-unknown-clears-pid','account-save-modal-feedback']},indent=2),encoding='utf-8')
+print('Native/Lua HTML parity: PASS (10); native transport: PASS (4); production HTTP: PASS (9)')
 

@@ -60,7 +60,7 @@ def payload(root):
     key=BASE+'project/core/prototype/homegate-config-prototype.sh'
     files[key]=files[key].replace(b'production_copy_enabled=true',b'production_copy_enabled=false')
     files['usr/bin/homegate']=(root/'packaging/production/native-cli.sh').read_bytes()
-    for name in ['native-cli.lua','native-service.sh','native-service.lua','native-package.sh','native-package.lua','native-adapters.sh','native-adapters.lua','native-certificates.sh','native-certificates.lua','native-public.lua','native-public-listeners.lua','native-luci-cache.lua']:
+    for name in ['native-cli.lua','native-service.sh','native-service.lua','native-package.sh','native-package.lua','native-adapters.sh','native-adapters.lua','native-access.lua','native-certificates.sh','native-certificates.lua','native-public.lua','native-public-listeners.lua','native-luci-cache.lua','native-log.sh','native-dns-cleanup.sh']:
         files[BASE+name]=(root/'packaging/production'/name).read_bytes()
     files['etc/init.d/homegate']=(root/'packaging/production/homegate.init').read_bytes()
     files['etc/hotplug.d/iface/95-homegate']=(root/'packaging/production/95-homegate').read_bytes()
@@ -103,6 +103,11 @@ for tool in ash lua stat sha256sum flock fsync head $session_tool;do''')
     assert files[health_read].count(observer) == 1
     files[health_read] = files[health_read].replace(
         observer, b'lua /usr/libexec/homegate/native-web-session.lua observe-config-health "$ticket" "$revision" "$job"')
+    recovery_read = BASE+'project/core/prototype/homegate-recovery-read.sh'
+    observer = b'setsid ash "$dir/homegate-service-observer-watchdog.sh" --recovery-status "$ticket" "$revision" "$job" "$token" ${ddns_proof:+"$ddns_proof"}'
+    assert files[recovery_read].count(observer) == 1
+    files[recovery_read] = files[recovery_read].replace(
+        observer, b'lua /usr/libexec/homegate/native-web-session.lua observe-recovery "$ticket" "$revision" "$job" "$token" "$ddns_proof"')
     network_read = BASE+'project/core/prototype/homegate-network-read.sh'
     observer = b'setsid ash "$dir/homegate-service-observer-watchdog.sh" --network-resolve "$ticket" "$revision" "$job" "$bridge"'
     assert files[network_read].count(observer) == 1
@@ -217,7 +222,7 @@ def web_runtime(root,files):
     key=BASE+'project/core/prototype/homegate-certificate.sh'
     assert files[key].count(b'native_certificate_maintenance_enabled=false\n')==1
     files[key]=files[key].replace(b'native_certificate_maintenance_enabled=false\n',b'native_certificate_maintenance_enabled=true\n')
-    for name in ['native-web.sh','native-web-session.lua','native-web.lua','native-web-store.lua','native-selftest.lua']:
+    for name in ['native-web.sh','native-web-session.lua','native-web.lua','native-web-store.lua','native-selftest.lua','native-diagnostics.lua']:
         files[BASE+name]=(root/'packaging/production'/name).read_bytes()
     parser=(root/'project/core/prototype/cloudflare-codec.lua').read_text(encoding='utf-8')
     parser=parser[parser.index('local function parse(body)'):parser.index('local function envelope(')]
@@ -225,6 +230,7 @@ def web_runtime(root,files):
     contract=json.loads((root/'docs/核心CLI合同.json').read_text(encoding='utf-8'))
     routes=contract['routes'] if 'routes' in contract else contract['web_routes']
     routes.update({'api/overview_status': {'write':False}, 'api/overview_ipv6': {'write':False}})
+    routes['update_url_save']={'write':True}
     files[BASE+'legacy-routes.json']=(json.dumps(routes,ensure_ascii=False,separators=(',',':'))+'\n').encode()
     files[BASE+'legacy-controller.lua']=(root/'project/luci/lua/luasrc/controller/homegate.lua').read_bytes()
     # Private preview reuses the production PEM/key/date/SAN validator verbatim.
@@ -302,17 +308,16 @@ fi
             if path.stem=='common':
                 raw=raw.replace('  form.submit();', '''  if (window.hgSubmitOperation && window.hgSubmitOperation(form)) form.remove();
   else form.submit();''',1)
-                flash_selector=".hg-notice:not(.hg-notice-error):not(.hg-notice-pending)"
-                assert raw.count(flash_selector)==1
-                raw=raw.replace(flash_selector,flash_selector+':not(#hg-operation-status)')
-                raw=raw.replace('</style>', '''.hg-wrap #hg-operation-status[hidden] { display: none !important; }
-.hg-wrap #hg-operation-status:not([hidden]) + .hg-notice-pending { display: none !important; }
-</style>''',1)
             else:
-                dirty_notice='<div class="hg-notice hg-notice-pending" id="hg-'
-                assert raw.count(dirty_notice)==1
-                raw=raw.replace(dirty_notice,'''<div id="hg-operation-status" class="hg-notice" role="status" aria-live="polite" hidden="hidden"
- data-base="<%=url('admin/services/homegate')%>" data-token="<%=pcdata(token or '')%>"></div>
+                status_attrs=''' data-base="<%=url('admin/services/homegate')%>" data-token="<%=pcdata(token or '')%>"'''
+                if path.stem=='maintenance':
+                    marker='id="hg-maintenance-result"'
+                    assert raw.count(marker)==1
+                    raw=raw.replace(marker,marker+status_attrs)
+                else:
+                    dirty_notice='<div class="hg-notice hg-notice-pending" id="hg-'
+                    assert raw.count(dirty_notice)==1
+                    raw=raw.replace(dirty_notice,'''<div id="hg-operation-status" class="hg-notice hg-operation-status" role="status" aria-live="polite" hidden="hidden"'''+status_attrs+'''></div>
 '''+dirty_notice)
                 raw=raw.replace('<%+footer%>', '''<script src="<%=resource%>/homegate/native-operations.js"></script>
 <%+footer%>''',1)
@@ -322,18 +327,25 @@ fi
                 assert raw.count(tracker)==1
                 raw=raw.replace(tracker,f'window.hgOperationTracker={tracker}')
             if path.stem=='overview':
+                enabled="<%= (main.enabled == '1') and 'checked=\"checked\"' or '' %>"
+                assert raw.count(enabled)==1
+                raw=raw.replace(enabled, '''<%= runtime_enabled == '1' and 'checked="checked"' or '' %> <%= runtime_enabled == 'unknown' and 'disabled="disabled"' or '' %>''')
                 start=raw.index("  var tStopped='<%:Stopped%>'")
                 end=raw.index('\n})();',start)
                 raw=raw[:start]+"""  var tStopped='<%:Stopped%>', tHealthy='<%:Healthy%>', tUnhealthy='<%:Unhealthy%>';
   var tStarting='<%:Starting...%>', tStopping='<%:Stopping...%>', tUnavailable='<%:Service status temporarily unavailable%>';
   var requestNumber=0;
   var retryDelays=[250, 500, 1000];
+  var enabled=document.getElementById('homegate-basic-form').elements['enabled'];
+  var edited=false;
+  enabled.addEventListener('change', function() { edited=true; });
   window.hgServiceTransition = function(action) {
     ++requestNumber;
     hgText('hg_service', action === 'stop' ? tStopping : tStarting);
     if (action !== 'stop') hgText('hg_pid', '-');
   };
-  window.hgRefreshService = function() {
+  window.hgRefreshService = function(settled) {
+    if (settled) edited=false;
     var request=++requestNumber;
     function readStatus(attempt) {
       hgGet('<%=url('admin/services/homegate/api/overview_status')%>', function(s) {
@@ -353,13 +365,16 @@ fi
             service.healthy ? tHealthy : tUnhealthy;
         }
         hgText('hg_service', state);
+        enabled.disabled=!known;
+        if (known && !edited) enabled.checked=service.running;
+        if (window.hgOperationTracker && !edited) window.hgOperationTracker.captureField('enabled');
         var pid=known && service.running && s.runtime && s.runtime.pid;
         hgText('hg_pid', typeof pid === 'number' && pid > 1 ? 'PID ' + pid : '-');
       });
     }
     readStatus(0);
   };
-  window.hgRefreshService();
+  window.setTimeout(function() { if (requestNumber === 0) window.hgRefreshService(); }, 0);
   hgGet('<%=url('admin/services/homegate/api/overview_ipv6')%>', function(n) {
     var address=n && n.ok && n.public_ipv6;
     hgText('hg_ipv6', address || (n && n.ok ? '<%:No public IPv6 address%>' : '<%:IPv6 status temporarily unavailable%>'));

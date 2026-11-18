@@ -113,7 +113,8 @@ case "$action" in
   held && not_started
   stopped=false;trap 'stopped=true' TERM INT
   started=true;trap - EXIT
-  (ulimit -f 4096;exec lua "$base/native-web.lua" write "$work/request" 9>&-) > "$work/result.next" &
+  # Keep Web output small; the trusted region worker sets its own size limit.
+  (ulimit -S -f 4096 || exit 7;exec lua "$base/native-web.lua" write "$work/request" 9>&-) > "$work/result.next" &
   child=$!
   while kill -0 "$child" 2>/dev/null;do
    now=$(lua "$clock" now) || stopped=true
@@ -126,9 +127,18 @@ case "$action" in
   done
   wait "$child";code=$?
   if [ "$code" != 0 ] || [ ! -s "$work/result.next" ];then lua "$codec" error > "$work/result.next" || fail;fi
-  publish_result(){ file "$work/result.next" && fsync "$work/result.next" && mv "$work/result.next" "$work/result" && fsync "$work/result" "$work"; }
+  publish_result(){
+   file "$work/result.next" && fsync "$work/result.next" && mv "$work/result.next" "$work/result" && fsync "$work/result" "$work" || return 1
+   log_args=$(lua "$codec" log-args "$value" 8>&- 9>&-) || log_args=
+   if [ -n "$log_args" ];then
+    log_operation=${log_args%%:*};log_rest=${log_args#*:}
+    ash "$base/native-log.sh" web "$log_operation" "${log_rest%%:*}" "${log_rest#*:}" >/dev/null || :
+   fi
+   return 0
+  }
   desired=$(lua "$codec" start-options "$value") || fail
   if [ -n "$desired" ];then
+   restoring=$(lua "$codec" start-restore "$value") || fail
    (set -C; : > "$work/starting") || fail
    # Publication/intent are sealed. Release only the extra admission fence;
    # existing source/plan/revision guards still bind every service action.
@@ -192,7 +202,7 @@ case "$action" in
      done
     fi
    fi
-   if [ "$running" = true ];then
+   if [ "$running" = true ] && [ "$restoring" = false ];then
     failure_stage=boot-enable
     now=$(lua "$clock" now) || fail
     boot_deadline=$((now+10))

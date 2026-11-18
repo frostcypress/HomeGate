@@ -9,6 +9,12 @@ native_ddns_authority_reads=false
 fail() { printf '{"api_version":1,"prototype":true,"ok":false,"phase":"ddns-authority","effect":"none","error":"DDNS authority is unavailable"}\n';exit "${1:-7}"; }
 [ "$ddns_authority_enabled" = true ] || fail 2
 action=${1:-}
+cleanup=false
+case "$action" in
+ cleanup-check-rule|cleanup-snapshot-rule)
+  [ "$native_ddns_authority_reads" = true ] || fail 2
+  cleanup=true;shift;set -- "${action#cleanup-}" "$@";action=$1;;
+esac
 case "$action" in preview|preview-rules) [ "$#" -eq 2 ] || fail 2;selected=$2;; commit) [ "$#" -eq 2 ] && [ "${#2}" -eq 32 ] || fail 2;case "$2" in *[!0-9a-f]*) fail 2;; esac;confirmation=$2;; revoke|cancel) [ "$#" -eq 2 ] && [ "$2" = --confirm ] || fail 2;; check-rule|snapshot-rule) [ "$#" -eq 2 ] || fail 2;selected=$2;id_action=$action;action=check;[ "$id_action" != snapshot-rule ] || action=snapshot;; check|snapshot) [ "$#" -eq 1 ] || fail 2;; *) fail 2;; esac
 PATH=/usr/sbin:/usr/bin:/sbin:/bin;export PATH
 unset IPKG_INSTROOT INIT_TRACE LUA_INIT LUA_PATH LUA_CPATH
@@ -44,7 +50,7 @@ if [ "$validation" = runtime-startup-snapshot-read ];then
  )
  [ "$validated" = 0 ] || fail 4
 else ash "$dir/homegate-config-prototype.sh" --persistent writer-check 3>/dev/null >/dev/null 2>/dev/null || fail 4;fi
-if [ -e "$store/startup-active" ] || [ -L "$store/startup-active" ];then
+if [ "$cleanup" = false ] && exists "$store/startup-active";then
  check=check
  [ "$native_ddns_authority_reads" = false ] || check=check-current
  case "$action" in revoke|cancel) ;; *) ash "$dir/homegate-startup-active.sh" "$check" >/dev/null 2>/dev/null || fail 4;; esac
@@ -140,7 +146,12 @@ if [ "$action" = revoke ]; then
     publish_active && discard_inert "$pending" && discard_inert "$preview_next" && fsync "$store" 2>/dev/null || fail
     printf '{"api_version":1,"prototype":true,"ok":true,"phase":"ddns-authority","authorized":false,"revoked":true,"service_started":false}\n';exit 0
 fi
-if [ "$action" = commit ]; then
+if [ "$cleanup" = true ]; then
+    # Removal already authorizes the exact configured DDNS resource. This
+    # path does not publish a runtime grant or enable a disabled service.
+    revision=$current_revision;rule=$selected;format=HGDDNSAUTH1
+    scope || fail
+elif [ "$action" = commit ]; then
     read_record "$pending" && [ "$state:$nonce" = "enabled:$confirmation" ] && same_current || fail 5
     now=$(lua "$dir/worker-process.lua" now 2>/dev/null) || fail
     [ "$(cat /proc/sys/kernel/random/boot_id)" = "$boot" ] && [ "$now" -ge "$created" ] && [ "$now" -le "$((created+300))" ] || fail 5

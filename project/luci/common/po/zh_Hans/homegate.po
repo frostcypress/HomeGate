@@ -394,9 +394,6 @@ msgstr "暂无已保存主机。"
 msgid "Wake"
 msgstr "唤醒"
 
-msgid "Delete this saved host?"
-msgstr "确认删除此常用主机？"
-
 msgid "hosts"
 msgstr "个主机"
 
@@ -423,6 +420,42 @@ msgstr "主机已删除"
 
 msgid "Log cleared"
 msgstr "日志已清空"
+
+msgid "Logs refreshed"
+msgstr "日志已刷新"
+
+msgid "Unable to load runtime logs"
+msgstr "无法读取运行日志"
+
+msgid "Download started"
+msgstr "已开始下载"
+
+msgid "About the plugin"
+msgstr "关于插件"
+
+msgid "Plugin update URL"
+msgstr "插件更新地址"
+
+msgid "Update URL"
+msgstr "更新地址"
+
+msgid "Plugin license"
+msgstr "插件许可"
+
+msgid "Update URL saved"
+msgstr "更新地址已保存"
+
+msgid "Unable to save the plugin update URL"
+msgstr "无法保存插件更新地址"
+
+msgid "The HomeGate project is licensed under the MIT License. The LuCI interface and shared configuration controller retain the Apache License 2.0. Third-party components are subject to their respective licenses. When using, copying, modifying or distributing the source code, follow the applicable license and retain the required copyright and license notices. The software is provided as is."
+msgstr "HomeGate 项目采用 MIT 许可。LuCI 界面和共享配置控制器沿用 Apache 2.0 许可，第三方组件适用各自的许可证。使用、复制、修改或分发源码时，请遵循相应许可，并按要求保留版权和许可声明。软件按现状提供。"
+
+msgid "Failed to save DNS account"
+msgstr "保存 DNS 账户失败"
+
+msgid "When using this plugin or versions based on its source code, follow applicable laws and obtain authorization before accessing devices, networks or data. Using it for unlawful intrusion, data theft or network attacks can cause data breaches and service disruptions. Those responsible may face legal consequences."
+msgstr "使用本插件或基于其源码开发的版本时，请遵守适用法律，并在访问设备、网络或数据前取得授权。将其用于非法入侵、窃取数据或网络攻击，可能造成数据泄露、服务中断，相关行为人可能依法承担相应责任。"
 
 msgid "Invalid numeric value"
 msgstr "数字参数无效"
@@ -682,9 +715,6 @@ msgstr "日志诊断"
 msgid "Diagnostic Actions"
 msgstr "诊断操作"
 
-msgid "Clear the HomeGate runtime log?"
-msgstr "确认清空 HomeGate 运行日志？"
-
 msgid "Download Diagnostic"
 msgstr "下载诊断"
 
@@ -715,8 +745,8 @@ msgstr "恢复默认"
 msgid "Restore Default Configuration"
 msgstr "恢复默认配置"
 
-msgid "Restore HomeGate default configuration? Current settings and service rules will be removed."
-msgstr "确认恢复 HomeGate 默认配置？当前设置和服务规则将被清除。"
+msgid "Restore HomeGate default configuration? Cloud AAAA records for configured DDNS hostnames, service settings, access rules, access history and region data will be removed."
+msgstr "确认恢复 HomeGate 默认配置？将删除已配置 DDNS 主机名下的云端 AAAA 记录，并清除本地服务设置、访问规则、访问记录和地区数据。"
 
 msgid "This resets HomeGate settings and rules but keeps existing certificate files, ACME account data and logs."
 msgstr "此操作会重置 HomeGate 设置和规则，但保留现有证书文件、ACME 账户数据和日志。"
@@ -1132,6 +1162,30 @@ msgstr "清空最近访问中的拒绝记录？"
 msgid "Access region data updated"
 msgstr "地区数据已更新"
 
+msgid "Region data is up to date"
+msgstr "已使用最新地区数据"
+
+msgid "Two region data updates have been applied today"
+msgstr "今天已更新两次，继续使用现有地区数据"
+
+msgid "Working…"
+msgstr "正在处理…"
+
+msgid "Enter a valid IP address or network."
+msgstr "请输入有效的 IP 地址或网段。"
+
+msgid "Access records cleared."
+msgstr "访问记录已清除。"
+
+msgid "Test certificate"
+msgstr "测试证书"
+
+msgid "Denied (Access Policy)"
+msgstr "拒绝（访问规则）"
+
+msgid "Updated on"
+msgstr "更新于"
+
 msgid "Denied recent access cleared"
 msgstr "已清空拒绝的最近访问记录"
 
@@ -1378,8 +1432,8 @@ msgstr "选择文件"
 msgid "No file selected"
 msgstr "未选择文件"
 
-msgid "Delete All"
-msgstr "删除全部"
+msgid "Clear Rules"
+msgstr "清空规则"
 
 msgid "Delete all access entries and manual rules? The access scope will remain unchanged."
 msgstr "删除全部访问记录和手动规则？访问范围保持不变。"

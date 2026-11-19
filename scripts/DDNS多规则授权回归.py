@@ -38,7 +38,10 @@ class Static(BaseStatic):
         body=(PROTO/'homegate-ddns-authority.sh').read_bytes();self.assertEqual(body.count(b'ddns_multi_authority_enabled=false'),1)
         self.assertFalse(parser.parse(body).root_node.has_error);self.assertNotIn(b'\r',body)
         self.assertIn(b'HGDDNSAUTH1',body);self.assertIn(b'HGDDNSAUTH2',body)
-        self.assertIn('snapshot-rule "$rule"',(PROTO/'homegate-ddns-read.sh').read_text())
+        reader=(PROTO/'homegate-ddns-read.sh').read_text()
+        self.assertIn('authority_check=check-rule;authority_snapshot=snapshot-rule',reader)
+        self.assertIn('if [ "$cleanup_delete" = true ]; then authority_check=cleanup-check-rule;authority_snapshot=cleanup-snapshot-rule;fi',reader)
+        self.assertIn('ash "$dir/homegate-ddns-authority.sh" "$authority_snapshot" "$rule"',reader)
         for name in ['ddns-authority.lua','homegate-ddns-authority.lua']:self.lua.compile((PROTO/name).read_bytes())
 
 class Runtime(BaseRuntime):

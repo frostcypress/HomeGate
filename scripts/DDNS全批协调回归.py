@@ -91,6 +91,12 @@ class BatchMixin:
         self.assertEqual(self.config_bytes(),self.baseline_config);return out
     def state_call(self,*args,expected=0):
         p=subprocess.run([self.busybox,'ash',str(self.state_helper),*args],env=self.env,capture_output=True,timeout=20);self.assertEqual((p.returncode,p.stderr),(expected,b''),(p.stdout,p.stderr));return json.loads(p.stdout)
+    def assert_sample_rejected_without_provider_effect(self):
+        out=self.batch_call(75)
+        self.assertEqual((out['effect'],out['sampled'],out['rules']),('none',False,[]))
+        self.assertEqual(self.calls,[])
+        self.assertFalse(list(self.native.lockdir.glob('.ddns-plan-*')))
+        self.assertFalse(self.journal.exists())
     def test_two_noops_share_sample_and_whole_batch_waits_without_sampling(self):
         self.seed();out=self.batch_call();self.assertEqual([r['status'] for r in out['rules']],['unchanged','unchanged']);self.assertTrue(out['sampled']);self.assertEqual(self.netlog.read_text().splitlines(),['addresses','routes'])
         before=len(self.calls);out=self.batch_call(4);self.assertFalse(out['sampled']);self.assertEqual([r['status'] for r in out['rules']],['waiting','waiting']);self.assertEqual(len(self.calls),before)
@@ -135,8 +141,9 @@ class Boundaries(CF):
     def test_cache_publication_failure_stops_batch_and_never_clears_stage(self):
         self.seed();self.fault('fsync','sys.exit(1) if any(a.endswith("/.ddns_b.next") for a in sys.argv[1:]) else None');out=self.batch_call(7);self.restore_tool('fsync');self.assertEqual(out['effect'],'unknown');self.assertEqual([r['status'] for r in out['rules']],['unchanged']);self.assertTrue((self.state_dir/'.ddns_b.next').exists())
         n=len(self.calls);out=self.batch_call(4);self.assertFalse(out['sampled']);self.assertEqual(len(self.calls),n);self.assertTrue((self.state_dir/'.ddns_b.next').exists())
-    def test_changed_source_after_sample_refuses_dispatch_and_keeps_outer_stage(self):
-        self.ip.write_text(self.ip.read_text()+'\np=Path('+repr(str(self.source))+');p.write_bytes(p.read_bytes()+b"\\n")\n');self.batch_call(7);self.assertEqual(self.calls,[]);self.assertTrue(list(self.native.lockdir.glob('.ddns-plan-*')));self.assertFalse(self.journal.exists())
+    def test_changed_source_after_sample_refuses_dispatch_and_releases_sample(self):
+        self.ip.write_text(self.ip.read_text()+'\np=Path('+repr(str(self.source))+');p.write_bytes(p.read_bytes()+b"\\n")\n')
+        self.assert_sample_rejected_without_provider_effect()
 
 class MixedMixin:
     def setUp(self):
@@ -184,10 +191,10 @@ class MixedBoundaries(MixedCF):
     def test_mixed_envelope_cannot_borrow_another_interface_sample(self):
         p=self.engine.parent/'homegate-ddns-plan.lua';body=p.read_text();needle='local private=codec.json(plan)';self.assertEqual(body.count(needle),1)
         p.write_text(body.replace(needle,"plan.entries[2].device=plan.entries[1].device;plan.entries[2].request.value=plan.entries[1].request.value\n"+needle))
-        self.batch_call(7);self.assertEqual(self.calls,[]);self.assertFalse(self.journal.exists())
+        self.assert_sample_rejected_without_provider_effect()
     def test_mixed_source_change_after_sample_blocks_before_any_provider(self):
         self.ip.write_text(self.ip.read_text()+'\np=Path('+repr(str(self.source))+');p.write_bytes(p.read_bytes().replace(b"odd-uplink",b"another-uplink"))\n')
-        self.batch_call(7);self.assertEqual(self.calls,[]);self.assertFalse(self.journal.exists());self.assertTrue(list(self.native.lockdir.glob('.ddns-plan-*')))
+        self.assert_sample_rejected_without_provider_effect()
     def test_unknown_middle_rule_keeps_evidence_and_blocks_later_rules(self):
         self.seed_mixed('ddns_a','2001:db8::2');self.seed_mixed('ddns_c','2001:db8:3::8')
         def hook(*args):

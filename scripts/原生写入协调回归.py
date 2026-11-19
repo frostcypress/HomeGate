@@ -22,7 +22,8 @@ class Static(unittest.TestCase):
         posts=dict(re.findall(r'entry\(\{[^}]*"homegate",\s*"([^"]+)"\},\s*post\("([^"]+)"\)',source))
         readonly={'config_export','config_import','diagnostic_download'}
         self.assertEqual(set(posts)-readonly,set(route_map()))
-        self.assertEqual(len(route_map()),17)
+        self.assertEqual(len(route_map()),18)
+        self.assertEqual(route_map()['access_save_rule'],'action_access_save_rule')
         block=source.split('local native_write_routes = {',1)[1].split('}',1)[0]
         self.assertEqual(dict(re.findall(r'(\w+)="([^"]+)"',block)),route_map())
         self.assertEqual(source.count('cur:commit("homegate")'),1)

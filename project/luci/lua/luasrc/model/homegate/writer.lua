@@ -9,6 +9,7 @@ M.routes = {
     access_clear_all="action_access_clear_all", access_clear_entry="action_access_clear_entry",
     access_clear_denied="action_access_clear_denied", access_delete_all="action_access_delete_all",
     access_delete_entry="action_access_delete_entry", access_delete_rule="action_access_delete_rule",
+    access_save_rule="action_access_save_rule",
     wol_apply="action_wol_apply", wol_action="action_wol_action",
     maintenance_apply="action_maintenance_apply", log_clear="action_log_clear",
     config_reset="action_config_reset"

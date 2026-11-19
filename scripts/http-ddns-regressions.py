@@ -68,8 +68,9 @@ class HostHTTP(rpc.HostRpcd):
             connection.request(verb, path, body=body,
                                headers={'Content-Type': 'application/json', **(headers or {})})
             response = connection.getresponse()
-            data = response.read(131073)
-            self.assertLess(len(data), 131073, 'HTTP fixture response exceeded bound')
+            limit = getattr(self, 'HTTP_RESPONSE_LIMIT', 131072)
+            data = response.read(limit + 1)
+            self.assertLessEqual(len(data), limit, 'HTTP fixture response exceeded bound')
             return response.status, {k.lower(): v for k, v in response.getheaders()}, data
         finally:
             connection.close()

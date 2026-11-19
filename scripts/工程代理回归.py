@@ -90,7 +90,7 @@ class Proxy(web.Web):
             r=subprocess.run(['/usr/libexec/homegate-nginx/nginx','-t','-p',str(conf.parent)+'/', '-c',str(conf),'-g','daemon off;'],capture_output=True,timeout=5)
             raise AssertionError(('Proxy state timeout',d,r.stderr.decode()[-3000:]))
         self.fail(('Proxy state timeout',d))
-    def setup_proxy(self,routes,targets,extra=''):
+    def setup_proxy(self,routes,targets,extra='',external_route=None,legacy_block=False):
         s=self.login();self.cfg('prepare',s);self.certificate_config(s)
         for name,domain,https in routes:
             p=self.cfg('preview_web_rule',s,id=name,domain=domain,https='1' if https else '0',certificate='cert_a' if https else '')
@@ -104,6 +104,21 @@ class Proxy(web.Web):
                 if 'access_deny' in line and extra=='deny':lines[i]="\toption access_deny '127.0.0.1/32 ::1/128'"
                 if 'access_region' in line and extra=='cn':lines[i]="\toption access_region 'CN'"
             p=self.cli('config-preview',raw=('\n'.join(lines)+'\n').encode());self.cli('config-commit',p['confirmation'])
+        if external_route:
+            name,domain,port=external_route
+            sections=self.cli('config-export').decode().rstrip('\n').split('\n\n')
+            for i,section in enumerate(sections):
+                if section.startswith(f"config web_rule '{name}'\n"):
+                    lines=section.strip().splitlines()
+                    lines=[f"\toption domain '{domain}'" if line.strip().startswith('option domain ') else line for line in lines]
+                    sections[i]='\n'.join(lines+[f"\toption external_port '{port}'"])
+                    break
+            else: self.fail('External port test section missing')
+            public='\n\n'.join(sections)+'\n'
+            if legacy_block:
+                public=public.replace("config homegate 'main'\n","config homegate 'main'\n\toption block_standard_public_ports '1'\n",1)
+            p=self.cli('config-preview',raw=public.encode())
+            self.cli('config-commit',p['confirmation'])
         for name,target in targets.items():self.cfg('web_target_put',s,id=name,value=target,consent='1')
         self.publish(s);self.cfg('lifecycle_enable',s,consent='1')
         self.certificate_import(s,self.certificate_pair('proxy'))
@@ -143,22 +158,41 @@ class Proxy(web.Web):
             if trusted:
                 with Path('/etc/ssl/certs/ca-certificates.crt').open('a') as f:f.write(cert)
         threading.Thread(target=server.serve_forever,daemon=True).start();self.addCleanup(server.server_close);self.addCleanup(server.shutdown);return server.server_port
-    def exchange_proxy(self,host,path='/',tls=True,ipv6=False,headers=None,method='GET',body=None,source=None):
+    def exchange_proxy(self,host,path='/',tls=True,ipv6=False,headers=None,method='GET',body=None,source=None,port=None):
         context=ssl._create_unverified_context()
-        conn=http.client.HTTPConnection('::1' if ipv6 else '127.0.0.1',10443 if tls else 10080,timeout=5,source_address=(source,0) if source else None);conn.connect()
+        conn=http.client.HTTPConnection('::1' if ipv6 else '127.0.0.1',port or (10443 if tls else 10080),timeout=5,source_address=(source,0) if source else None);conn.connect()
         if tls:conn.sock=context.wrap_socket(conn.sock,server_hostname=host)
         hdr={'Host':host,**(headers or {})};conn.request(method,path,body=body,headers=hdr);r=conn.getresponse();out=(r.status,dict(r.getheaders()),r.read());conn.close();return out
     def stop(self,s):
         self.cfg('proxy_stop',s,consent='1');self.ready('stopped');self.cfg('proxy_reap',s,consent='1');self.assertEqual(self.cli('proxy-status')['state'],'idle')
     def test_routing(self):
-        port=self.backend();s=self.setup_proxy([('exact','example.test',True),('wild','*.example.test',True),('plain','plain.example.test',False)],{'exact':f'http://127.0.0.1:{port}/base/?fixed=SECRET_SENTINEL$host','wild':f'http://127.0.0.1:{port}/wild/','plain':f'http://127.0.0.1:{port}'})
-        started=self.cfg('proxy_start',s,selection='exact,wild,plain',policy='open',consent='1');self.assertTrue(started['report']['running']);self.ready()
+        port=self.backend();alternate=self.backend(label='alternate')
+        s=self.setup_proxy([('exact','example.test',True),('wild','*.example.test',True),('plain','plain.example.test',False),('alt','alternate.example.test',True)],
+            {'exact':f'http://127.0.0.1:{port}/base/?fixed=SECRET_SENTINEL$host','wild':f'http://127.0.0.1:{port}/wild/','plain':f'http://127.0.0.1:{port}','alt':f'http://127.0.0.1:{alternate}/alt'},
+            extra='allow',external_route=('alt','example.test',56813),legacy_block=True)
+        started=self.cfg('proxy_start',s,selection='exact,wild,plain,alt',policy='allow',consent='1');self.assertTrue(started['report']['running']);self.ready()
+        planned=json.loads(Path('/var/run/homegate-engineering/proxy/plan.json').read_text())
+        extra=next(route for route in planned['routes'] if route['id']=='alt')
+        self.assertEqual(extra['public_port'],56813)
+        self.assertNotEqual(extra['listen_port'],10443)
+        code,_,raw=self.exchange_proxy('example.test','/check',ipv6=True,port=extra['listen_port'])
+        self.assertEqual(code,200,raw);self.assertEqual(json.loads(raw)['path'],'/alt/check')
+        for listener in (10443,extra['listen_port']):
+            self.assertEqual(self.exchange_proxy('example.test',source='127.0.0.2',port=listener)[0],403)
         code,_,raw=self.exchange_proxy('example.test','/a%2Fb?q=x',headers={'Forwarded':'for=evil','X-Forwarded-For':'evil','X-Forwarded-Host':'evil','X-Forwarded-Proto':'http'})
         self.assertEqual(code,200,raw);d=json.loads(raw);self.assertEqual(d['path'],'/base/a%2Fb?fixed=SECRET_SENTINEL$host&q=x')
         h={k.lower():v for k,v in d['headers'].items()};self.assertEqual(h['host'],f'127.0.0.1:{port}');self.assertEqual(h['x-forwarded-for'],'127.0.0.1');self.assertEqual(h['x-forwarded-proto'],'https');self.assertEqual(h['x-forwarded-host'],'example.test');self.assertNotIn('forwarded',h)
         probe=ssl._create_unverified_context().wrap_socket(socket.create_connection(('127.0.0.1',10443),timeout=5),server_hostname='example.test')
         expected=ssl.PEM_cert_to_DER_cert((STATE/'cert-fixtures/proxy.pem').read_text());self.assertEqual(probe.getpeercert(binary_form=True),expected);probe.close()
-        code,h,_=self.exchange_proxy('example.test','/x?a=b',tls=False);self.assertEqual(code,308);self.assertEqual(h['Location'],'https://example.test/x?a=b')
+        for ipv6 in (False,True):
+            code,h,_=self.exchange_proxy('example.test','/x?a=b',tls=False,ipv6=ipv6)
+            self.assertEqual(code,307);self.assertEqual(h['Location'],'https://example.test/x?a=b');self.assertEqual(h['Cache-Control'],'no-store')
+            code,h,_=self.exchange_proxy('example.test','/x%2Fy?a=b',tls=False,ipv6=ipv6,port=extra['listen_port'],headers={'Host':'example.test:56813'})
+            self.assertEqual(code,307);self.assertEqual(h['Location'],'https://example.test:56813/x%2Fy?a=b');self.assertEqual(h['Cache-Control'],'no-store')
+        code,h,_=self.exchange_proxy('example.test',tls=False,source='127.0.0.2',port=extra['listen_port'])
+        self.assertEqual(code,403);self.assertNotIn('Location',h)
+        _,h,_=self.exchange_proxy('unknown.test',tls=False,port=extra['listen_port'])
+        self.assertNotIn('Location',h)
         code,_,body=self.exchange_proxy('one.example.test','/x',ipv6=True);self.assertEqual(code,200);self.assertEqual(json.loads(body)['path'],'/wild/x');self.assertEqual(json.loads(body)['headers']['X-Forwarded-For'],'::1')
         self.assertEqual(self.exchange_proxy('plain.example.test',tls=False)[0],200)
         self.assertEqual(self.exchange_proxy('two.one.example.test',tls=False)[0],404)
@@ -167,6 +201,17 @@ class Proxy(web.Web):
         status=self.cfg('proxy_status',s)['report'];self.assertNotIn('SECRET_SENTINEL',json.dumps(status));self.assertFalse(status['health_checked'])
         self.api('configuration_api','web_target_put',s,{'id':'exact','value':'http://other.test','consent':'1'},expected=503)
         self.cli('config-preview',raw=self.cli('config-export'),ok=False)
+        self.stop(s)
+        self.cfg('proxy_start',s,selection='alt',policy='allow',consent='1');self.ready()
+        for ipv6 in (False,True):
+            code,h,_=self.exchange_proxy('example.test',tls=False,ipv6=ipv6)
+            self.assertEqual(code,404);self.assertNotIn('Location',h)
+            code,_,body=self.exchange_proxy('example.test',ipv6=ipv6,port=extra['listen_port'])
+            self.assertEqual(code,200,body);self.assertEqual(json.loads(body)['path'],'/alt/')
+            code,h,_=self.exchange_proxy('example.test',tls=False,ipv6=ipv6,port=extra['listen_port'])
+            self.assertEqual(code,307);self.assertEqual(h['Location'],'https://example.test:56813/')
+        with self.assertRaises((ssl.SSLError,ConnectionError)):
+            self.exchange_proxy('example.test')
         self.stop(s);self.verify_unchanged()
     def test_streaming(self):
         port=self.backend();s=self.setup_proxy([('plain','example.test',False)],{'plain':f'http://127.0.0.1:{port}'})
@@ -262,7 +307,14 @@ class Proxy(web.Web):
         for tab,parent,target in [('nat','PREROUTING','HOMEGATE_NAT'),('filter','INPUT','HOMEGATE_INPUT')]:self.assertIn(['-j',target],d[tab][parent])
         return d
     def test_firewall_apply(self):
-        s=self.firewall_setup();self.assertFalse((STATE/'fw-calls').exists())
+        upstream=self.backend()
+        s=self.setup_proxy([('exact','example.test',True),('alt','alternate.example.test',True)],
+            {'exact':f'http://127.0.0.1:{upstream}','alt':f'http://127.0.0.1:{upstream}/alternate'},
+            external_route=('alt','example.test',8443))
+        self.cfg('proxy_start',s,selection='exact,alt',policy='open',consent='1');self.ready()
+        planned=json.loads(Path('/var/run/homegate-engineering/proxy/plan.json').read_text())
+        alternate=str(next(r for r in planned['routes'] if r['id']=='alt')['listen_port'])
+        self.assertFalse((STATE/'fw-calls').exists())
         try:d=self.cfg('firewall_apply',s,consent='1')['report']
         except AssertionError:
             for name in ['reply','report.json','err','out']:
@@ -272,9 +324,32 @@ class Proxy(web.Web):
             raise
         self.assertTrue(d['active']);self.assertTrue(d['known']);self.assertEqual(d['wan_device'],'pppoe-wan')
         self.firewall_settled();status,_,raw=self.cgi(web.BASE+'/configuration_api/firewall_status',cookie=s[0]);self.assertEqual(status,200,raw[:300]);self.assertTrue(json.loads(raw)['report']['active'])
-        kernel=self.firewall_baseline();rules=kernel['nat']['HG_ENG_NAT'];self.assertEqual(len(rules),2)
-        self.assertEqual([r[r.index('--dport')+1] for r in rules],['443','80']);self.assertEqual([r[-1] for r in rules],['10443','10080'])
+        kernel=self.firewall_baseline();rules=kernel['nat']['HG_ENG_NAT'];self.assertEqual(len(rules),3)
+        mapping=[('443','10443'),('80','10080'),('8443',alternate)]
+        self.assertEqual([(r[r.index('--dport')+1],r[-1]) for r in rules],mapping)
         self.cfg('firewall_apply',s,consent='1');self.assertEqual(json.loads((STATE/'fw-kernel.json').read_text()),kernel)
+        ubus=STATE/'tools/ubus'
+        ubus.write_text('''#!/bin/sh
+case "$*" in
+ 'call network.interface.lan status') printf '{"up":true,"l3_device":"br-lan"}\\n';;
+ *) printf '{}\\n';;
+esac
+''')
+        lan_rules=[['-d','2001:0db8:0000:0000:0000:0000:0000:0002/128','-i','br-lan','-p','tcp',
+                    '--dport',public,'-j','REDIRECT','--to-ports',private] for public,private in mapping]
+        self.cfg('firewall_apply',s,consent='1')
+        with_lan=self.firewall_baseline()
+        self.assertEqual(with_lan['nat']['HG_ENG_NAT'],rules+lan_rules)
+        self.assertEqual(with_lan['filter'],kernel['filter'])
+        self.assertEqual(self.exchange_proxy('example.test')[0],200)
+        self.assertEqual(self.firewall_status()['state'],'active')
+        ip=STATE/'tools/ip';original_ip=ip.read_text();ip.write_text(original_ip.replace('2001:db8::2/64','2001:db8::9/64'))
+        self.cfg('firewall_apply',s,consent='1')
+        for rule in lan_rules:rule[1]='2001:0db8:0000:0000:0000:0000:0000:0009/128'
+        self.assertEqual(self.firewall_baseline()['nat']['HG_ENG_NAT'],rules+lan_rules)
+        ip.write_text(original_ip);ubus.write_text('#!/bin/sh\nexit 1\n')
+        self.cfg('firewall_apply',s,consent='1')
+        self.assertEqual(self.firewall_baseline(),kernel)
         foreign=['-i','br-lan','-j','HG_ENG_NAT'];kernel['nat']['PREROUTING'].append(foreign);(STATE/'fw-kernel.json').write_text(json.dumps(kernel))
         before_foreign=json.loads(json.dumps(kernel))
         self.api('configuration_api','firewall_cleanup',s,{'consent':'1'},expected=503);kernel=self.firewall_baseline();self.assertEqual(kernel,before_foreign);self.assertIn(foreign,kernel['nat']['PREROUTING'])
@@ -283,6 +358,21 @@ class Proxy(web.Web):
         kernel['nat']['PREROUTING'].append(['-j','HG_ENG_NAT']);(STATE/'fw-kernel.json').write_text(json.dumps(kernel))
         self.assertEqual(kernel['nat']['PREROUTING'].count(['-j','HG_ENG_NAT']),2)
         self.cfg('firewall_cleanup',s,consent='1');self.assertFalse(self.firewall_status()['active']);self.assertNotIn('HG_ENG_NAT',self.firewall_baseline()['nat'])
+        self.cfg('firewall_cleanup',s,consent='1');self.stop(s)
+        ubus.write_text('''#!/bin/sh
+case "$*" in
+ 'call network.interface.lan status') printf '{"up":true,"l3_device":"br-lan"}\\n';;
+ *) printf '{}\\n';;
+esac
+''')
+        self.cfg('proxy_start',s,selection='alt',policy='open',consent='1');self.ready()
+        self.cfg('firewall_apply',s,consent='1')
+        kernel=self.firewall_baseline()
+        custom_only=kernel['nat']['HG_ENG_NAT']
+        self.assertEqual([r[r.index('--dport')+1] for r in custom_only],['8443','8443'])
+        self.assertEqual([r[r.index('-i')+1] for r in custom_only],['pppoe-wan','br-lan'])
+        self.assertEqual([r for r in kernel['filter']['HG_ENG_INPUT'] if r[-1]=='DROP'],
+            [['-d',custom_only[1][1],'-i','br-lan','-p','tcp','--dport',port,'-j','DROP'] for port in ('80','443')])
         self.cfg('firewall_cleanup',s,consent='1');self.stop(s);self.verify_unchanged()
     def test_firewall_reload(self):
         s=self.firewall_setup();self.cfg('firewall_apply',s,consent='1');initial=self.firewall_baseline();lost=json.loads(json.dumps(initial))

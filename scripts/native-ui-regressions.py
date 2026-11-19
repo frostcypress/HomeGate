@@ -47,6 +47,8 @@ data = dict(status={'service':{'running':True}},main={'enabled':'1','access_enab
             wol_interfaces=[{'name':'br-lan','kind':'bridge'},{'name':'eth0','kind':'ethernet'}], wol_clients=[], wol_selected_interface='br-lan',
             public_count=0, wol_count=0, notice='', error_message='', token='rpc', default_renew_days='5', resume_account='',resume_public='')
 fixtures = [data, {**data,'status':{},'packages':{'core':'1.3.0-11','luci':'1.3.0-10','i18n':'1.3.0-11'},'default_renew_days':'45','notice':'<img onerror=alert(1)> & "\'','hosts':[{'id':'host_a','name':'','mac':'AA:BB:CC:DD:EE:FF'}],
+                  'wol_clients':[{'mac':'AA:BB:CC:DD:EE:FF','name':'Saved host','label':'Saved host & TV'},
+                                 {'mac':'02:11:22:33:44:55','name':'New host','label':'New host'}],
                   'retired_access_region':True,'services':[{'web_id':'web_a','enabled':'1','https':'0','domain':'test.example','target':'http://192.168.1.2:80','cert_managed':False,'cert_shared':True}],
                   'dns_provider_catalog':[{'name':'aliyun','display_name':'Aliyun DNS','credentials':[{'name':'key_id','label':'AccessKey ID','required':True},{'name':'secret','label':'AccessKey Secret','required':True}]}]}]
 
@@ -95,6 +97,43 @@ with sync_playwright() as pw:
     wol_views={f:installed['usr/lib/lua/luci/view/homegate_legacy/'+f+'.htm'].decode() for f in ('wol','common')}
     page.set_content('<script>window.confirmCalls=0;window.confirm=()=>{++confirmCalls;return false;};</script>'+
                      legacy('wol',fixtures[1],wol_views))
+    bootstrap=(ROOT/'scripts/fixtures/legacy-bootstrap/cascade.css').read_text(encoding='utf-8')
+    page.add_style_tag(content=bootstrap)
+    add_host=page.get_by_role('button',name='Add',exact=True)
+    choice=page.locator('#hg-wol-mac-choice')
+    occupied=choice.locator('option[value="AA:BB:CC:DD:EE:FF"]')
+    available=choice.locator('option[value="02:11:22:33:44:55"]')
+    custom=choice.locator('option[value="__custom__"]')
+    mac_input=page.locator('#hg-wol-mac-custom')
+    confirm_host=page.get_by_role('button',name='Confirm',exact=True)
+    cancel_host=page.get_by_role('button',name='Cancel',exact=True)
+    add_host.click()
+    assert occupied.is_disabled() and occupied.text_content()=='Saved host & TV'
+    disabled_color=occupied.evaluate('option => getComputedStyle(option).color')
+    assert disabled_color=='rgb(191, 191, 191)' and available.evaluate('option => getComputedStyle(option).color')!=disabled_color
+    assert available.is_enabled() and custom.is_enabled()
+    choice.select_option('__custom__')
+    mac_input.fill(' aa-bb-cc-dd-ee-ff ')
+    confirm_host.click()
+    assert page.locator('input[name=wol_host_mac_2]').input_value()=='AA:BB:CC:DD:EE:FF'
+    page.get_by_role('button',name='Delete',exact=True).last.click()
+    page.get_by_role('button',name='Edit',exact=True).click()
+    assert choice.is_hidden() and mac_input.is_visible() and mac_input.is_disabled()
+    assert mac_input.evaluate('input => getComputedStyle(input).color')==disabled_color
+    assert mac_input.input_value()=='AA:BB:CC:DD:EE:FF'
+    page.locator('#hg-wol-name').fill('Renamed desktop')
+    mac_input.evaluate("input => { input.value='02:11:22:33:44:55'; }")
+    confirm_host.click()
+    assert page.locator('input[name=wol_host_name_1]').input_value()=='Renamed desktop'
+    assert page.locator('input[name=wol_host_mac_1]').input_value()=='AA:BB:CC:DD:EE:FF'
+    add_host.click()
+    assert choice.is_visible() and occupied.is_disabled() and mac_input.is_enabled() and mac_input.is_hidden()
+    choice.select_option('02:11:22:33:44:55')
+    confirm_host.click()
+    add_host.click()
+    assert occupied.is_disabled() and available.is_disabled()
+    cancel_host.click()
+    page.get_by_role('button',name='Delete',exact=True).last.click()
     page.evaluate("hgShowNotice(document.getElementById('hg-operation-status'),'Wake packet sent','success')")
     page.get_by_role('button',name='Delete',exact=True).click()
     assert page.evaluate('confirmCalls')==0
@@ -104,6 +143,9 @@ with sync_playwright() as pw:
     assert page.locator('#hg-operation-status').is_hidden()
     page.locator('.hg-wrap > .hg-notice').first.wait_for(state='hidden',timeout=5000)
     assert page.locator('#hg-wol-dirty').is_visible()
+    add_host.click()
+    assert occupied.is_enabled() and occupied.text_content()=='Saved host & TV'
+    assert available.is_enabled()
     public_fixture={**data,'services':[{'web_id':'web_a','ddns_id':'rule_a','account_id':'dns_a','cert_id':'cert_a',
         'enabled':'1','https':'1','domain':'files.example.test','zone':'example.test','host':'files.example.test',
         'target':'https://255.255.255.255:999999','cert_environment':'staging'}],
@@ -258,7 +300,7 @@ with sync_playwright() as pw:
     }''')
     assert timing[0]<3000 and timing[1]=='example.test',timing
     assert page.locator('#hg-public-host').input_value()=='files'
-    assert page.locator('#hg-public-domain-preview').inner_text()=='files.example.test'
+    assert page.locator('#hg-public-domain-preview').inner_text()=='-'
     assert page.evaluate("hgPublicHostPrefix('example.test','EXAMPLE.TEST.')")=='@'
     assert page.evaluate("hgPublicHostPrefix('example.test','deep.files.example.test')")=='deep.files'
     page.evaluate("hgPublicClose(); hgPublicOpenAdd()")
@@ -292,7 +334,7 @@ with sync_playwright() as pw:
     page.evaluate("zones[5].reply({status:200},{ok:false,error:'DNS status request refused'})")
     page.wait_for_function('zones.length===7')
     assert not page.locator('#hg-public-zone-retry').is_visible()
-    assert page.locator('#hg-public-domain-preview').inner_text()=='files.example.test'
+    assert page.locator('#hg-public-domain-preview').inner_text()=='-'
     page.evaluate("zones[6].reply({status:200},{ok:true,zones:['example.test','other.test']})")
     assert page.locator('#hg-public-zone option').all_text_contents()==['example.test','other.test']
     assert page.locator('#hg-public-zone').input_value()=='example.test'
@@ -522,6 +564,99 @@ with sync_playwright() as pw:
         license_footer=footer_geometry(maintenance,'#hg-plugin-license-modal',"hgSetModalOpen('hg-plugin-license-modal',true)")
         assert public_footer[0][0]>=60 and public_footer[0][1]>=28
         assert url_footer==public_footer and license_footer==public_footer[:1],(width,public_footer,url_footer,license_footer)
+    page.set_viewport_size({'width':1200,'height':700})
+    def action_geometry(markup):
+        page.set_content(xhr+markup)
+        page.add_style_tag(content=theme)
+        return page.locator('.hg-public-table, .hg-wol-table').evaluate('''table => {
+            const head=table.querySelector('.hg-action-head');
+            const buttons=[...table.querySelectorAll('tbody .hg-action-cell button')].map(button=>button.getBoundingClientRect());
+            return [head.getBoundingClientRect().left+parseFloat(getComputedStyle(head).paddingLeft),
+                    buttons[0].left,buttons[1].left-buttons[0].right,buttons[2].left-buttons[1].right];
+        }''')
+    public=action_geometry(legacy('public',fixtures[1]))
+    assert page.locator('#hg-public-target').evaluate('input => getComputedStyle(input,"::placeholder").color')==disabled_color
+    wol=action_geometry(legacy('wol',fixtures[1]))
+    assert all(abs(a-b)<=1 for a,b in zip(public,wol)) and abs(wol[0]-wol[1])<=1 and wol[2:]==[4,4],(public,wol)
+    with_port={**fixtures[1],'services':[{**fixtures[1]['services'][0],'external_port':'8443','port_suffix':':8443',
+                                      'https':'1','enabled':'0','cert_id':'cert_test'}]}
+    def management_page(domains,saved='',wan='0'):
+        response=json.dumps({'ok':True,'domains':domains})
+        stub='<script>window.XHR={get:(u,f,cb)=>cb({status:200},u.endsWith("/management_domains")?'+response+':{})};</script>'
+        page.set_content(stub+legacy('public',{**with_port,'main':{**with_port['main'],'management_domain':saved,'management_wan':wan}}))
+
+    management_page([])
+    selector=page.get_by_label('Router Management URL')
+    management=page.get_by_label('Allow WAN Management')
+    dirty=page.locator('#hg-public-dirty')
+    assert selector.is_disabled() and management.is_disabled()
+    assert selector.locator('option').text_content()=='No management domain available'
+    assert page.locator('[name=management_domain]').count()==0
+    management_page(['a.example.test','router.example.test'])
+    assert selector.input_value()=='a.example.test' and management.is_enabled()
+    assert selector.locator('option').all_text_contents()==['https://a.example.test','https://router.example.test']
+    assert dirty.is_hidden()
+    assert page.locator('[name=management_domain]').input_value()=='a.example.test'
+    selector.select_option('router.example.test')
+    assert not management.is_disabled() and dirty.is_visible()
+    management_page(['a.example.test','router.example.test'],'router.example.test')
+    assert selector.input_value()=='router.example.test'
+    assert dirty.is_hidden()
+    assert page.locator('[name=management_domain]').count()==0
+    management_page(['a.example.test'],'router.example.test','1')
+    assert selector.input_value()=='router.example.test' and management.is_checked()
+    assert selector.locator('option').last.text_content()=='https://router.example.test'
+    assert selector.locator('option').last.is_disabled()
+    management.uncheck()
+    assert management.is_disabled() and page.locator('[name=management_wan]').input_value()=='0'
+    management_page(['router.example.test'])
+    management_heading=page.get_by_role('heading',name='Router Management')
+    y=management_heading.bounding_box()['y']
+    assert page.get_by_role('heading',name='Access Restriction').bounding_box()['y']<y
+    assert y<page.get_by_role('heading',name='Service List').bounding_box()['y']
+    assert not management.is_checked()
+    assert selector.input_value()=='router.example.test'
+    assert selector.locator('option').count()==1 and dirty.is_hidden()
+    assert selector.locator('option').text_content()=='https://router.example.test'
+    assert page.locator('[name=management_domain]').input_value()=='router.example.test'
+    assert page.get_by_role('columnheader',name='External URL').is_visible()
+    assert page.get_by_role('columnheader',name='LAN URL').is_visible()
+    management.check()
+    assert page.locator('[name=management_domain]').input_value()=='router.example.test'
+    assert page.locator('[name=management_wan]').input_value()=='1'
+    management.uncheck()
+    assert page.locator('[name=management_wan]').input_value()=='0'
+    page.evaluate("hgPublicCerts.cert_test={exists:true,valid:true,days:89};hgPublicRender()")
+    assert page.locator('.hg-public-url').text_content()=='https://test.example:8443'
+    hint=page.locator('.hg-public-hint')
+    assert hint.text_content().endswith(' · Not enabled') and '89' in hint.text_content()
+    page.locator('.hg-web-enabled-check').check()
+    assert not hint.text_content().endswith(' · Not enabled')
+    page.locator('.hg-web-enabled-check').uncheck()
+    assert hint.text_content().endswith(' · Not enabled')
+    page.get_by_role('button',name='Edit',exact=True).click()
+    public_port=page.locator('#hg-public-external-port')
+    assert public_port.input_value()=='8443'
+    assert public_port.evaluate("input => input.previousElementSibling.previousElementSibling.id")=='hg-public-host'
+    page.locator('#hg-public-zone').evaluate("select => {select.add(new Option('example.test','example.test'));select.value='example.test';}")
+    page.locator('#hg-public-host').fill('vault')
+    public_port.fill('56813')
+    address=page.locator('#hg-public-domain-preview')
+    assert address.evaluate('value => value.previousElementSibling.textContent')=='External URL'
+    assert page.get_by_label('LAN URL').is_visible()
+    assert address.text_content()=='https://vault.example.test:56813'
+    public_port.fill('')
+    assert address.text_content()=='-'
+    assert public_port.get_attribute('placeholder')=='Choose a port other than 80 or 443'
+    public_port.fill('443')
+    assert address.text_content()=='-'
+    page.locator('#hg-public-https').uncheck()
+    public_port.fill('80')
+    assert address.text_content()=='-'
+    public_port.fill('18080')
+    assert address.text_content()=='http://vault.example.test:18080'
+    page.get_by_role('button',name='Cancel',exact=True).click()
+    assert page.locator('#hg-public-block-standard-ports, input[name=block_standard_public_ports]').count()==0
     assert not errors,errors
     browser.close()
 (OUT/'results.json').write_text(json.dumps({'html_parity':parity,'transport':['submitter-mode','job-poll-ack','duplicate-suppression','dynamic-form'],'production_http':['delayed-maintenance-save','delayed-overview-save','delayed-overview-save-error','delayed-inline-start-success','delayed-inline-uncertain-start','delayed-inline-stop','network-independent-of-status-retry','status-unknown-clears-pid','account-save-modal-feedback']},indent=2),encoding='utf-8')

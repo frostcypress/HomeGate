@@ -181,6 +181,7 @@
     "packaging/production/native-dns-cleanup.sh",
     "packaging/production/native-log.sh",
     "packaging/production/native-luci-cache.lua",
+    "packaging/production/native-management.lua",
     "packaging/production/native-operations.js",
     "packaging/production/native-package.lua",
     "packaging/production/native-package.sh",

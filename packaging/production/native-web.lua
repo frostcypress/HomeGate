@@ -171,6 +171,15 @@ end
 local function find(pkg,name)
  for _,s in ipairs(load_document(pkg))do if s.name==name then return s end end
 end
+local verified_management={}
+local function management_domains(selected)
+ local raw,code=call({'lua',proto..'/homegate-network.lua','overview-wan'},nil,8192)
+ local wan=code==0 and json.parse(raw)
+ if type(wan)~='table' or wan.ok~=true then return nil end
+ local management=assert(loadfile(base..'/native-management.lua'))()
+ local observe=assert(loadfile(base..'/native-certificates.lua'))('observe')
+ return management.domains(load_document('homegate'),wan.public_ipv6,observe,selected)
+end
 local function masked(s)
  s=s:gsub('(https?://)[^/@%s]+@','%1[redacted]@')
  for _,v in ipairs(private)do if #v>=4 then s=s:gsub(v:gsub('([^%w])','%%%1'),'[redacted]')end end
@@ -745,6 +754,9 @@ end
 local modules={}
 modules['luci.model.uci']={cursor=function()return cursor end}
 modules['luci.model.homegate.backup']=codec
+if not fixture then
+ modules['luci.model.homegate.management']={certificate=function(domain)return verified_management[domain]end}
+end
 modules['luci.model.homegate.writer']={run=function(route,fn)if not write or route~=request.route then error('writer route')end;if fixture then fixture.begins=fixture.begins+1 end;return fn()end}
 modules['luci.jsonc']={parse=json.parse,stringify=codec.json}
 modules['luci.sys']={exec=function(c)local raw=shell(c);return raw end,call=function(c)local _,rc=shell(c);return rc end}
@@ -753,8 +765,9 @@ modules['luci.http']={formvalue=function(k)if k then return request.form[k]end;r
  urlencode=function(v)return tostring(v):gsub('[^a-zA-Z0-9_.~-]',function(c)return string.format('%%%02X',c:byte())end)end,
  redirect=function(v)
   if type(v)~='string' or #v>4096 or v:find('[\r\n%z]') or not v:match('^/cgi%-bin/luci/admin/services/homegate/[%w_/]+[?]?')then error('redirect')end
+  local validation_error=v:match('[?&]error=([^&]*)')
   result.redirect=v;if result.material_retained then result.error='证书材料已保留，尚未完成清理。请先在维护中核对，不要重复操作。';result.redirect=nil
-  elseif v:find('[?&]error=')then
+  elseif validation_error then
    result.error=stage_messages[result.failure_stage] or '操作未完成，请检查当前配置及未完成的操作。'
    if request.route=='config_reset' and result.configuration_saved and
        not result.error:find('^默认配置已保存') then
@@ -770,6 +783,30 @@ modules['luci.http']={formvalue=function(k)if k then return request.form[k]end;r
    if access_rule_routes[request.route] and not result.failure_stage then
     if v:find('error=Invalid%20access%20rule',1,true) then result.error='请输入有效的 IP 地址或网段。'
     elseif v:find('error=Access%20rule%20changed',1,true) then result.error='规则已被修改，请核对列表后再操作。' end
+   end
+   if request.route=='wol_apply' and not result.failure_stage then
+    if validation_error=='Duplicate%20MAC%20address' then
+     result.error='MAC 地址不能重复。请删除重复的主机条目后再保存。'
+     result.failure_stage='wol-duplicate-mac'
+    elseif validation_error=='WOL%20host%20MAC%20cannot%20be%20changed' then
+     result.error='已有主机的 MAC 地址不能修改。要更换地址，请删除该条目后重新添加。'
+     result.failure_stage='wol-fixed-mac'
+    end
+   end
+   if request.route=='public_apply' and not result.failure_stage then
+    local errors={
+     ['External%20port%20must%20be%20between%201%20and%2065535']='公网端口须为 1–65535 的整数。',
+     ['External%20port%20conflicts%20with%20a%20reserved%20service%20port']='公网端口与服务保留端口冲突。',
+     ['External%20port%20cannot%20serve%20both%20HTTP%20and%20HTTPS']='同一个公网端口不能同时用于 HTTP 和 HTTPS。',
+     ['Public%20services%20require%20a%20custom%20port%20other%20than%2080%20or%20443']='请填写自定义公网端口。80 和 443 由本机管理页使用。',
+     ['Invalid%20management%20domain']='请输入有效的管理域名。',
+     ['Management%20domain%20required%20for%20WAN%20access']='允许外网访问前，请填写管理域名。',
+     ['Automatic%20firewall%20is%20required%20for%20management%20domain']='使用管理域名需要启用 HomeGate 自动防火墙。',
+     ['Management%20domain%20requires%20a%20matching%20production%20certificate']='请选择已有有效证书覆盖的管理域名。',
+     ['Duplicate%20public%20service%20domain%20and%20external%20port']='同一域名和公网端口只能添加一次。',
+     ['Services%20for%20one%20domain%20must%20share%20DNS%20settings']='同一域名的多个端口必须共用 DNS 设置。'
+    }
+    result.error=errors[validation_error] or result.error
    end
   end
   if result.redirect and not result.error and stopped_for_save and not result.runtime_start then
@@ -846,6 +883,16 @@ local ok,err=pcall(function()
   result.ok=true
   return
  end
+ if request.route=='api/management_domains' and not fixture then
+  local domains=management_domains()
+  local names={}
+  for name in pairs(domains or {})do names[#names+1]=name end
+  table.sort(names)
+  result.body=codec.json({ok=domains~=nil,domains=names})
+  result.headers['Content-Type']='application/json'
+  result.ok=true
+  return
+ end
  if request.route=='api/certs' and not fixture then
   local doc=load_document('homegate')
   local certificates={}
@@ -870,11 +917,56 @@ local ok,err=pcall(function()
   if count and count>=0 and count<=128 and count==math.floor(count) then
    local validation=assert(loadfile(proto..'/configuration-validation.lua'))()
    local ip=assert(loadfile(proto..'/cloudflare-record-plan.lua'))()
+   local listening,owned
+   local main=find('homegate','main')
+   local management=assert(loadfile(base..'/native-management.lua'))()
+   local management_context
+   if not fixture then
+    management_context=management.read()
+    local submitted=request.form.management_domain
+    local domain=submitted and codec.management_domain(submitted:match('^%s*(.-)%s*$'))
+    local current=main and main.values or {}
+    local enabling=request.form.management_wan=='1' and current.management_wan~='1'
+    if domain and domain~='' and (domain~=current.management_domain or enabling) then
+     if not management_context or not management_context.backend then
+      result.error='无法确认本机 LuCI 的监听地址。请检查路由器管理服务。';return
+     end
+     verified_management=management_domains(domain) or {}
+     if not verified_management[domain] then
+      result.error='管理域名暂不可用。请确认 AAAA 记录指向本机公网 IPv6，且有有效证书。';return
+     end
+    end
+   end
    for i=1,count do
-    local target=(request.form['public_service_'..i..'_target'] or ''):match('^%s*(.-)%s*$')
+    local prefix='public_service_'..i..'_'
+    local target=(request.form[prefix..'target'] or ''):match('^%s*(.-)%s*$')
     if target~='' and not validation.target(target,ip) then
-     result.error='内网目标无效，请检查 HTTP/HTTPS 地址和端口（1–65535）。'
+     result.error='内网网址无效，请检查 HTTP/HTTPS 地址和端口（1–65535）。'
      return
+    end
+    if not fixture and target~='' then
+     local allowed,reason=management.ordinary_target(management_context,target)
+     if not allowed then
+      result.error=reason=='local_management' and '本机 LuCI 请通过「路由管理」设置。' or '无法核对内网网址。'
+      return
+     end
+    end
+    local port=tonumber(request.form[prefix..'external_port'])
+    local https=request.form[prefix..'https']=='1'
+    local default=main and tonumber(main.values[https and 'https_port' or 'http_port'])
+    if not fixture and target~='' and port and port%1==0 and port>0 and port<=65535 and port~=80 and port~=443 and port~=default then
+     if not listening then
+      listening={}
+      for _,path in ipairs({'/proc/net/tcp','/proc/net/tcp6'})do
+       local file=assert(io.open(path,'rb'));local raw=file:read(1048577) or '';file:close()
+       if #raw>1048576 then error('TCP listener table limit')end
+       validation.listening_ports(raw,listening)
+      end
+      owned=assert(loadfile(base..'/native-public-listeners.lua'))()()
+     end
+     if listening[port] and not owned[port] then
+      result.error='公网端口 '..port..' 已被路由器上的其他服务占用。';return
+     end
     end
    end
   end

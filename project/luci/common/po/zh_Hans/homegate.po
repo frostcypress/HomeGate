@@ -238,8 +238,8 @@ msgstr "可留空，继承基础设置"
 msgid "Domain"
 msgstr "域名"
 
-msgid "Access Address"
-msgstr "访问地址"
+msgid "External URL"
+msgstr "外网网址"
 
 msgid "Provider"
 msgstr "服务商"
@@ -325,8 +325,8 @@ msgstr "添加 Web 服务"
 msgid "Edit Web Service"
 msgstr "编辑 Web 服务"
 
-msgid "LAN Target"
-msgstr "内网目标"
+msgid "LAN URL"
+msgstr "内网网址"
 
 msgid "HTTPS"
 msgstr "HTTPS"
@@ -515,7 +515,7 @@ msgid "Valid Web domain is required"
 msgstr "请填写有效的 Web 域名"
 
 msgid "Target must start with http:// or https://"
-msgstr "内网目标必须以 http:// 或 https:// 开头"
+msgstr "内网网址必须以 http:// 或 https:// 开头"
 
 msgid "Selected certificate was not found"
 msgstr "未找到所选证书"
@@ -629,7 +629,10 @@ msgid "Duplicate WOL host"
 msgstr "网络唤醒主机重复"
 
 msgid "Duplicate MAC address"
-msgstr "MAC 地址重复"
+msgstr "MAC 地址不能重复。请删除重复的主机条目后再保存。"
+
+msgid "WOL host MAC cannot be changed"
+msgstr "已有主机的 MAC 地址不能修改。要更换地址，请删除该条目后重新添加。"
 
 msgid "Public Services"
 msgstr "公网服务"
@@ -769,6 +772,33 @@ msgstr "请填写有效的公网服务域名"
 msgid "Duplicate public service domain"
 msgstr "公网服务域名重复"
 
+msgid "External Port"
+msgstr "公网端口"
+
+msgid "Leave blank to use port %s"
+msgstr "留空使用默认端口 %s"
+
+msgid "Leave blank to keep the default public port disabled"
+msgstr "留空时默认公网端口未启用"
+
+msgid "External port must be between 1 and 65535"
+msgstr "公网端口须为 1–65535 的整数。"
+
+msgid "Duplicate public service domain and external port"
+msgstr "同一域名和公网端口只能添加一次。"
+
+msgid "External port conflicts with a reserved service port"
+msgstr "公网端口与服务保留端口冲突。"
+
+msgid "External port cannot serve both HTTP and HTTPS"
+msgstr "同一个公网端口不能同时用于 HTTP 和 HTTPS。"
+
+msgid "Not enabled"
+msgstr "未启用"
+
+msgid "Services for one domain must share DNS settings"
+msgstr "同一域名的多个端口必须共用 DNS 设置。"
+
 msgid "DNS configuration is required for automatic HTTPS certificate"
 msgstr "自动 HTTPS 证书需要完整的 DNS 配置"
 
@@ -776,7 +806,7 @@ msgid "Automatic certificate conflicts with an existing local certificate"
 msgstr "自动证书与现有本地证书的域名范围冲突"
 
 msgid "LAN target is required for an existing Web service"
-msgstr "现有 Web 服务必须保留内网目标"
+msgstr "现有 Web 服务必须保留内网网址"
 
 msgid "Unable to read HomeGate configuration"
 msgstr "无法读取 HomeGate 配置"
@@ -1803,3 +1833,27 @@ msgstr "操作失败"
 
 msgid "Service Overview"
 msgstr "服务概览"
+
+msgid "Router Management"
+msgstr "路由管理"
+
+msgid "Router Management URL"
+msgstr "路由管理网址"
+
+msgid "Allow WAN Management"
+msgstr "允许外网管理"
+
+msgid "Checking management domains…"
+msgstr "正在识别管理域名…"
+
+msgid "No management domain available"
+msgstr "暂无可用域名"
+
+msgid "Management domain check unavailable"
+msgstr "管理域名暂无法识别"
+
+msgid "Unavailable"
+msgstr "暂不可用"
+
+msgid "Choose a port other than 80 or 443"
+msgstr "填写公网端口，80 和 443 除外"

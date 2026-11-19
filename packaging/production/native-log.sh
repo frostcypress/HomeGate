@@ -35,6 +35,8 @@ reason_text() {
   access-region-transport) printf '%s' '无法下载地区数据';;
   access-region-invalid_data) printf '%s' '下载的地区数据校验失败';;
   access-live-reload) printf '%s' '未能确认代理加载访问规则';;
+  wol-duplicate-mac) printf '%s' 'MAC 地址不能重复。请删除重复的主机条目后再保存。';;
+  wol-fixed-mac) printf '%s' '已有主机的 MAC 地址不能修改。要更换地址，请删除该条目后重新添加。';;
  esac
 }
 case "${1:-}" in
@@ -130,11 +132,34 @@ case "${1:-}" in
    restore) message='软件包安装完成，正在恢复安装前的运行状态';;
    *) exit 2;;
   esac;;
+ package-upgrade)
+  [ "$#" = 5 ] || exit 2
+  [ "${#3}" -le 32 ] && [ "${#4}" -le 32 ] && [ "$3" != "$4" ] || exit 2
+  for version in "$3" "$4"; do
+   case "$version" in ''|*[!0-9.r-]*) exit 2;;esac
+   printf '%s\n' "$version" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+-r[0-9]+$' || exit 2
+  done
+  message="HomeGate 版本升级 $3 → $4"
+  case "$2:$5" in
+   begin:none) detail='开始';;
+   verified:none) detail='成功，三个软件包、安装文件及原配置均已校验';;
+   failed:precheck) level=ERROR;detail='失败，升级前检查未通过';;
+   failed:stop) level=ERROR;detail='失败，未确认服务已停止';;
+   failed:checkpoint) level=ERROR;detail='失败，升级前备份未通过校验';;
+   failed:install) level=ERROR;detail='失败，软件包安装未完成，请核对当前版本';;
+   failed:verify) level=ERROR;detail='失败，安装后的校验未通过，请核对当前版本';;
+   *) exit 2;;
+  esac
+  message="$message，$detail";;
  clear) [ "$#" = 1 ] || exit 2;;
  *) exit 2;;
 esac
 
+if [ "$1" = package-upgrade ] && [ ! -e /var/run/homegate ] && [ ! -L /var/run/homegate ];then
+ mkdir /var/run/homegate 2>/dev/null || :
+fi
 [ -d /var/run/homegate ] && [ ! -L /var/run/homegate ] || exit 7
+if [ "$1" = package-upgrade ];then [ "$(stat -c '%u:%a' /var/run/homegate)" = 0:700 ] || exit 7;fi
 if [ ! -e "$lock" ] && [ ! -L "$lock" ]; then (set -C; : > "$lock") || :; fi
 file "$lock" && [ "$(stat -c %s "$lock")" = 0 ] || exit 7
 exec 8>>"$lock"
@@ -144,8 +169,10 @@ if [ ! -e "$log" ] && [ ! -L "$log" ]; then (set -C; : > "$log") || exit 7; fi
 file "$log" || exit 7
 if [ "$1" = clear ]; then : > "$log";exit 0;fi
 
-configured=$(uci -q get homegate.main.log_level 2>/dev/null) || configured=info
-case "$configured:$level" in error:INFO|error:WARN|warn:INFO) exit 0;;esac
+if [ "$1" != package-upgrade ];then
+ configured=$(uci -q get homegate.main.log_level 2>/dev/null) || configured=info
+ case "$configured:$level" in error:INFO|error:WARN|warn:INFO) exit 0;;esac
+fi
 lines=$(uci -q get homegate.main.log_max_lines 2>/dev/null) || lines=1024
 case "$lines" in ''|*[!0-9]*|0*) lines=1024;;esac
 if [ "${#lines}" -gt 5 ] || [ "$lines" -lt 64 ] || [ "$lines" -gt 20000 ]; then lines=1024;fi

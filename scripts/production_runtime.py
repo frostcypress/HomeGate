@@ -60,7 +60,7 @@ def payload(root):
     key=BASE+'project/core/prototype/homegate-config-prototype.sh'
     files[key]=files[key].replace(b'production_copy_enabled=true',b'production_copy_enabled=false')
     files['usr/bin/homegate']=(root/'packaging/production/native-cli.sh').read_bytes()
-    for name in ['native-cli.lua','native-service.sh','native-service.lua','native-package.sh','native-package.lua','native-adapters.sh','native-adapters.lua','native-access.lua','native-certificates.sh','native-certificates.lua','native-public.lua','native-public-listeners.lua','native-luci-cache.lua','native-log.sh','native-dns-cleanup.sh']:
+    for name in ['native-cli.lua','native-service.sh','native-service.lua','native-package.sh','native-package.lua','native-adapters.sh','native-adapters.lua','native-access.lua','native-certificates.sh','native-certificates.lua','native-public.lua','native-public-listeners.lua','native-management.lua','native-luci-cache.lua','native-log.sh','native-dns-cleanup.sh']:
         files[BASE+name]=(root/'packaging/production'/name).read_bytes()
     files['etc/init.d/homegate']=(root/'packaging/production/homegate.init').read_bytes()
     files['etc/hotplug.d/iface/95-homegate']=(root/'packaging/production/95-homegate').read_bytes()
@@ -229,7 +229,8 @@ def web_runtime(root,files):
     files[BASE+'strict-web-json.lua']=("local json=require('luci.jsonc')\n"+parser.replace('#body>65536','#body>2097152')+'return parse\n').encode()
     contract=json.loads((root/'docs/核心CLI合同.json').read_text(encoding='utf-8'))
     routes=contract['routes'] if 'routes' in contract else contract['web_routes']
-    routes.update({'api/overview_status': {'write':False}, 'api/overview_ipv6': {'write':False}})
+    routes.update({'api/overview_status': {'write':False}, 'api/overview_ipv6': {'write':False},
+                   'api/management_domains': {'write':False}})
     routes['update_url_save']={'write':True}
     files[BASE+'legacy-routes.json']=(json.dumps(routes,ensure_ascii=False,separators=(',',':'))+'\n').encode()
     files[BASE+'legacy-controller.lua']=(root/'project/luci/lua/luasrc/controller/homegate.lua').read_bytes()

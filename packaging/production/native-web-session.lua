@@ -32,7 +32,7 @@ elseif action=='wol-send' then
  program,args=core..'homegate-wol.sh',{'send-internal'}
 elseif action=='firewall-operate' then
  local token=arg[3]
- if value=='apply' or value=='watch' then
+ if value=='apply' or value=='watch' or value=='protect-idle' then
   if #token~=32 or token:find('[^0-9a-f]') then refuse() end
  elseif (value~='status' and value~='cleanup') or token~='none' then refuse() end
  program,args=core..'homegate-firewall.sh',{'operate-internal',value,token}

@@ -3,11 +3,11 @@
 local M = {}
 local TYPES = {"homegate", "dns_account", "ddns_rule", "certificate", "web_rule", "wol_host"}
 local FIELDS = {
-    homegate = {"enabled", "log_level", "log_max_lines", "access_enabled", "access_allow", "access_deny", "access_region", "wol_interface", "last_wol_host", "ddns_interval", "https_port", "http_port", "proxy_https_port", "proxy_http_port", "auto_firewall", "acme_email", "acme_directory", "renew_days", "version"},
+    homegate = {"enabled", "log_level", "log_max_lines", "access_enabled", "access_allow", "access_deny", "access_region", "management_domain", "management_wan", "management_certificate", "wol_interface", "last_wol_host", "ddns_interval", "https_port", "http_port", "proxy_https_port", "proxy_http_port", "auto_firewall", "acme_email", "acme_directory", "renew_days", "version", "block_standard_public_ports"},
     dns_account = {"name", "provider"},
     ddns_rule = {"enabled", "name", "account", "zone", "host", "type", "source", "interface", "ttl"},
     certificate = {"enabled", "name", "source", "account", "zone", "domains", "email", "renew_days", "ca", "environment"},
-    web_rule = {"enabled", "domain", "https", "certificate", "certificate_mode", "certificate_managed"},
+    web_rule = {"enabled", "domain", "https", "certificate", "certificate_mode", "certificate_managed", "external_port"},
     wol_host = {"name", "mac"}
 }
 local DIRECTORY = "https://acme-v02.api.letsencrypt.org/directory"
@@ -21,6 +21,8 @@ local DEFAULTS = {
     wol_host = {name="", mac=""}
 }
 local KEYS = {}
+-- Read the removed r245 option so past generations remain byte-compatible.
+local OPTIONAL = {external_port=true, block_standard_public_ports=true, management_domain=true,management_wan=true,management_certificate=true}
 for kind, fields in pairs(FIELDS) do
     KEYS[kind] = {}
     for _, key in ipairs(fields) do KEYS[kind][key] = true end
@@ -65,6 +67,16 @@ local function domain(v, wildcard, empty)
     end
     return v
 end
+function M.management_domain(value)
+    if type(value)~="string" or #value>254 then return nil end
+    local name=domain(value,false,true)
+    if name=="" or (name and name:find(".",1,true) and name:find("[a-z]")) then return name end
+end
+function M.custom_public_port(value)
+    if type(value)~="string" or not value:match("^%d+$") or #value>5 then return false end
+    local port=tonumber(value)
+    return port>=1 and port<=65535 and port~=80 and port~=443
+end
 local function ipv4(v)
     local a,b,c,d=v:match("^([0-9]+)%.([0-9]+)%.([0-9]+)%.([0-9]+)$")
     if not a then return false end
@@ -103,13 +115,15 @@ local function enum(v, values)
 end
 local function scalar(kind, key, v)
     if type(v)~="string" or #v>4096 or not utf8(v) then return nil end
-    if key=="enabled" or key=="access_enabled" or key=="auto_firewall" or key=="https" or key=="certificate_managed" then return enum(v,{"0","1"}) end
+    if key=="enabled" or key=="access_enabled" or key=="auto_firewall" or key=="https" or key=="certificate_managed" or key=="block_standard_public_ports" or key=="management_wan" then return enum(v,{"0","1"}) end
+    if key=="management_domain" then return M.management_domain(v) end
     if key=="certificate_mode" then return enum(v,{"auto","local"}) end
     if key=="log_level" then return enum(v,{"debug","info","warn","error"}) end
     if key=="log_max_lines" then return integer(v,64,20000) end
     if key=="ddns_interval" then return integer(v,60,999999999) end
     if key=="renew_days" then return integer(v,1,3650) end
     if key=="ttl" then return integer(v,1,214748364) end
+    if key=="external_port" then return integer(v,1,65535) end
     if key:match("_port$") then return integer(v,0,65535) end
     if key=="provider" then return enum(v,{"aliyun","cloudflare","dnspod","huaweicloud"}) end
     if key=="source" then return enum(v,kind=="certificate" and {"acme","local"} or {"auto","interface","url"}) end
@@ -119,7 +133,7 @@ local function scalar(kind, key, v)
     if key=="acme_directory" then return enum(v,{DIRECTORY,STAGING}) end
     if key=="access_region" then return enum(v,{"","CN"}) end
     if key=="access_allow" or key=="access_deny" then return networks(v) end
-    if key=="account" or key=="certificate" or key=="last_wol_host" then return v=="" and "" or (id(v) and v or nil) end
+    if key=="account" or key=="certificate" or key=="management_certificate" or key=="last_wol_host" then return v=="" and "" or (id(v) and v or nil) end
     if key=="interface" or key=="wol_interface" then
         return (#v<=32 and (v=="" or v:match("^[a-zA-Z0-9_%.:%-]+$"))) and v or nil
     end
@@ -178,6 +192,26 @@ local function tokens(line)
     end
     return out
 end
+local function web_port(main, rule)
+    return tonumber(rule.external_port or (rule.https=="1" and main.https_port or main.http_port)) or 0
+end
+local function effective_web_port(main, rule)
+    local port=web_port(main,rule)
+    return port>0 and port or (rule.https=="1" and 443 or 80)
+end
+local function web_address(main, rule)
+    return rule.domain .. "\0" .. effective_web_port(main,rule)
+end
+M.web_port=web_port
+M.web_address=web_address
+function M.web_port_conflicts(main, rule)
+    if not rule.external_port then return false end
+    local port=web_port(main,rule)
+    local https=rule.https=="1"
+    return port==tonumber(main.proxy_http_port) or port==tonumber(main.proxy_https_port)
+        or (https and (port==80 or port==tonumber(main.http_port)))
+        or (not https and (port==443 or port==tonumber(main.https_port)))
+end
 local function normalize(doc)
     local names,counts={},{}
     for _,s in ipairs(doc) do
@@ -185,11 +219,13 @@ local function normalize(doc)
         if counts[s.kind]>(s.kind=="homegate" and 1 or 32) then return nil,"Too many configuration sections" end
         for _,key in ipairs(FIELDS[s.kind]) do
             local v=s.values[key]
-            if v==nil then v=DEFAULTS[s.kind][key] end
-            if key=="domains" then v=domains(v)
-            elseif v~=nil then v=scalar(s.kind,key,v) end
-            if v==nil then return nil,"Invalid or missing configuration field" end
-            s.values[key]=v
+            if not OPTIONAL[key] or v~=nil then
+                if v==nil then v=DEFAULTS[s.kind][key] end
+                if key=="domains" then v=domains(v)
+                elseif v~=nil then v=scalar(s.kind,key,v) end
+                if v==nil then return nil,"Invalid or missing configuration field" end
+                s.values[key]=v
+            end
         end
         -- An omitted credential/URL must never silently activate a restored rule.
         if s.values.enabled then s.values.enabled="0" end
@@ -198,7 +234,7 @@ local function normalize(doc)
     if not names.main or names.main.kind~="homegate" then return nil,"HomeGate main section is required" end
     local function reference(v,kind) return v=="" or (names[v] and names[v].kind==kind) end
     local function in_zone(v,zone) local d=v:gsub("^%*%.",""); return d==zone or d:sub(-(#zone+1))=="."..zone end
-    local web_domains,wol_macs={},{}
+    local web_domains,wol_macs,protocols={},{},{}
     for _,s in ipairs(doc) do
         local v=s.values
         if (s.kind=="ddns_rule" or (s.kind=="certificate" and v.source=="acme")) and (v.account=="" or not reference(v.account,"dns_account")) then return nil,"DNS account reference is missing or invalid" end
@@ -210,7 +246,12 @@ local function normalize(doc)
         if s.kind=="ddns_rule" and v.host~="@" and not in_zone(v.host,v.zone) then return nil,"DDNS host is outside its zone" end
         if s.kind=="web_rule" then
             if not reference(v.certificate,"certificate") then return nil,"Certificate reference is invalid" end
-            if web_domains[v.domain] then return nil,"Duplicate service domain" end; web_domains[v.domain]=true
+            if M.web_port_conflicts(names.main.values,v) then return nil,"External port conflicts with a reserved service port" end
+            local port=web_port(names.main.values,v)
+            if port>0 and protocols[port] and protocols[port]~=v.https then return nil,"External port cannot serve both HTTP and HTTPS" end
+            if port>0 then protocols[port]=v.https end
+            local address=web_address(names.main.values,v)
+            if web_domains[address] then return nil,"Duplicate service domain and external port" end; web_domains[address]=true
             if v.certificate~="" then
                 local covers=false
                 for _,d in ipairs(names[v.certificate].values.domains) do
@@ -221,6 +262,15 @@ local function normalize(doc)
         end
         if s.kind=="wol_host" then if wol_macs[v.mac] then return nil,"Duplicate wake host MAC" end; wol_macs[v.mac]=true end
         if s.kind=="homegate" and not reference(v.last_wol_host,"wol_host") then return nil,"Wake host reference is invalid" end
+        if s.kind=="homegate" and (v.management_domain or "")~="" then
+            local cert=names[v.management_certificate or ""]
+            if not cert or cert.kind~="certificate" or cert.values.environment=="staging" then return nil,"Management domain certificate is invalid" end
+            local covered=false
+            for _,d in ipairs(cert.values.domains)do
+                if d==v.management_domain or (d:sub(1,2)=="*." and v.management_domain:match("^[^.]+%.(.+)$")==d:sub(3)) then covered=true end
+            end
+            if not covered then return nil,"Certificate does not cover management domain" end
+        elseif s.kind=="homegate" and v.management_wan=="1" then return nil,"Management domain is required" end
     end
     return doc
 end
@@ -376,7 +426,7 @@ local function serialize(doc)
         for _,key in ipairs(FIELDS[s.kind]) do
             local value=s.values[key]
             if type(value)=="table" then for _,v in ipairs(value) do out[#out+1]="\tlist "..key.." "..quote(v) end
-            else out[#out+1]="\toption "..key.." "..quote(value) end
+            elseif value~=nil then out[#out+1]="\toption "..key.." "..quote(value) end
         end
     end
     return table.concat(out,"\n").."\n"
@@ -419,7 +469,7 @@ local function snapshot(cur)
             for _,key in ipairs(FIELDS[kind]) do
                 local v=raw[key]; if v==nil then v=DEFAULTS[kind][key] end
                 if key=="domains" then v=domains(v) elseif v~=nil then v=scalar(kind,key,v) end
-                s.values[key]=v or "[omitted]"
+                if not OPTIONAL[key] or raw[key]~=nil then s.values[key]=v or "[omitted]" end
             end
             doc[#doc+1]=s
         end)
@@ -454,7 +504,7 @@ function M.preview(cur,body)
     for _,s in ipairs(ordered(proposed)) do
         local previous=old[s.name]; if previous and previous.kind~=s.kind then previous=nil end
         if not previous then add(s,".section","Absent","Present") end
-        for _,key in ipairs(FIELDS[s.kind]) do add(s,key,previous and previous.values[key] or "",s.values[key]) end
+        for _,key in ipairs(FIELDS[s.kind]) do add(s,key,previous and previous.values[key] or "",s.values[key] or "") end
     end
     return {api_version=1,ok=true,phase="config-preview",schema="public-uci-v1",can_commit=false,section_count=#proposed,changes=changes,
         warnings={"Preview only. Configuration remains unchanged.","Services and access control are disabled in the restore candidate.","Credentials, source URLs, upstream URLs and certificate files must be restored separately."}}

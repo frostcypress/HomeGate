@@ -853,10 +853,11 @@ local function find_account_by_identity(cur, values, catalog)
     return found
 end
 
-local function find_certificate_for_domain(cur, domain, wanted_source, wanted_environment, wanted_ca)
+local function find_certificate_for_domain(cur, domain, wanted_source, wanted_environment, wanted_ca, management)
     local exact, wildcard = nil, nil
     cur:foreach("homegate", "certificate", function(s)
         if exact then return end
+        if management and (not bool_value(s.enabled) or certificate_environment(s) == CERT_ENV_STAGING) then return end
         if wanted_source and certificate_source(s) ~= wanted_source then return end
         if wanted_source == "acme" and (wanted_environment or wanted_ca) then
             if not certificate_acme_matches(s, wanted_ca or DEFAULT_CA, wanted_environment or CERT_ENV_PRODUCTION) then return end
@@ -971,7 +972,7 @@ end
 local function certificate_use_count(cur, id)
     id = safe_id(id)
     if id == "" then return 0 end
-    local count = 0
+    local count = safe_id(cur:get("homegate","main","management_certificate")) == id and 1 or 0
     cur:foreach("homegate", "web_rule", function(s)
         if safe_id(s.certificate) == id then count = count + 1 end
     end)
@@ -1083,7 +1084,10 @@ local function public_services(cur)
     local provider_catalog = dns_provider_catalog()
     local main = cur:get_all("homegate", "main") or {}
     local default_renew = tonumber(main.renew_days or "5") or 5
+    local port_model=require("luci.model.homegate.backup")
     local cert_use = {}
+    local management_certificate=safe_id(main.management_certificate)
+    if management_certificate~="" then cert_use[management_certificate]=1 end
     cur:foreach("homegate", "web_rule", function(s)
         local cid = safe_id(s.certificate)
         if cid ~= "" then cert_use[cid] = (cert_use[cid] or 0) + 1 end
@@ -1112,14 +1116,13 @@ local function public_services(cur)
 
     local function first_ddns(domain)
         local list = ddns_by_domain[domain] or {}
-        for _, id in ipairs(list) do
-            if not ddns_used[id] then ddns_used[id] = true return get_section(cur, id, "ddns_rule") end
-        end
-        return nil
+        local id=list[1]
+        if id then ddns_used[id]=true;return get_section(cur,id,"ddns_rule") end
     end
 
     local function make_row(domain, web, ddns)
         local account = ddns and get_section(cur, ddns.account, "dns_account") or nil
+        local port=web and port_model.web_port(main,web) or 0
         local cert = nil
         if web and safe_id(web.certificate) ~= "" then cert = cert_by_id[safe_id(web.certificate)] end
         if not cert then cert = find_certificate_for_domain(cur, domain) end
@@ -1159,10 +1162,13 @@ local function public_services(cur)
             cert_renew_days = cert and tostring(tonumber(cert.renew_days or "") or default_renew) or tostring(default_renew),
             cert_shared = cert and (cert_use[cert.id] or 0) > 1 or false,
             delete_confirm = delete_confirm,
-            enabled = web and (bool_value(web.enabled) and "1" or "0") or (ddns and (bool_value(ddns.enabled) and "1" or "0") or "0"),
+            enabled = web and (bool_value(web.enabled) and port_model.custom_public_port(web.external_port) and "1" or "0") or (ddns and (bool_value(ddns.enabled) and "1" or "0") or "0"),
             domain = domain,
             target = web and trim(web.target) or "",
             https = web and (bool_value(web.https) and "1" or "0") or "1",
+            external_port = web and trim(web.external_port) or "",
+            effective_port = port,
+            port_suffix = port>0 and port~=(web.https=="1" and 443 or 80) and ":"..port or "",
             provider = account and provider_name(trim(account.provider) ~= "" and account.provider or "aliyun", provider_catalog) or "aliyun",
             key_id = account and trim(account.key_id) or "",
             provider_account_id = account and trim(account.account_id) or "",
@@ -1191,7 +1197,10 @@ local function public_services(cur)
             ddns_used[id] = true
         end
     end)
-    table.sort(rows, function(a, b) return trim(a.domain) < trim(b.domain) end)
+    table.sort(rows, function(a,b)
+        if a.domain~=b.domain then return a.domain<b.domain end
+        return (tonumber(a.effective_port) or 0)<(tonumber(b.effective_port) or 0)
+    end)
     return rows
 end
 
@@ -1599,14 +1608,18 @@ function action_public_apply()
     if access_deny ~= nil and not validate_access_allow(access_deny) then return fail("Invalid denied IP or network") end
 
     local original_web, original_ddns = {}, {}
-    local original_web_rows, original_ddns_rows = {}, {}
+    local original_web_rows, original_ddns_rows, original_ddns_by_domain, domain_certificates = {}, {}, {}, {}
     local original_web_cert, original_web_cert_managed = {}, {}
     local original_local_certs = {}
     cur:foreach("homegate", "web_rule", function(s)
         local id = s[".name"]
         original_web[id] = true
-        original_web_rows[id] = { id = id, certificate = safe_id(s.certificate), domain = trim(s.domain) }
+        original_web_rows[id] = { id = id, certificate = safe_id(s.certificate), domain = trim(s.domain), external_port=s.external_port, target=trim(s.target), https=s.https }
         original_web_cert[id] = safe_id(s.certificate)
+        if s.https=="1" and original_web_cert[id]~="" then
+            local domain=trim(s.domain)
+            domain_certificates[domain]=domain_certificates[domain] or original_web_cert[id]
+        end
         local explicit_managed = trim(s.certificate_managed)
         if explicit_managed ~= "" then
             original_web_cert_managed[id] = bool_value(explicit_managed)
@@ -1618,18 +1631,53 @@ function action_public_apply()
     cur:foreach("homegate", "ddns_rule", function(s)
         local id = s[".name"]
         original_ddns[id] = true
-        original_ddns_rows[id] = { id = id, account = safe_id(s.account), zone = trim(s.zone):lower():gsub("%.$", "") }
+        local domain=full_domain(s.zone,s.host)
+        original_ddns_rows[id] = { id = id, account = safe_id(s.account), zone = trim(s.zone):lower():gsub("%.$", ""), domain=domain }
+        original_ddns_by_domain[domain]=original_ddns_by_domain[domain] or id
     end)
     cur:foreach("homegate", "certificate", function(s)
         if certificate_source(s) == "local" then original_local_certs[s[".name"]] = true end
     end)
 
-    local kept_web, kept_ddns, seen_domains = {}, {}, {}
+    local kept_web, kept_ddns, seen_addresses, shared_dns, posted_ddns, protocols = {}, {}, {}, {}, {}, {}
     local main = cur:get_all("homegate", "main") or {}
+    local port_model=require("luci.model.homegate.backup")
+    local submitted_management=h.formvalue("management_domain")
+    if submitted_management~=nil then
+        local management_domain=port_model.management_domain(trim(submitted_management))
+        local management_wan=h.formvalue("management_wan")=="1" and "1" or "0"
+        if not management_domain then return fail("Invalid management domain") end
+        if management_domain=="" and management_wan=="1" then return fail("Management domain required for WAN access") end
+        local certificate=""
+        if management_domain~="" then
+            if management_domain~=trim(main.management_domain) or (management_wan=="1" and main.management_wan~="1") then
+                if main.auto_firewall=="0" then return fail("Automatic firewall is required for management domain") end
+                local native,management=pcall(require,"luci.model.homegate.management")
+                if native then
+                    certificate=management.certificate(management_domain)
+                else
+                    local found=find_certificate_for_domain(cur,management_domain,nil,nil,nil,true)
+                    certificate=found and found.id
+                end
+                if not certificate then return fail("Management domain requires a matching production certificate") end
+            else
+                certificate=trim(main.management_certificate)
+            end
+        end
+        -- Reserve the selected certificate before processing ordinary rows:
+        -- one operation may select a domain and remove the row sharing its pair.
+        cur:set("homegate","main","management_domain",management_domain)
+        cur:set("homegate","main","management_wan",management_wan)
+        cur:set("homegate","main","management_certificate",certificate)
+    end
     local default_renew = tonumber(main.renew_days or "5") or 5
     local provider_catalog = dns_provider_catalog()
     local ca_catalog = acme_ca_catalog()
     local pending_local = {}
+    for i=1,count do
+        local id=safe_id(h.formvalue("public_service_"..i.."_ddns_id"))
+        posted_ddns[id]=(posted_ddns[id] or 0)+1
+    end
 
     for i = 1, count do
         local prefix = "public_service_" .. i .. "_"
@@ -1651,6 +1699,14 @@ function action_public_apply()
         local domain = trim(h.formvalue(prefix .. "domain")):lower():gsub("%.$", "")
         local target = trim(h.formvalue(prefix .. "target"))
         local https = bool_value(h.formvalue(prefix .. "https"))
+        local submitted_port=h.formvalue(prefix .. "external_port")
+        local external_port=trim(submitted_port or (original_web_rows[web_id] or {}).external_port)
+        if external_port~="" then
+            if not external_port:match("^%d+$") or #external_port>5 or tonumber(external_port)<1 or tonumber(external_port)>65535 then
+                return fail("External port must be between 1 and 65535")
+            end
+            external_port=tostring(tonumber(external_port))
+        end
         local cert_mode = trim(h.formvalue(prefix .. "cert_mode")):lower()
         if cert_mode ~= "local" then cert_mode = "auto" end
         local cert_ca, cert_environment, _, cert_ca_err = normalize_ca_selection(
@@ -1671,8 +1727,25 @@ function action_public_apply()
             domain = full_domain(zone, host)
         end
         if domain == "" or domain:find("[%s/]") then return fail("Valid public service domain is required") end
-        if seen_domains[domain] then return fail("Duplicate public service domain") end
-        seen_domains[domain] = true
+        local route={domain=domain,https=https and "1" or "0",external_port=external_port~="" and external_port or nil}
+        if target~="" and not port_model.custom_public_port(external_port) then
+            local previous=original_web_rows[web_id]
+            -- Keep old rows editable without allowing them to reclaim either
+            -- default port. An unchanged legacy row can be saved disabled.
+            if enabled or not previous or previous.domain~=domain or previous.target~=target or
+                previous.https~=route.https or trim(previous.external_port)~=external_port then
+                return fail("Public services require a custom port other than 80 or 443")
+            end
+        end
+        if port_model.web_port_conflicts(main,route) then return fail("External port conflicts with a reserved service port") end
+        if target~="" then
+            local port=port_model.web_port(main,route)
+            if port>0 and protocols[port] and protocols[port]~=route.https then return fail("External port cannot serve both HTTP and HTTPS") end
+            if port>0 then protocols[port]=route.https end
+        end
+        local address=target~="" and port_model.web_address(main,route) or domain
+        if seen_addresses[address] then return fail("Duplicate public service domain and external port") end
+        seen_addresses[address]=true
 
         local account = account_id ~= "" and dns_account_raw(cur, account_id) or nil
         if zone ~= "" then
@@ -1717,14 +1790,26 @@ function action_public_apply()
                 end
             end
 
-            if ddns_id ~= "" and not get_section(cur, ddns_id, "ddns_rule") then return fail("DDNS rule not found") end
-            if ddns_id == "" then ddns_id = random_id(cur, "ddns") end
-            ok, err = upsert_section(cur, "ddns_rule", ddns_id, {
-                enabled = enabled and "1" or "0", name = domain, account = account_id,
-                zone = zone, host = (host == "" and "@" or host), type = "AAAA", source = "auto", ttl = tostring(ttl)
-            })
-            if not ok then return fail(err) end
-            kept_ddns[ddns_id] = true
+            local shared=shared_dns[domain]
+            if shared then
+                if shared.account~=account_id or shared.zone~=zone or shared.ttl~=ttl then
+                    return fail("Services for one domain must share DNS settings")
+                end
+                if enabled then cur:set("homegate",shared.id,"enabled","1") end
+            else
+                if ddns_id~="" and not original_ddns[ddns_id] then return fail("DDNS rule not found") end
+                local previous=original_ddns_rows[ddns_id]
+                if previous and previous.domain~=domain and posted_ddns[ddns_id]>1 then ddns_id="" end
+                if ddns_id=="" then ddns_id=original_ddns_by_domain[domain] or random_id(cur,"ddns") end
+                if kept_ddns[ddns_id] then return fail("Services for one domain must share DNS settings") end
+                ok, err = upsert_section(cur, "ddns_rule", ddns_id, {
+                    enabled = enabled and "1" or "0", name = domain, account = account_id,
+                    zone = zone, host = (host == "" and "@" or host), type = "AAAA", source = "auto", ttl = tostring(ttl)
+                })
+                if not ok then return fail(err) end
+                kept_ddns[ddns_id] = true
+                shared_dns[domain]={id=ddns_id,account=account_id,zone=zone,ttl=ttl}
+            end
         elseif ddns_id ~= "" then
             kept_ddns[ddns_id] = true
         end
@@ -1733,10 +1818,20 @@ function action_public_apply()
             if not target:match("^https?://[^%s]+$") then return fail("Target must start with http:// or https://") end
             if web_id ~= "" and not get_section(cur, web_id, "web_rule") then return fail("Web rule not found") end
             if web_id == "" then web_id = random_id(cur, "web") end
+            if kept_web[web_id] then return fail("Duplicate public service row") end
 
             local selected_cert = nil
             local certificate_managed = false
             if https then
+                if not original_web[web_id] and cert_id=="" and not local_uploads[i] and domain_certificates[domain] then
+                    local shared=get_section(cur,domain_certificates[domain],"certificate")
+                    if shared and certificate_covers(shared,domain) then
+                        cert_id=shared.id
+                        cert_mode=certificate_source(shared)=="local" and "local" or "auto"
+                        cert_ca,cert_environment=certificate_ca(shared),certificate_environment(shared)
+                        cert_renew_days=tonumber(shared.renew_days) or default_renew
+                    end
+                end
                 if cert_mode == "local" then
                     local upload = local_uploads[i]
                     if upload then
@@ -1838,6 +1933,7 @@ function action_public_apply()
                         end
                     end
                 end
+                domain_certificates[domain]=cert_id
             else
                 cert_id = ""
                 cert_mode = "auto"
@@ -1846,9 +1942,11 @@ function action_public_apply()
 
             local ok, err = upsert_section(cur, "web_rule", web_id, {
                 enabled = enabled and "1" or "0", domain = domain, target = target, https = https and "1" or "0",
-                certificate = cert_id, certificate_mode = cert_mode, certificate_managed = certificate_managed and "1" or "0"
+                certificate = cert_id, certificate_mode = cert_mode, certificate_managed = certificate_managed and "1" or "0",
+                external_port = route.external_port
             })
             if not ok then return fail(err) end
+            if not route.external_port and (original_web_rows[web_id] or {}).external_port then cur:delete("homegate",web_id,"external_port") end
             kept_web[web_id] = true
         elseif web_id ~= "" then
             return fail("LAN target is required for an existing Web service")
@@ -1924,6 +2022,7 @@ function action_public_apply()
         end
     end
 
+    if main.block_standard_public_ports then cur:delete("homegate","main","block_standard_public_ports") end
     cur:set("homegate", "main", "access_enabled", access_enabled and "1" or "0")
     -- New public forms edit access rules through their own serialized routes.
     if access_allow ~= nil then cur:set("homegate", "main", "access_allow", trim(access_allow)) end
@@ -2005,6 +2104,15 @@ function action_public_action()
         if not web and not ddns then return redirect_page("public", nil, "Public service not found") end
         if web_id ~= "" and not web then return redirect_page("public", nil, "Web rule not found") end
         if ddns_id ~= "" and not ddns then return redirect_page("public", nil, "DDNS rule not found") end
+        if ddns then
+            local domain=full_domain(ddns.zone,ddns.host)
+            if web and trim(web.domain)~=domain then return redirect_page("public",nil,"DDNS rule does not belong to this service") end
+            local shared=false
+            cur:foreach("homegate","web_rule",function(row)
+                if row[".name"]~=web_id and trim(row.domain)==domain then shared=true end
+            end)
+            if shared then ddns=nil;ddns_id="" end
+        end
 
         local needs_confirm = service_delete_needs_confirmation(cur, web, ddns)
         if needs_confirm and trim(http().formvalue("confirmed")) ~= "1" then
@@ -2133,11 +2241,15 @@ function action_wol_apply()
         local seen_ids, seen_macs = {}, {}
         for i = 1, count do
             local id = safe_id(h.formvalue("wol_host_id_" .. i))
-            if id ~= "" and not get_section(cur, id, "wol_host") then return redirect_page("wol", nil, "WOL host not found") end
+            local existing = id ~= "" and get_section(cur, id, "wol_host")
+            if id ~= "" and not existing then return redirect_page("wol", nil, "WOL host not found") end
             if id ~= "" and seen_ids[id] then return redirect_page("wol", nil, "Duplicate WOL host") end
             if id ~= "" then seen_ids[id] = true end
             local mac = normalize_mac(h.formvalue("wol_host_mac_" .. i))
             if not mac then return redirect_page("wol", nil, "Valid MAC address is required") end
+            if existing and mac ~= normalize_mac(existing.mac) then
+                return redirect_page("wol", nil, "WOL host MAC cannot be changed")
+            end
             if seen_macs[mac] then return redirect_page("wol", nil, "Duplicate MAC address") end
             seen_macs[mac] = true
             local name = trim(h.formvalue("wol_host_name_" .. i))

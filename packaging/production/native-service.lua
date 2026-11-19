@@ -67,15 +67,24 @@ end
 if mode=='plan' or mode=='plan-set'then
  local raw=read('/etc/config/homegate',262144);local doc=codec.private_configuration(raw);if not doc then fail()end
  local out={ddns={},certificates={},web={},policy='open'}
+ local web_configured,management_configured=false,false
+ local custom_web={}
  for _,s in ipairs(doc.configuration)do
   local sw=doc.switches[s.name] or {};local enabled=sw.enabled=='1'
   if s.kind=='homegate' then
    if sw.access_enabled=='1' then out.policy='allow' end
    out.access_region=s.values.access_region;out.access_enabled=sw.access_enabled=='1'
    out.auto_firewall=s.values.auto_firewall=='1'
+   management_configured=(s.values.management_domain or '')~=''
   elseif s.kind=='ddns_rule' and enabled then out.ddns[#out.ddns+1]=s.name
   elseif s.kind=='certificate' and enabled and s.values.source=='acme' then out.certificates[#out.certificates+1]=s.name
-  elseif s.kind=='web_rule' and enabled then out.web[#out.web+1]=s.name end
+  elseif s.kind=='web_rule' then
+   web_configured=true
+   if codec.custom_public_port(s.values.external_port) then
+    custom_web[s.name]=true
+    if enabled then out.web[#out.web+1]=s.name end
+   end
+  end
  end
  local revision=tonumber(read('/etc/homegate/transactions/current',16))
  if not revision or revision<1 or revision>999999999 or type(arg[2])~='string' or #arg[2]>8192 then fail()end
@@ -95,10 +104,14 @@ if mode=='plan' or mode=='plan-set'then
   local saved=report(read('/etc/homegate/native-service-plan',16384))
   if saved.format~='native-service-plan-v1' or saved.configuration_revision~=revision or saved.source_binding~=arg[2] or (saved.policy~='open' and saved.policy~='allow')then fail()end
   for _,key in ipairs({'ddns','certificates','web'})do if type(saved[key])~='table'then fail()end end
+  local web={};for _,name in ipairs(saved.web)do if custom_web[name] then web[#web+1]=name end end
+  saved.web=web
   out=saved
  end
  if #out.ddns>32 or #out.web>16 or #out.certificates>32 then fail()end
  for _,k in ipairs({'ddns','certificates','web'})do table.sort(out[k])end
+ out.web_configured=web_configured
+ out.management_configured=management_configured
  emit(out);return
 elseif mode=='field'then
  local d=report(io.stdin:read(16385));local key=arg[2]
@@ -107,7 +120,7 @@ elseif mode=='field'then
   for _,v in ipairs(d[key])do if type(v)~='string' or #v>64 or not v:match('^[a-zA-Z0-9_-]+$')then fail()end end
   io.write(table.concat(d[key],key=='web' and ',' or ' '),'\n')
  elseif key=='policy' and (d.policy=='open' or d.policy=='allow')then io.write(d.policy,'\n')
- elseif key=='auto_firewall' and type(d.auto_firewall)=='boolean'then io.write(d.auto_firewall and 'true\n' or 'false\n')
+ elseif (key=='auto_firewall' or key=='web_configured' or key=='management_configured') and type(d[key])=='boolean'then io.write(d[key] and 'true\n' or 'false\n')
  else fail()end;return
 elseif mode=='ready'then
  local d=report(io.stdin:read(16385))

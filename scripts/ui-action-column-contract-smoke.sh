@@ -28,7 +28,7 @@ html=f'''<!doctype html><html lang="zh-CN" class="hg-theme-foundation hg-theme-b
 <div class="hg-wrap fixture" id="pub" style="width:860px"><div class="hg-table-scroll-wrap"><table class="hg-table hg-public-table" id="pubTable">
 <thead><tr><th>启用</th><th>访问地址</th><th>内网目标</th><th id="pubHead" class="hg-action-head hg-public-action-head">操作</th></tr></thead>
 <tbody id="pubBody"><tr><td></td><td class="hg-public-address">https://x.chenos.cn（证书剩余 89 天）</td><td>x</td><td id="pubCell" class="hg-actions hg-action-cell hg-action-group"><button id="pubFirst" class="cbi-button hg-btn-4">编辑</button><button class="cbi-button hg-btn-4">同步</button><button class="cbi-button hg-btn-4">续期</button><button id="pubLast" class="cbi-button hg-btn-4">删除</button></td></tr></tbody></table></div></div>
-<div class="hg-wrap fixture" id="wol" style="width:720px"><div class="hg-table-scroll-wrap"><table class="hg-table hg-wol-table" id="wolTable"><colgroup><col style="width:34%"><col><col style="width:240px"></colgroup>
+<div class="hg-wrap fixture" id="wol" style="width:860px"><div class="hg-table-scroll-wrap"><table class="hg-table hg-wol-table" id="wolTable"><colgroup><col style="width:34%"><col><col class="hg-wol-actions-col"></colgroup>
 <thead><tr><th>名称</th><th>MAC 地址</th><th id="wolHead" class="hg-action-head hg-wol-action-head"><div class="hg-wol-actions-head">操作</div></th></tr></thead>
 <tbody id="wolBody"><tr><td>x</td><td>x</td><td id="wolCell" class="hg-actions hg-action-cell"><div class="hg-action-group hg-wol-actions-group"><button id="wolFirst" class="cbi-button hg-btn-4">编辑</button><button class="cbi-button hg-btn-4">唤醒</button><button id="wolLast" class="cbi-button hg-btn-4">删除</button></div></td></tr></tbody></table></div></div>
 <div class="hg-modal hg-access-modal fixture" id="access"><div class="hg-access-table-wrap"><table class="hg-table hg-access-table" id="accessTable"><colgroup><col><col style="width:145px"><col style="width:150px"><col style="width:170px"><col class="hg-access-actions-col"></colgroup>
@@ -73,6 +73,7 @@ fail=[]
 for name,vals in [('Public',r['pub']),('WOL',r['wol'])]:
     if not near(vals[0],vals[1]): fail.append(f'{name} header/first-action drift')
     if vals[2] > vals[3]+1: fail.append(f'{name} action overflow')
+if not near(r['pub'][1],r['wol'][1]): fail.append('Public and WOL first actions start at different positions')
 if not near(r['access'][0],r['access'][1]): fail.append('Access header/first-action drift')
 if not near(r['access'][2],r['access'][3]) or not near(r['access'][2],r['access'][4]): fail.append('Access second-action/right-edge drift')
 if r['empty'][0] != 'center' or not near(r['empty'][1],r['empty'][2]): fail.append('colspan message not centered')

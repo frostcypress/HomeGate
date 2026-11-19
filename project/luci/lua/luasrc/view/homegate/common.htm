@@ -81,8 +81,10 @@
   --hg-public-enabled-width: 58px;
   --hg-public-address-min: 250px;
   --hg-public-target-min: 220px;
-  --hg-public-actions-width: 292px;
-  --hg-public-actions-inset: 8px;
+  --hg-service-actions-width: 292px;
+  --hg-service-actions-inset: 8px;
+  --hg-service-actions-gap: 4px;
+  --hg-service-list-min-width: calc(var(--hg-public-enabled-width) + var(--hg-public-address-min) + var(--hg-public-target-min) + var(--hg-service-actions-width) + 3 * var(--hg-public-column-gap));
 }
 /* Theme-neutral geometry: HomeGate owns containment/overflow while the host theme keeps colors and outer LuCI chrome. */
 .hg-wrap > *, .hg-wrap .cbi-section, .hg-wrap .hg-section, .hg-wrap .hg-section-head,
@@ -304,7 +306,7 @@ html:lang(zh) .hg-log-actions .hg-btn-4, html:lang(zh) .hg-button-row .hg-btn-4 
 .hg-file-picker .cbi-button { flex: 0 0 auto; margin: 0 !important; }
 .hg-file-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; opacity: .78; }
 .hg-table-scroll-wrap { display: block; width: 100%; max-width: 100%; min-width: 0; overflow-x: auto; overflow-y: hidden; -webkit-overflow-scrolling: touch; box-sizing: border-box; }
-.hg-public-table { display: block; width: 100%; min-width: 820px; }
+.hg-public-table { display: block; width: 100%; min-width: var(--hg-service-list-min-width); }
 .hg-public-table thead, .hg-public-table tbody { display: block; width: 100%; }
 .hg-public-table tr {
   display: grid;
@@ -312,7 +314,7 @@ html:lang(zh) .hg-log-actions .hg-btn-4, html:lang(zh) .hg-button-row .hg-btn-4 
     var(--hg-public-enabled-width)
     minmax(var(--hg-public-address-min), 1.55fr)
     minmax(var(--hg-public-target-min), 1fr)
-    var(--hg-public-actions-width);
+    var(--hg-service-actions-width);
   column-gap: var(--hg-public-column-gap);
   align-items: center; width: 100%; box-sizing: border-box;
 }
@@ -322,11 +324,13 @@ html:lang(zh) .hg-log-actions .hg-btn-4, html:lang(zh) .hg-button-row .hg-btn-4 
   border: 0 !important; border-top: 0 !important; border-bottom: 0 !important; box-shadow: none !important;
 }
 .hg-public-table th, .hg-public-table td { min-width: 0; padding: .45em 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-/* Desktop action contract mirrors WOL: Actions starts exactly where Edit starts.
- * Hidden/unsupported actions are not rendered, so later buttons move forward. */
-.hg-wrap .hg-public-table th.hg-public-action-head, .hg-wrap .hg-public-table td.hg-actions { padding-left: var(--hg-public-actions-inset) !important; padding-right: 0 !important; }
+/* Both service lists align the action heading with the first button. */
+.hg-wrap .hg-public-table th.hg-public-action-head, .hg-wrap .hg-public-table td.hg-actions,
+.hg-wrap .hg-wol-table th.hg-wol-action-head, .hg-wrap .hg-wol-table td.hg-actions {
+  padding-left: var(--hg-service-actions-inset) !important; padding-right: 0 !important;
+}
 .hg-public-table td.hg-actions { overflow: visible; text-overflow: clip; }
-.hg-public-table td.hg-action-group { gap: 4px; }
+.hg-public-table td.hg-action-group, .hg-wol-actions-group { gap: var(--hg-service-actions-gap); }
 /* Long addresses and status text wrap within their own table cell. */
 .hg-public-table :is(.hg-public-address, .hg-public-target) {
   white-space: normal !important; overflow: visible !important; text-overflow: clip !important;
@@ -391,18 +395,16 @@ html:lang(zh) .hg-log-actions .hg-btn-4, html:lang(zh) .hg-button-row .hg-btn-4 
 .hg-access-action-group { width: 100%; max-width: 100%; }
 .hg-access-actions-col { width: var(--hg-access-actions-width); }
 .hg-access-footer { justify-content: space-between; }
-.hg-wol-table { table-layout: fixed; min-width: 720px; }
+.hg-wol-table { table-layout: fixed; min-width: var(--hg-service-list-min-width); }
 .hg-wol-table thead, .hg-wol-table tbody, .hg-wol-table tr,
 .hg-wol-table th, .hg-wol-table td {
   border: 0 !important; border-top: 0 !important; border-bottom: 0 !important; box-shadow: none !important;
 }
 .hg-wol-table td { font-weight: 400 !important; }
-/* WOL action contract: header starts exactly where Edit starts; the three actions have room to breathe. */
-.hg-wrap .hg-wol-table th.hg-wol-action-head, .hg-wrap .hg-wol-table td.hg-actions { padding-left: 0 !important; padding-right: 0 !important; }
+.hg-wol-actions-col { width: var(--hg-service-actions-width); }
 .hg-wol-table td.hg-actions { overflow: visible; text-align: left; }
 .hg-wol-actions-head, .hg-wol-actions-group { box-sizing: border-box; width: 100%; margin: 0; }
 .hg-wol-actions-head { text-align: left; }
-.hg-wol-actions-group { gap: 18px; }
 
 /* Known-theme adapter: Design. This block preserves the frozen Design regression surface only.
  * The generic foundation remains the default for every other LuCI theme. */

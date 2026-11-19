@@ -165,6 +165,9 @@ revision=$(lua "$dir/cloudflare-codec.lua" context < "$store/current" 9>&-) || f
 ddns=$(printf '%s\n' "$plan" | lua "$codec" field ddns 9>&-) || fail
 certificates=$(printf '%s\n' "$plan" | lua "$codec" field certificates 9>&-) || fail
 web=$(printf '%s\n' "$plan" | lua "$codec" field web 9>&-) || fail
+web_configured=$(printf '%s\n' "$plan" | lua "$codec" field web_configured 9>&-) || fail
+management_configured=$(printf '%s\n' "$plan" | lua "$codec" field management_configured 9>&-) || fail
+if [ "$management_configured" = true ] && [ -z "$web" ];then web=-;fi
 policy=$(printf '%s\n' "$plan" | lua "$codec" field policy 9>&-) || fail
 auto_firewall=$(printf '%s\n' "$plan" | lua "$codec" field auto_firewall 9>&-) || fail
 info=$(lua "$dir/worker-process.lua" info "$$" none 9>&-) || fail
@@ -293,6 +296,15 @@ reset_failed_proxy() {
  done
  return 1
 }
+idle_firewall_token=
+next_firewall_check=0
+if [ "$auto_firewall:$web_configured" = true:true ] && [ -z "$web" ];then
+ idle_firewall_token=$(lua "$dir/cloudflare-codec.lua" nonce 9>&- < /proc/sys/kernel/random/uuid) || fail
+ ash "$dir/homegate-firewall.sh" protect-idle "$idle_firewall_token" >/dev/null ||
+   { emit failed firewall_apply_failed;exit 7; }
+ now=$(lua "$dir/worker-process.lua" now 9>&-) || fail
+ next_firewall_check=$((now+10))
+fi
 if [ -z "$certificates" ] && [ -z "$web" ];then start_ddns || { emit failed authorization_required;exit 4; };fi
 next_check=0
 while :;do
@@ -302,6 +314,16 @@ while :;do
  fi
  current=$(stamp && plan_stamp) || { emit failed source_unavailable;exit 4; }
  if [ "$reload" = true ] || [ "$current" != "$binding" ];then emit restart_required source_changed;exit 4;fi
+ if [ -n "$idle_firewall_token" ];then
+  now=$(lua "$dir/worker-process.lua" now 9>&-) || fail
+  if [ "$now" -ge "$next_firewall_check" ];then
+   # Refresh on WAN address changes and after a firewall reload. The worker's
+   # nonblocking locks leave any admitted DDNS or ACME operation in control.
+   if ash "$dir/homegate-firewall.sh" protect-idle "$idle_firewall_token" >/dev/null;then
+    next_firewall_check=$((now+10))
+   fi
+  fi
+ fi
  # Bring up routes that already have usable certificates before making a
  # potentially long ACME request. Pending names fail closed in Nginx.
  if [ -n "$web" ] && [ "$proxy_started" = false ];then

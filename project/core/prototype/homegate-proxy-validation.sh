@@ -22,11 +22,12 @@ stop_family() { kill -TERM -- "-$$" 2>/dev/null || :;sleep .2;kill -KILL -- "-$$
   exec /usr/libexec/homegate-nginx/nginx -t -p "$P/" -c "$P/candidate.conf" -g 'daemon off;'
  fi
  which=${action%-probe};probes=$(lua "$HG_DIR/homegate-proxy.lua" probes "$which") || exit 1
- port=$(lua "$HG_DIR/homegate-proxy.lua" port) || exit 1
- printf '%s\n' "$probes" | while IFS=: read -r host expected;do
+ printf '%s\n' "$probes" | while IFS=: read -r host expected port family;do
   [ -n "$host" ] || continue
+  case "$port" in ''|*[!0-9]*) exit 1;;esac
+  case "$family" in '') address=127.0.0.1;;6) address='[::1]' ;;*) exit 1;;esac
   for n in peer.pem peer.der error;do if hg_exists "$P/probe/$n";then hg_file "$P/probe/$n" 131072 || exit 1;fi;done
-  printf 'GET / HTTP/1.0\r\nHost: [::1]\r\n\r\n' | /usr/bin/openssl s_client -connect "127.0.0.1:$port" -servername "$host" -showcerts -ign_eof > "$P/probe/peer.pem" 2> "$P/probe/error" || exit 1
+  printf 'GET / HTTP/1.0\r\nHost: [::1]\r\n\r\n' | /usr/bin/openssl s_client -connect "$address:$port" -servername "$host" -showcerts -ign_eof > "$P/probe/peer.pem" 2> "$P/probe/error" || exit 1
   hg_file "$P/probe/peer.pem" 131072 || exit 1
   /usr/bin/openssl x509 -in "$P/probe/peer.pem" -outform DER -out "$P/probe/peer.der" 2>/dev/null || exit 1
   sum=$(sha256sum "$P/probe/peer.der");[ "${sum%% *}" = "$expected" ] || exit 1

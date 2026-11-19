@@ -12,6 +12,17 @@ end
 local function same(a,b,encode)
     return type(a)=='table' and type(b)=='table' and encode(a)==encode(b)
 end
+function M.listening_ports(raw,ports)
+    for line in raw:gmatch('[^\n]+') do
+        local port,state=line:match('^%s*%d+:%s+%x+:(%x+)%s+%x+:%x+%s+(%x+)')
+        if state=='0A' then ports[tonumber(port,16)]=true end
+    end
+end
+function M.redirects_http(plan,route)
+    if not route.https then return false end
+    if route.redirect_http~=nil then return route.redirect_http==true end
+    return not route.public_port or route.public_port==443 or route.public_port==plan.public_https_port
+end
 -- Bounded authority grammar; reject userinfo/fragments and unsafe bytes.
 function M.target(value,ip)
     if type(value)~='string' or #value==0 or #value>4096 or value:find('[%z\1-\32\127]') or value:find('[\\#]') then return false end
@@ -59,8 +70,11 @@ function M.validate(snapshot,candidate,encode,ip)
             if not M.target((candidate.public_projection and snapshot.credentials or candidate.credentials)['web.'..name..'.target'],ip) then return nil,'invalid_web_target' end
             local v=s.values
             if (v.https=='1' and tonumber(main.values.proxy_https_port)==0) or tonumber(main.values.proxy_http_port)==0 then return nil,'web_port_unavailable' end
-            if domains[v.domain] then return nil,'duplicate_web_domain' end
-            domains[v.domain]=true
+            local port=tonumber(v.external_port or (v.https=='1' and main.values.https_port or main.values.http_port)) or 0
+            port=port>0 and port or (v.https=='1' and 443 or 80)
+            local address=v.domain..'\0'..port
+            if domains[address] then return nil,'duplicate_web_domain' end
+            domains[address]=true
         end
     end
     return counts

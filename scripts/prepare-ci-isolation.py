@@ -9,14 +9,13 @@ import shutil
 import socket
 import subprocess
 import sys
-import urllib.request
 from project import ROOT
 
 RESTRICTION = Path('/proc/sys/kernel/apparmor_restrict_unprivileged_userns')
 PACKAGE_URL = ('https://archive.ubuntu.com/ubuntu/pool/main/a/apparmor/'
                'apparmor-profiles_4.0.1really4.0.1-0ubuntu0.24.04.9_all.deb')
 PACKAGE_SHA256 = '90b02aa006eea7702cd4e851343e469e41365dda42145a3cb035de1d6c773b8c'
-PROFILE_NAME = 'usr/share/apparmor/extra-profiles/bwrap-userns-restrict'
+PROFILE = ROOT / 'third_party/ubuntu-apparmor-4.0.1/bwrap-userns-restrict'
 PROFILE_SHA256 = '11d39094f044f0cda0febb3ad517b830301da6b2ce929664af09ee9e4dd264f9'
 
 
@@ -63,20 +62,7 @@ def probe():
     return doc
 
 
-def verified_profile(work):
-    work.mkdir(parents=True, exist_ok=True)
-    package = work / 'apparmor-profiles.deb'
-    if not package.exists():
-        with urllib.request.urlopen(PACKAGE_URL, timeout=30) as response:
-            body = response.read(1048577)
-        if len(body) > 1048576 or hashlib.sha256(body).hexdigest() != PACKAGE_SHA256:
-            raise ValueError('Distribution AppArmor package checksum mismatch')
-        package.write_bytes(body)
-    if hashlib.sha256(package.read_bytes()).hexdigest() != PACKAGE_SHA256:
-        raise ValueError('Cached AppArmor package checksum mismatch')
-    extraction = work / 'package'
-    subprocess.run(['dpkg-deb', '-x', str(package), str(extraction)], check=True)
-    profile = extraction / PROFILE_NAME
+def verified_profile(profile):
     if profile.is_symlink() or not profile.is_file() or hashlib.sha256(profile.read_bytes()).hexdigest() != PROFILE_SHA256:
         raise ValueError('Distribution bwrap profile checksum mismatch')
     parser = shutil.which('apparmor_parser')
@@ -111,7 +97,7 @@ def main():
         hosted = os.environ.get('GITHUB_ACTIONS') == 'true' and os.environ.get('RUNNER_ENVIRONMENT') == 'github-hosted'
         if not known or before_setting != '1' or not hosted:
             raise ValueError('Private bwrap probe failed; no general sandbox bypass: ' + before['stderr'])
-        executable, profile = verified_profile(work)
+        executable, profile = verified_profile(PROFILE)
         # Load only Ubuntu's pinned bwrap-specific profile on the disposable hosted runner.
         # Its unpriv_bwrap child profile denies capabilities; no global sysctl/service change.
         subprocess.run(['sudo','-n',executable,'--replace','--skip-cache',str(profile)], check=True)

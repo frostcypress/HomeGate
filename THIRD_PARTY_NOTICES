@@ -32,6 +32,12 @@ Official source: https://github.com/acmesh-official/acme.sh
 Unmodified executable source and complete license: third_party/acme.sh-3.1.6/.
 HomeGate supplies its own fixed DNS/HTTP adapters and does not run the installer, cron, or automatic upgrade.
 
+Ubuntu AppArmor 4.0.1 (CI host prerequisite only)
+The original bwrap-userns-restrict source is extracted from Ubuntu
+apparmor-profiles 4.0.1really4.0.1-0ubuntu0.24.04.9 and distributed under GPL-2.0-or-later.
+Ubuntu's copyright notice and the GPL-2 license are preserved in third_party/ubuntu-apparmor-4.0.1/.
+Package provenance and both SHA-256 digests are recorded in docs/CI私有隔离与AppArmor前置.md.
+
 HomeGate private nginx component recipe (r151)
 Upstream nginx 1.30.6: https://nginx.org/ (BSD-2-Clause; LICENSE retained in the component package).
 Cross-compile patches: ImmortalWrt packages commit fce1553dac2d00c0b0f66647d8a9bd102b73e49c, net/nginx/patches/nginx.

@@ -599,6 +599,9 @@
     "third_party/acme.sh-3.1.6/PROVENANCE.json",
     "third_party/acme.sh-3.1.6/acme.sh",
     "third_party/acme.sh-3.1.6/allowed_signers",
+    "third_party/ubuntu-apparmor-4.0.1/COPYRIGHT",
+    "third_party/ubuntu-apparmor-4.0.1/GPL-2.txt",
+    "third_party/ubuntu-apparmor-4.0.1/bwrap-userns-restrict",
     "公开文件清单.json"
   ]
 }

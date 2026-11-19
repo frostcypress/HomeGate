@@ -106,7 +106,13 @@ if [ "$scheduled" != true ] && { [ "$action" = issue ] || [ "$action" = renew ];
 fi
 hg_dir "$HG_RUN" && hg_dir "$HG_STORE" || fail
 if hg_exists "$HG_RUN/ddns-schedule";then
- if [ "$allow_continuous_ddns" != true ] || ! ash "$HG_DIR/homegate-ddns-schedule.sh" acme-compatible >/dev/null 2>/dev/null;then
+ compatible=4
+ if [ "$allow_continuous_ddns" = true ];then
+  compatible=0
+  ash "$HG_DIR/homegate-ddns-schedule.sh" acme-compatible >/dev/null 2>/dev/null || compatible=$?
+ fi
+ if [ "$compatible" = 8 ];then fail 8;fi
+ if [ "$compatible" != 0 ];then
   ash "$HG_DIR/homegate-ddns-schedule.sh" quiescent >/dev/null 2>/dev/null || fail 4
  fi
 fi

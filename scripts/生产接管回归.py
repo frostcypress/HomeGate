@@ -832,6 +832,15 @@ esac
         synced=self.web_wait(submitted['job'],seconds=35)
         self.assertTrue(synced['ok'],synced);self.assertIn('notice=',synced['redirect'])
         self.assertEqual((schedule/'lease').read_bytes(),lease);request()
+        jobs=Path('/etc/homegate/acme/jobs')
+        busy_job='b'*32
+        with (run/'ddns-schedule.control.lock').open('ab') as held:
+            fcntl.flock(held,fcntl.LOCK_EX)
+            refused=subprocess.run(['/usr/sbin/ash','/usr/libexec/homegate/project/core/prototype/homegate-acme-job.sh',
+                'issue-live','cert_a',busy_job,'--confirm'],capture_output=True,timeout=10)
+            self.assertEqual(refused.returncode,8,refused.stdout)
+            self.assertEqual(json.loads(refused.stdout)['effect'],'none')
+            self.assertFalse((jobs/busy_job).exists())
         submitted=self.web_request('public_action',{'op':'cert_renew','id':'cert_a'},True)
         renewed=self.web_wait(submitted['job'],seconds=65)
         self.assertTrue(renewed['ok'],renewed);self.assertEqual(renewed['native_job'],submitted['job'])

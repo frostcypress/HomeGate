@@ -66,7 +66,7 @@ class Proxy(web.Web):
         # The owner can exit between the lock and process-identity reads.
         # Its exact fail-closed response is not a stopped result. Observe again
         # only after an accepted stop, within ready()'s original deadline.
-        unavailable=b'{"api_version":1,"engineering":true,"ok":false,"phase":"proxy","effect":"none","write_ready":false,"error":"Proxy unavailable; inspect retained session"}\n'
+        unavailable=b'{"api_version":1,"engineering":true,"ok":false,"phase":"proxy","effect":"none","write_ready":false,"step":"admission","error":"Proxy unavailable; inspect retained session"}\n'
         if stopping and args==('proxy-status',) and raw is None and ok and r.returncode==7 and r.stdout==unavailable and not r.stderr:
             print('Stop observation unavailable; terminal state still required',flush=True)
             return None

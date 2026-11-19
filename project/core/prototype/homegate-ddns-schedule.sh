@@ -175,7 +175,10 @@ validate_control() {
 }
 if [ "$action" = acme-compatible ]; then
     private_file "$runlock" && private_file "$control" && read_lease && alive && stop_read || fail 4
-    [ "$lease_mode:$live:$stopping:$control_busy" = serve:true:false:false ] || fail 4
+    [ "$lease_mode:$live:$stopping" = serve:true:false ] || fail 4
+    # An observer or stop publisher can briefly hold the control lock.
+    # The caller must observe the lease again before admitting any work.
+    [ "$control_busy" = false ] || fail 8
     # The continuous worker releases partial lock acquisitions and waits while
     # ACME owns the business locks. Finite sessions still require quiescence.
     exit 0

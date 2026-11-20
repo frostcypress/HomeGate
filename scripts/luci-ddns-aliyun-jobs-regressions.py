@@ -243,7 +243,19 @@ class AliyunMixedJobs(AliyunJobs):
             self.assertEqual(before,self.snapshot());self.assertEqual(requests,self.requests)
     def test_aliyun_06_interface_create_keeps_original_signed_receipt(self):
         with self.session() as session:
-            row=self.run_mixed_job(session);self.assert_origin(row,'created');self.assertEqual(self.mutations(),['AddDomainRecord'])
+            row=self.run_mixed_job(session)
+            try:
+                self.assert_origin(row,'created')
+            except AssertionError:
+                result=row['result'] if isinstance(row['result'],dict) else {}
+                keys=('status','effect','error_kind','reconciliation_required')
+                print('REDACTED_ALIYUN_INTERFACE '+json.dumps({'state':row['state'],'effect':row['last_effect'],
+                    'result':{k:v for k,v in result.items() if k in keys and
+                              (isinstance(v,bool) or isinstance(v,str) and re.fullmatch('[a-z0-9_-]{0,64}',v))},
+                    'http':self.requests,'transport_attempted':(STATE/'transport-events').exists(),
+                    'journal_present':(STORE/'dns-operation').exists()}),flush=True)
+                raise
+            self.assertEqual(self.mutations(),['AddDomainRecord'])
             self.assertTrue(len(self.db)==1 and next(iter(self.db.values()))['Value']=='2001:db8:2::9')
             before=self.snapshot();requests=list(self.requests);self.assertEqual(self.submit(session),row);self.submit(session,job='b'*32,expected=503)
             self.assertEqual(before,self.snapshot());self.assertEqual(requests,self.requests)

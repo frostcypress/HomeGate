@@ -219,7 +219,7 @@ if mode=='render' or mode=='render-access'then
  local default_ports={[d.http_port]=true}
  add('server {');listeners(d.http_port,false,true);add('server_name "";')
  if arg[2]=='native' then
-  add('location = /.homegate-'..token..' { if ($remote_addr != 127.0.0.1) { return 404; } return 200 "'..marker..'"; }')
+  add('location = /.homegate-'..token..' { if ($remote_addr != 127.0.0.1) { return 404; } return 200 "'..marker..':$pid"; }')
  end
  add('location / { return 404; } }')
  if #d.certificates>0 then

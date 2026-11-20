@@ -64,6 +64,56 @@ elseif arg[1]=="group" and arg[2] and arg[3] and not arg[4] then
     end
     if scanned==0 then fail() end
     io.write(count,"\n")
+elseif arg[1]=="nginx-policy-ready" and arg[2] and arg[3] and arg[4] and not arg[5] then
+    local fs=require("nixio.fs")
+    local master,birth,ready=arg[2],arg[3],arg[4]
+    number(master,999999999);number(ready,999999999)
+    local function living(a) return a and a[1]~="Z" and a[1]~="X" end
+    local function master_valid()
+        local a=inspect(master,"none")
+        return living(a) and a[5]==birth
+    end
+    if not master_valid() then fail() end
+    local listeners={}
+    for _,name in ipairs({"tcp","tcp6"}) do
+        local body=read("/proc/net/"..name,1048576)
+        if not body then fail() end
+        for line in body:gmatch("[^\n]+") do
+            local fields={};for value in line:gmatch("%S+") do fields[#fields+1]=value end
+            if fields[4]=="0A" and fields[10] then listeners[fields[10]]=true end
+        end
+    end
+    local function has_listener(pid)
+        local path="/proc/"..pid.."/fd"
+        local entries,errno=fs.dir(path)
+        if not entries then if errno==2 then return false end;fail() end
+        local count=0
+        for fd in entries do
+            if fd:match("^%d+$") then
+                count=count+1;if count>4096 then fail() end
+                local target,link_errno=fs.readlink(path.."/"..fd)
+                if not target and link_errno~=2 then fail() end
+                local inode=target and target:match("^socket:%[(%d+)%]$")
+                if inode and listeners[inode] then return true end
+            end
+        end
+        return false
+    end
+    -- The response may come from a new worker before its predecessor has
+    -- closed the same listening sockets. Established streams may still drain.
+    local found,count=false,0
+    for pid in assert(fs.dir("/proc")) do
+        if pid:match("^[1-9]%d*$") then
+            count=count+1;if count>4096 then fail() end
+            local a=inspect(pid,"none")
+            if living(a) and a[2]==master then
+                local listens=has_listener(pid)
+                if pid==ready then found=listens
+                elseif listens then fail() end
+            end
+        end
+    end
+    if not found or not master_valid() then fail() end
 elseif arg[1]=="now" and not arg[2] then
     local body=read("/proc/uptime",128); local s=body and body:match("^(%d+)%.")
     if not s or #s>9 then fail() end; io.write(s,"\n")

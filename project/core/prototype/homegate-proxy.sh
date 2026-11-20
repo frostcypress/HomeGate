@@ -135,6 +135,7 @@ if [ "$action" = access-reload ];then
  master=$(cat "$P/nginx.pid")
  master_info=$(lua "$process" info "$master" none) || fail 4
  case "$master_info" in Z:*|X:*|'') fail 4;; *":$pid:$pid:$pid:"*':0') ;; *) fail 4;;esac
+ master_birth=${master_info%:*};master_birth=${master_birth##*:}
  step=rule-config
  port=$(lua "$HG_DIR/homegate-proxy.lua" access-port) || fail
  marker=$(lua "$HG_DIR/homegate-proxy.lua" render-access native) || fail
@@ -155,16 +156,21 @@ if [ "$action" = access-reload ];then
   now=$(lua "$process" now) || return 1
   deadline=$((now+4))
   while :;do
-   [ "$(probe)" != "$target_marker" ] || return 0
+   seen=$(probe) || seen=
+   if [ "${seen%:*}" = "$target_marker" ] &&
+      lua "$process" nginx-policy-ready "$master" "$master_birth" "${seen##*:}";then return 0;fi
    now=$(lua "$process" now) || return 1
    [ "$now" -lt "$deadline" ] || return 1
    lua "$process" pause 100 || sleep 1 || return 1
   done
  }
  step=active-policy
- old_marker=$(probe) || fail 4
+ seen=$(probe) || fail 4;old_marker=${seen%:*}
  hg_hex "$old_marker" 32 || fail 4
- if [ "$old_marker" = "$marker" ];then rm -f "$P/candidate.conf";exit 0;fi
+ if [ "$old_marker" = "$marker" ] && [ "$seen" != "$old_marker" ];then
+  wait_policy "$marker" || fail
+  rm -f "$P/candidate.conf";exit 0
+ fi
  step=validate-policy
  hg_file "$P/active.conf" 131072 && /usr/libexec/homegate-nginx/nginx -t -p "$P/" -c "$P/candidate.conf" -g 'daemon off;' >/dev/null || fail
  if hg_exists "$P/rollback.conf";then fail;fi

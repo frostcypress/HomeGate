@@ -883,8 +883,9 @@ local ok,err=pcall(function()
   result.ok=true
   return
  end
- if request.route=='api/management_domains' and not fixture then
-  local domains=management_domains()
+ if request.route=='api/management_domains' then
+  -- The offline selftest has no WAN or certificate observations.
+  local domains=fixture and {} or management_domains()
   local names={}
   for name in pairs(domains or {})do names[#names+1]=name end
   table.sort(names)

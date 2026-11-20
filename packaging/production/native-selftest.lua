@@ -26,6 +26,10 @@ return function(version)
  for name,route in pairs(lib.routes)do
   local h=host(name,false);local r=execute(h)
   if route.write then check('ACL/read-denies/'..name,not r.ok and h.begins==0 and h.calls==0 and h.commits==0)
+  elseif name=='api/management_domains' then
+   local payload=r.body and lib.strict(r.body)
+   check('read/'..name,r.ok and r.headers['Content-Type']=='application/json' and payload and
+    payload.ok==true and type(payload.domains)=='table' and next(payload.domains)==nil and h.calls==0 and h.begins==0 and h.commits==0)
   else check('read/'..name,r.ok and h.begins==0 and h.commits==0)end
  end
  local h=host('overview',false);local r=execute(h)

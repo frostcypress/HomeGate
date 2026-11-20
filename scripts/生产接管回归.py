@@ -827,10 +827,19 @@ esac
                     tls.sendall(b'GET / HTTP/1.0\r\nHost: example.test\r\n\r\n')
                     with tls.makefile('rb') as response:self.assertIn(b'HOMEGATE_MAINTENANCE',response.read())
                     return fingerprint
+        def firewall_active():
+            status=self.cli('firewall-status')
+            # The status read can overlap the watcher holding firewall.lock.
+            # Retry the unavailable reply, but fail on a known inactive state.
+            if (status.get('known') is False and status.get('state') is None and
+                    status.get('error')=='Firewall state unavailable; inspect retained admission'):
+                return False
+            self.assertTrue(status['ok'] and status['known'] and status['active'],status)
+            return True
         wait_for(waiting,seconds=55)
         wait_for(lambda:self.cli('proxy-status')['generation']>=2,seconds=40)
         lease=(schedule/'lease').read_bytes();original_certificate=request()
-        self.assertTrue(self.cli('firewall-status')['active'])
+        wait_for(firewall_active,seconds=8)
         self.assertFalse(self.cli('cert-status')['certificates'][0]['renew'])
         with (run/'frontend.lock').open('ab') as held:
             fcntl.flock(held,fcntl.LOCK_EX)
@@ -920,7 +929,7 @@ exec /usr/sbin/busybox flock "$@"
             self.assertEqual((schedule/'lease').read_bytes(),lease)
             request()
         self.assertEqual(self.wait_service(lambda d:d['state']=='running')['pid'],initial['pid'])
-        self.assertTrue(self.cli('firewall-status')['active']);request()
+        wait_for(firewall_active,seconds=8);request()
         self.assertEqual(len(json.loads((STATE/'acme-fixture.json').read_text())['orders']),2)
         self.cli('service-stop','--confirm');self.owner.wait(timeout=25);self.cli('service-quiescent')
         self.verify_unchanged(allow_provider_calls=True)
@@ -1288,6 +1297,11 @@ esac
         self.action_result('firewall-foreign-reference',both_tables_refused=True,goto_and_other_chain_refused=True,entire_kernel_model_retained=True,owner_marker_retained=True)
         with Path('/var/run/homegate/firewall.lock').open('ab') as held:
             fcntl.flock(held,fcntl.LOCK_EX|fcntl.LOCK_NB);before=kernel.read_bytes();calls=(STATE/'fw-calls').read_bytes()
+            unavailable=self.cli('firewall-status')
+            self.assertIs(unavailable['known'],False,unavailable)
+            self.assertIs(unavailable['active'],False,unavailable)
+            self.assertNotIn('state',unavailable)
+            self.assertEqual(unavailable['error'],'Firewall state unavailable; inspect retained admission')
             self.cli('firewall-apply',ok=False);self.cli('firewall-cleanup',ok=False);self.assertEqual(kernel.read_bytes(),before);self.assertEqual((STATE/'fw-calls').read_bytes(),calls)
         saved=marker.with_name('.saved-firewall-owner');self.assertFalse(saved.exists());marker.rename(saved);marker.symlink_to(saved)
         before=kernel.read_bytes();self.cli('firewall-cleanup',ok=False);self.assertEqual(kernel.read_bytes(),before);marker.unlink();saved.rename(marker)

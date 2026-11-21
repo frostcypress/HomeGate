@@ -852,7 +852,9 @@ esac
                 result=probe()
                 if result:return result
                 time.sleep(.15)
-            self.fail(('Maintenance observation timed out',json.loads((run/'native-service.json').read_text())))
+            report=schedule/'report'
+            detail=report.read_text().splitlines()[0] if report.is_file() else 'no DDNS scheduler report'
+            self.fail(('Maintenance observation timed out',json.loads((run/'native-service.json').read_text()),detail))
         def waiting():
             try:status=json.loads((schedule/'report').read_text().splitlines()[0])
             except (OSError,ValueError,IndexError):return False
@@ -1000,12 +1002,12 @@ exec /usr/sbin/busybox flock "$@"
         self.rule(s)
         preview=self.cfg('preview_web_rule',s,id='public_plain',domain='www.example.test',https='0',certificate='')
         self.cfg('apply',s,confirmation=preview['report']['confirmation'],consent='1')
-        self.cfg('web_target_put',s,id='public_plain',value=target,consent='1')
+        self.cfg('web_target_put',s,id='public_plain',value=target+'/plain',consent='1')
         preview=self.cfg('preview_web_rule',s,id='public_tls',domain='example.test',https='1',certificate='cert_a')
         self.cfg('apply',s,confirmation=preview['report']['confirmation'],consent='1')
         self.cfg('web_target_put',s,id='public_tls',value=target,consent='1')
         self.publish(s)
-        dns={'web_id':'public_plain','ddns_id':'ddns_a','account_id':'dns_a','provider':'cloudflare','zone':'example.test','host':'www','enabled':'1','https':'0','target':target,'external_port':'18080'}
+        dns={'web_id':'public_plain','ddns_id':'ddns_a','account_id':'dns_a','provider':'cloudflare','zone':'example.test','host':'www','enabled':'1','https':'0','target':target+'/plain','external_port':'18080'}
         proxy={'web_id':'public_tls','cert_id':'cert_a','domain':'example.test','enabled':'1','https':'1','target':target,'external_port':'18443'}
         self.save_public_rows(dns,{**proxy,'cert_environment':'staging'})
         self.cli('lifecycle-enable','--confirm')
@@ -1063,7 +1065,7 @@ if '-c' in a and '-t' not in a and marker.exists():
         marker.touch()
         production={**proxy,'cert_environment':'production','zone':'example.test',
                     'host':'@','account_id':'dns_a','provider':'cloudflare'}
-        added={'domain':'new.example.test','enabled':'1','https':'0','target':target,'external_port':'18080'}
+        added={'domain':'new.example.test','enabled':'1','https':'0','target':target+'/new','external_port':'18081'}
         form={'mode':'apply','public_service_count':'3'}
         for i,row in enumerate((dns,production,added),1):
             form.update({f'public_service_{i}_{key}':value for key,value in row.items()})
@@ -2943,9 +2945,9 @@ fi
             self.assertEqual(self.cli('status')['runtime']['pid'],receipt['pid'])
             self.assertTrue(timed_apply({'mode':'apply'},'disable-while-running')['ok'])
             runtime_log=self.web_request('api/logs')['body']
-            for text in ('在服务概览启用 HomeGate，配置已应用，服务已确认运行',
-                         '在服务概览停用 HomeGate，正在停止当前服务',
-                         '在服务概览停用 HomeGate，服务及开机自启已停用'):
+            for text in ('保存并应用 HomeGate 启用设置，配置已应用，服务已启动并通过运行校验',
+                         '保存并应用 HomeGate 停用设置，正在停止当前服务',
+                         '保存并应用 HomeGate 停用设置，服务及开机自启已停用'):
                 self.assertIn(text,runtime_log)
             report=json.loads(self.web_request('api/overview_status')['body'])
             self.assertFalse(report['service']['running'])
@@ -3232,7 +3234,8 @@ esac
         self.assertTrue(removed['ok'] and removed['runtime_applied'],removed)
         rows=self.web_request('public')['data']
         self.assertEqual(rows['services'],[])
-        self.assertEqual(rows['dns_accounts'],[])
+        self.assertEqual([account['id'] for account in rows['dns_accounts']],['dns_a'])
+        self.assertEqual([service['domain'] for service in rows['public_history']],['www.example.test'])
         self.assertTrue(self.cli('status')['service']['healthy'])
         self.assertFalse(self.cli('proxy-status')['running'])
         self.cli('service-stop','--confirm');self.wait_service(lambda d:d['state']=='stopped');self.cli('service-quiescent');self.verify_unchanged(allow_provider_calls=True)
@@ -3255,11 +3258,13 @@ esac
         cache.chmod(0o600)
         form={'mode':'save','public_service_count':'2','access_scope':'CN'}
         for i,host in enumerate(('www','web2'),1):
-            row={'enabled':'1','https':'0','zone':'example.test','host':host,'ttl':'120','provider':'cloudflare','account_id':'dns_a','target':f'http://127.0.0.1:{server.server_port}','external_port':'18080'}
+            row={'enabled':'1','https':'0','zone':'example.test','host':host,'ttl':'120','provider':'cloudflare','account_id':'dns_a',
+                 'target':f'http://127.0.0.1:{server.server_port}/{host}','external_port':str(18079+i)}
             form.update({f'public_service_{i}_{k}':v for k,v in row.items()})
         def apply(route,data,seconds=70):
             return self.web_wait(self.web_request(route,data,True)['job'],seconds=seconds)
-        self.assertTrue(apply('public_apply',form)['ok'])
+        saved=apply('public_apply',form)
+        self.assertTrue(saved['ok'],saved)
         basic={'mode':'save','enabled':'1','auto_firewall':'1'}
         self.assertTrue(apply('basic_apply',basic)['ok'])
         rows={r['domain']:r for r in self.web_request('public')['data']['services']}
@@ -3287,7 +3292,7 @@ esac
             if 'HomeGate 已运行' in logs:break
             self.assertLess(time.monotonic(),deadline,logs)
             time.sleep(.1)
-        self.assertIn('在服务概览启用 HomeGate，配置已提交，正在启动并校验服务',logs)
+        self.assertIn('保存并应用 HomeGate 启用设置，配置已提交，正在启动并校验服务',logs)
         owner=Path('/var/run/homegate/native-service.json')
         pid=json.loads(owner.read_text())['pid']
 
@@ -3337,11 +3342,12 @@ esac
         domains=('one.example.test','two.example.test')
         form={'mode':'save','public_service_count':'2'}
         for i,domain in enumerate(domains,1):
-            row={'enabled':'1','https':'0','domain':domain,'target':f'http://127.0.0.1:{server.server_port}','external_port':'18080'}
+            row={'enabled':'1','https':'0','domain':domain,'target':f'http://127.0.0.1:{server.server_port}/service-{i}','external_port':str(18079+i)}
             form.update({f'public_service_{i}_{key}':value for key,value in row.items()})
         def apply(route,fields):
             return self.web_wait(self.web_request(route,fields,True)['job'],seconds=70)
-        self.assertTrue(apply('public_apply',form)['ok'])
+        saved=apply('public_apply',form)
+        self.assertTrue(saved['ok'],saved)
         services={r['domain']:r['web_id'] for r in self.web_request('public')['data']['services']}
         for i,domain in enumerate(domains,1):
             form[f'public_service_{i}_web_id']=services[domain]

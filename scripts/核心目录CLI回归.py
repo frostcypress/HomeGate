@@ -121,9 +121,11 @@ class Runtime(unittest.TestCase):
 
     def test_ca_catalog_keeps_production_and_staging_distinct_without_http(self):
         report = self.compare_catalog('acme-ca-catalog')
-        urls = report['cas'][0]['directories']
+        by_name = {entry['name']: entry['directories'] for entry in report['cas']}
+        urls = by_name['letsencrypt']
         self.assertNotEqual(urls['production'], urls['staging'])
         self.assertEqual(set(urls), {'production', 'staging'})
+        self.assertEqual(set(by_name['zerossl']), {'production'})
 
     def test_extra_arguments_and_unknown_commands_fail_before_helper(self):
         self.helper.unlink()

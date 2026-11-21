@@ -267,10 +267,25 @@ dofile('''+quote(RUNNER)+''')
         report=self.run_request(self.request(form={'ddns_interval':'300','https_port':'443','proxy_https_port':'10443','mode':'apply'}))
         self.assertFalse(report['ok']); self.assertIn('error=UCI',report['redirect']); self.assertNotIn('call',self.trace.read_text().splitlines())
 
-    def test_wol_commit_failure_prevents_packet(self):
-        self.config.write_text('{"test_commit_nil":true}')
+    def test_wol_wake_does_not_write_configuration(self):
+        original='{"test_commit_nil":true}'
+        self.config.write_text(original)
         report=self.run_request(self.request('wol_action',{'op':'wake','id':'host_a'}))
-        self.assertFalse(report['ok']); self.assertIn('error=UCI',report['redirect']); self.assertNotIn('call',self.trace.read_text().splitlines())
+        self.assertTrue(report['ok'],report)
+        self.assertIn('notice=Wake%20packet%20sent',report['redirect'])
+        self.assertEqual(self.config.read_text(),original)
+        events=self.trace.read_text().splitlines()
+        self.assertEqual(events.count('call'),1)
+        self.assertTrue({'set','delete','commit','revert'}.isdisjoint(events),events)
+
+    def test_wol_delete_does_not_report_success_on_commit_failure(self):
+        self.config.write_text('{"test_commit_nil":true}')
+        report=self.run_request(self.request('wol_action',{'op':'delete','id':'host_a'}))
+        self.assertFalse(report['ok'],report)
+        self.assertIn('error=UCI',report['redirect'])
+        events=self.trace.read_text().splitlines()
+        self.assertIn('commit',events)
+        self.assertNotIn('call',events)
 
     def test_sigkill_owner_releases_lock_for_next_request(self):
         self.config.write_text('{"test_pause":true}')

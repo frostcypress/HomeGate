@@ -738,13 +738,13 @@ config wol_host 'host_a'
         # dnssleep=60, the 900-second deadline and all other sleeps stay unchanged.
         tool=STATE/'tools/sleep';tool.write_text('#!/bin/sh\nif [ "$1" = 60 ];then printf waited >> /teststate/propagation-wait;exit 0;fi\nexec /usr/sbin/busybox sleep "$@"\n');tool.chmod(0o755)
         return s
-    def acme_wait(self,s,job):
-        deadline=time.monotonic()+65
+    def acme_wait(self,s,job,seconds=65):
+        deadline=time.monotonic()+seconds
         while time.monotonic()<deadline:
             report=self.cfg('acme_status',s,job=job)['report']
             if not report['pending']:return report
             time.sleep(.1)
-        self.fail('ACME job exceeded private fixture budget')
+        self.fail(('ACME job exceeded private fixture budget',report,self.acme_diagnostics(job)))
     def acme_diagnostics(self,job):
         root=Path('/etc/homegate-engineering/acme/jobs')/job
         return {p.name:p.read_text(errors='replace')[-3500:] for p in root.glob('*') if p.name in ['client.output','dns.result','install.result','result']}
@@ -955,7 +955,7 @@ config wol_host 'host_a'
     def test_acme_publication_recovery(self):
         s=self.acme_setup();self.acme_config(s,domains='example.test');job='b1'*16
         tool=STATE/'tools/fsync';tool.unlink();tool.write_text('#!/usr/sbin/ash\ncase "$1" in /etc/homegate-engineering/certs/cert_a/.current.next) exit 1;; esac\nexec /usr/sbin/busybox fsync "$@"\n');tool.chmod(0o755)
-        self.cfg('acme_issue',s,id='cert_a',job=job,consent='1');report=self.acme_wait(s,job);self.assertEqual(report['state'],'failed',self.acme_diagnostics(job));self.assertFalse(report['cleanup_required'])
+        self.cfg('acme_issue',s,id='cert_a',job=job,consent='1');report=self.acme_wait(s,job,seconds=90);self.assertEqual(report['state'],'failed',self.acme_diagnostics(job));self.assertFalse(report['cleanup_required'])
         tool.unlink();tool.symlink_to('busybox');self.assertTrue(self.cfg('cert_status',s,id='cert_a')['report']['pending'])
         db=json.loads((STATE/'acme-fixture.json').read_text());self.assertEqual(len(db['orders']),1);self.assertEqual(db['records'],[])
         self.api('configuration_api','acme_issue',s,{'id':'cert_a','job':'b2'*16,'consent':'1'},expected=503)
@@ -967,10 +967,12 @@ config wol_host 'host_a'
         s=self.acme_setup();self.acme_config(s,domains='example.test');(STATE/'acme-mode').write_text('short-cert');job='9'*32
         self.cfg('acme_issue',s,id='cert_a',job=job,consent='1');self.assertEqual(self.acme_wait(s,job)['state'],'issued',self.acme_diagnostics(job))
         base=Path('/etc/homegate-engineering/certs/cert_a');old=(base/'current').read_bytes();self.assertTrue(self.cfg('cert_status',s,id='cert_a')['report']['renew'])
+        print('ACME due: initial short-lived certificate verified',flush=True)
         (STATE/'acme-mode').write_text('success');self.cfg('acme_schedule_start',s,id='cert_a',consent='1')
         done=self.acme_session_wait(s,lambda d:d['state']=='waiting' and d['checks']==1)
         self.assertNotEqual((base/'current').read_bytes(),old);self.assertFalse(self.cfg('cert_status',s,id='cert_a')['report']['renew'])
         db=json.loads((STATE/'acme-fixture.json').read_text());self.assertEqual(len(db['orders']),2);self.assertEqual(db['records'],[])
+        print('ACME due: renewal published and DNS challenges removed',flush=True)
         self.cfg('acme_schedule_stop',s,consent='1');self.acme_session_wait(s,lambda d:not d['running'],seconds=10)
         self.cfg('acme_schedule_reap',s,consent='1');self.assertTrue((base/old.decode().strip()).is_dir());self.verify_unchanged()
 
@@ -988,13 +990,16 @@ def main():
         return 0 if unittest.TextTestRunner(verbosity=2).run(suite).wasSuccessful() else 1
     for group in ([a.group] if a.group else ['security','configuration','async','schedule','contracts','continuous','lifecycle','intent_recovery','intent_cleanup','intent_frames','production_copy','production_copy_sources','production_copy_recovery','production_copy_rollback','certificate','certificate_invalid','certificate_recovery','certificate_timeout','acme','acme_failure','acme_unknown','acme_accounts','acme_preexisting','acme_aliyun','acme_dnspod','acme_huawei','acme_stop','acme_schedule','acme_schedule_unknown','acme_cold','acme_due','acme_schedule_stop','acme_race','acme_schedule_timeout','acme_publication_recovery']):
         args=['--http-runtime-dir',str(luci.HTTP),'--luci-runtime-dir',str(luci.LUA),'--group',group]
+        # Account rollover and renewal run multiple orders. Publication
+        # recovery waits for one order and a separate scheduler closeout.
+        guest_timeout={'acme_accounts':180,'acme_due':160,'acme_publication_recovery':135}.get(group,90)
         result=rpc.isolated(rpc.WORK,guest_script=Path(__file__).resolve(),extra_ro=(luci.HTTP,luci.LUA),
           extra_mounts=lambda s:((Path('/etc/ssl'),'/etc/ssl'),(Path('/usr/bin'),'/fixture-host-bin'),(s/'usr-bin','/usr/bin'),(s/'controllers',luci.LUA/'prefix/lib/lua/luci/controller'),
              (s/'models',luci.LUA/'prefix/lib/lua/luci/model'),(s/'libexec','/usr/libexec'),(s/'tools','/usr/sbin'),
              (s/'curl-fixture','/usr/bin/curl')),
           extra_rw_mounts=lambda s:((s/'etc/homegate-engineering','/etc/homegate-engineering'),(s/'etc/config','/etc/config')),
           state_setup=setup_state,guest_args=args,
-          guest_timeout=180 if group=='acme_accounts' else 90)
+          guest_timeout=guest_timeout)
         if result:return result
     return 0
 

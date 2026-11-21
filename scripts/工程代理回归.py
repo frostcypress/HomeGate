@@ -371,8 +371,9 @@ esac
         custom_only=kernel['nat']['HG_ENG_NAT']
         self.assertEqual([r[r.index('--dport')+1] for r in custom_only],['8443','8443'])
         self.assertEqual([r[r.index('-i')+1] for r in custom_only],['pppoe-wan','br-lan'])
-        self.assertEqual([r for r in kernel['filter']['HG_ENG_INPUT'] if r[-1]=='DROP'],
-            [['-d',custom_only[1][1],'-i','br-lan','-p','tcp','--dport',port,'-j','DROP'] for port in ('80','443')])
+        self.assertEqual([r for r in kernel['filter']['HG_ENG_INPUT'] if '-j' in r and r[r.index('-j')+1] in ('DROP','REJECT')],
+            [['-d',custom_only[1][1],'-i','br-lan','-p','tcp','--dport',port,'-j','REJECT','--reject-with','tcp-reset']
+             for port in ('80','443')])
         self.cfg('firewall_cleanup',s,consent='1');self.stop(s);self.verify_unchanged()
     def test_firewall_reload(self):
         s=self.firewall_setup();self.cfg('firewall_apply',s,consent='1');initial=self.firewall_baseline();lost=json.loads(json.dumps(initial))

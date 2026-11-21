@@ -134,6 +134,13 @@
             "production": "https://acme-v02.api.letsencrypt.org/directory",
             "staging": "https://acme-staging-v02.api.letsencrypt.org/directory"
           }
+        },
+        {
+          "name": "zerossl",
+          "display_name": "ZeroSSL",
+          "directories": {
+            "production": "https://acme.zerossl.com/v2/DV90"
+          }
         }
       ]
     }

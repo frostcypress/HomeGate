@@ -318,10 +318,21 @@ class Continuous(CF):
 if __name__=='__main__':
     p=argparse.ArgumentParser();p.add_argument('--runtime',action='store_true')
     mode=p.add_mutually_exclusive_group();mode.add_argument('--mixed-only',action='store_true');mode.add_argument('--auto-only',action='store_true')
+    mode.add_argument('--auto-providers-only',action='store_true')
+    mode.add_argument('--auto-controls-only',action='store_true')
     p.add_argument('--list-tests',action='store_true');p.add_argument('--case');a=p.parse_args();suite=unittest.TestSuite()
-    if (a.mixed_only or a.auto_only) and not a.runtime:p.error('Source selection requires --runtime')
+    if (a.mixed_only or a.auto_only or a.auto_providers_only or a.auto_controls_only) and not a.runtime:
+        p.error('Runtime partition requires --runtime')
+    providers=[CF,Ali,DNP,HW]
+    controls=[Boundaries,Continuous]
     mixed=[MixedCF,MixedAli,MixedDNP,MixedHW,MixedBoundaries]
-    for cls in ((mixed if a.mixed_only else [CF,Ali,DNP,HW,Boundaries,Continuous] if a.auto_only else [CF,Ali,DNP,HW,Boundaries,Continuous]+mixed) if a.runtime else [Static]):
+    if not a.runtime:classes=[Static]
+    elif a.auto_providers_only:classes=providers
+    elif a.auto_controls_only:classes=controls
+    elif a.auto_only:classes=providers+controls
+    elif a.mixed_only:classes=mixed
+    else:classes=providers+controls+mixed
+    for cls in classes:
         methods=Continuous.__dict__ if cls is Continuous else MixedBoundaries.__dict__ if cls is MixedBoundaries else MixedScheduleMixin.__dict__ if cls in mixed else Boundaries.__dict__ if cls is Boundaries else ScheduleMixin.__dict__ if a.runtime else Static.__dict__
         suite.addTests(cls(n) for n,v in methods.items() if n.startswith('test_') and callable(v) and (not a.case or a.case==n))
     if not suite.countTestCases():p.error('No cases')

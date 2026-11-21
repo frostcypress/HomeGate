@@ -39,11 +39,12 @@ if command=='log-max'then
  v=v:gsub('^%+',''):gsub('^0+','');local n=#v<=5 and tonumber(v)
  if not n or n<1 or n>20000 then os.exit(2)end;io.write(n,'\n');return
 end
-if command=='ca-selection'then
+if command=='ca-selection' or command=='ca-directory'then
  local ca=(arg[2] or ''):match('^%s*(.-)%s*$'):lower();local env=(arg[3] or ''):match('^%s*(.-)%s*$'):lower()
  if ca=='' or ca=='le'then ca='letsencrypt'end;if env==''then env='production'end
- if arg[4] or ca~='letsencrypt' or (env~='production' and env~='staging')then os.exit(1)end
- io.write(ca,':',env,'\n');return
+ local directory=codec.acme_directory(ca,env)
+ if arg[4] or not directory then os.exit(1)end
+ if command=='ca-directory' then io.write(directory,'\n') else io.write(ca,':',env,'\n') end;return
 end
 local queries={status=true,['recovery-status']=true,['network-resolve']=true,['dns-provider-catalog']=true,['acme-ca-catalog']=true,['ddns-status']=true,['cert-status']=true,['proxy-status']=true,['access-status']=true,['access-recent']=true,['firewall-status']=true,['wol-status']=true,['log-events']=true,['web-job-status']=true,['web-job-ack']=true}
 local phases={status='common-runtime',check='common-runtime',['dns-provider-status']='dns-provider',['dns-zones']='dns-provider',['ddns-status']='ddns',['cert-status']='acme',['cert-renew']='acme',['cert-import']='certificate-import',['access-status']='access',['access-recent']='access',['access-clear-all']='access',['access-clear-entry']='access',['access-clear-denied']='access'}

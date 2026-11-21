@@ -5,6 +5,7 @@ local codec=assert(loadfile(base..'/project/luci/lua/luasrc/model/homegate/backu
 local strict=assert(loadfile(base..'/strict-web-json.lua'))()
 local rf=assert(io.open(base..'/legacy-routes.json','rb'));local routes=json.parse(rf:read('*a'));rf:close()
 local root='/tmp/homegate-frontend-jobs'
+local pending_paths={public='/etc/homegate/public-add-pending',wol='/etc/homegate/wol-add-pending'}
 local function fail()io.write('{"api_version":1,"ok":false,"error":"Web request unavailable or retained task requires attention"}\n');os.exit(1)end
 local function id(s)return type(s)=='string' and #s==32 and s:match('^[0-9a-f]+$')end
 local function dir(p)local s=fs.lstat(p);return s and s.type=='dir' and s.uid==0 and s.modedec==700 end
@@ -16,6 +17,24 @@ end
 local function write(p,raw)
  local fd=nx.open(p,nx.open_flags('wronly','creat','excl'),'600');if not fd then fail()end
  local n=fd:writeall(raw);local ok=fd:close();if n~=#raw or not ok then fail()end
+end
+local function pending_add(kind)
+ local pending_add_path=assert(pending_paths[kind])
+ if not fs.lstat(pending_add_path) then return nil end
+ if not dir('/etc/homegate') then fail() end
+ local value=read(pending_add_path,65):match('^([A-Za-z0-9_-]+)\n$')
+ if not value then fail() end
+ return value
+end
+local function mark_pending_add(kind,value)
+ local pending_add_path=assert(pending_paths[kind])
+ if not dir('/etc/homegate') or type(value)~='string' or #value>64 or not value:match('^[A-Za-z0-9_-]+$') then fail() end
+ pending_add(kind)
+ local nextpath=pending_add_path..'.next'
+ if fs.lstat(nextpath) then read(nextpath,65);assert(fs.unlink(nextpath)) end
+ write(nextpath,value..'\n')
+ assert(os.execute('fsync '..nextpath)==0 and fs.rename(nextpath,pending_add_path))
+ assert(os.execute('fsync /etc/homegate')==0)
 end
 local function validate(d,types,writeflag)
  if type(d)~='table' or type(d.route)~='string' or not routes[d.route] or type(d.form)~='table' or types.form~='object' or d.write~=nil and type(d.write)~='boolean'then return nil end
@@ -51,9 +70,23 @@ local function web_operation(d)
  return ({access_update=route,access_delete_rule=route,access_delete_entry=route,access_delete_all=route,
   wol_apply=route,update_url_save=route,config_reset=route,certificate_apply=route})[route]
 end
-if ...=='library'then return {read=read,write=write,dir=dir,id=id,request=request,validate=validate,routes=routes,strict=strict,encode=codec.json,root=root,fail=fail,web_operation=web_operation}end
+if ...=='library'then return {read=read,write=write,dir=dir,id=id,request=request,validate=validate,routes=routes,strict=strict,encode=codec.json,root=root,fail=fail,web_operation=web_operation,pending_add=pending_add,mark_pending_add=mark_pending_add}end
 local mode=arg[1]
 if mode=='validate-request'then request(arg[2],true);return
+elseif mode=='release-pending-add'then
+ local token=arg[2];if not id(token) then fail() end
+ local result=strict(read(root..'/'..token..'/result.next',2097152))
+ if result and result.ok and type(result.add_applied_revision)=='number' then
+  local current=read('/etc/homegate/transactions/current',16)
+  if tonumber(current)==result.add_applied_revision then
+   for kind,path in pairs(pending_paths)do
+    if (result.add_applied_page=='all' or result.add_applied_page==kind) and pending_add(kind) then
+     assert(fs.unlink(path));assert(os.execute('fsync /etc/homegate')==0)
+    end
+   end
+  end
+ end
+ return
 elseif mode=='log-args'then
  local token=arg[2];if not id(token) or not dir(root) or not dir(root..'/'..token)then fail()end
  local path=root..'/'..token
@@ -61,8 +94,11 @@ elseif mode=='log-args'then
  local d=strict(read(path..'/result',2097152))
  if type(d)~='table' or type(d.ok)~='boolean' then fail()end
  local outcome
- if not d.ok then outcome=d.runtime_restored and 'restored' or d.uncertain and 'unknown' or d.configuration_saved and 'saved_failed' or 'failed'
+ if not d.ok then outcome=d.runtime_restored and 'restored' or d.uncertain and (d.configuration_saved and 'saved_unknown' or 'unknown') or d.configuration_saved and 'saved_failed' or
+  (d.failure_stage=='homegate-disabled' or d.failure_stage=='editor-stale' or d.failure_stage=='public-pending-add' or d.failure_stage=='wol-pending-add') and 'not_executed' or 'failed'
  elseif operation=='disable_service' then outcome='disabled'
+ elseif operation=='config_reset' then outcome='ok'
+ elseif d.homegate_disabled then outcome='saved_disabled'
  elseif d.certificate_state then outcome='certificate_'..d.certificate_state
  elseif d.runtime_applied then
   local access=operation:match('access$') or operation:match('^access_delete')
@@ -73,7 +109,8 @@ elseif mode=='log-args'then
  if type(outcome)~='string' or not outcome:match('^[a-z_]+$') then outcome='ok' end
  local reason=d.runtime_failure_reason or d.failure_stage
  if type(reason)~='string' or #reason>64 or not reason:match('^[a-z_%-]+$') then reason='none' end
- io.write(operation,':',outcome,':',reason,'\n');return
+ local subject=type(d.log_subject)=='string' and #d.log_subject<=320 and d.log_subject:gsub('[%z\1-\31\127]',' ') or ''
+ io.write(operation,':',outcome,':',reason,'\n',subject,'\n');return
 elseif mode=='start-options' or mode=='start-restore' or mode=='runtime-result'then
  local token=arg[2];if not id(token) or not dir(root) or not dir(root..'/'..token)then fail()end
  local path=root..'/'..token..'/result.next';local d=strict(read(path,2097152));if not d or type(d.ok)~='boolean' or d.api_version~=1 then fail()end
@@ -91,9 +128,10 @@ elseif mode=='start-options' or mode=='start-restore' or mode=='runtime-result't
   verified=status and status.ok==true and status.configuration_revision==revision and status.service and status.service.configured==true and status.service.enabled==true and status.service.running==true and status.service.healthy==true or false
  end
  d.runtime_start=nil;d.runtime_applied=verified and not restoring
- if verified and (status.certificate_state=='pending' or status.certificate_state=='unknown' or status.certificate_state=='retry') then
+ local messages={pending='已保存并应用；证书正在后台签发。',unknown='已保存并应用；证书签发结果待核对。',
+  retry='已保存并应用；证书签发失败，将稍后重试。',rate_limited='已保存并应用；证书机构限流，正在等待重试。'}
+ if verified and messages[status.certificate_state] then
   d.certificate_state=status.certificate_state
-  local messages={pending='已保存并应用；证书正在后台签发。',unknown='已保存并应用；证书签发结果待核对。',retry='已保存并应用；证书签发失败，将稍后重试。'}
   local encoded=messages[d.certificate_state]:gsub('([^a-zA-Z0-9_.~-])',function(c)return string.format('%%%02X',c:byte())end)
   if d.redirect then d.redirect=d.redirect:gsub('([?&]notice=)[^&]*',function(prefix)return prefix..encoded end) end
  end

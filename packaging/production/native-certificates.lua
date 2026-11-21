@@ -48,7 +48,8 @@ if ...=='observe'then
   local now=os.time()
   row.exists=true;row.identity_valid=matches;row.valid=matches and now>=result.not_before_epoch and now<result.expires_epoch
   row.expires=result.expires;row.days=math.floor((result.expires_epoch-now)/86400)
-  row.renew=row.days<=(tonumber(values.renew_days) or 5)
+  local issuer_changed=values.source=='acme' and (values.ca or 'letsencrypt')~=(scope.ca or 'letsencrypt')
+  row.renew=issuer_changed or row.days<=(tonumber(values.renew_days) or 5)
   return row
  end
 end

@@ -90,11 +90,11 @@ case "$action" in
  acme-ca-status)
   [ "$#" = 1 ] || [ "$#" = 2 ] || fail 2
   selection=$(lua "$base/native-public.lua" ca-selection "$1" "${2:-production}") || fail 1
-  ca=${selection%%:*};environment=${selection#*:};[ "$ca" = letsencrypt ] || fail 1
-  case "$environment" in production) host=acme-v02.api.letsencrypt.org;;staging) host=acme-staging-v02.api.letsencrypt.org;;*) fail 1;;esac
+  ca=${selection%%:*};environment=${selection#*:}
+  directory=$(lua "$base/native-public.lua" ca-directory "$ca" "$environment") || fail 1
   # Public fixed-host GET only, without curlrc, proxy, redirect or body logging.
-  (ulimit -f 128; /usr/bin/curl --disable --proto '=https' --proto-redir '=https' --proxy '' --noproxy '*' --connect-timeout 3 --max-time 10 --max-filesize 65536 --fail --silent --cacert /etc/ssl/certs/ca-certificates.crt "https://$host/directory";printf '\nHGCA:%s\n' "$?") |
-   lua "$base/native-adapters.lua" ca-response "$environment";exit $?;;
+  (ulimit -f 128; /usr/bin/curl --disable --proto '=https' --proto-redir '=https' --proxy '' --noproxy '*' --connect-timeout 3 --max-time 10 --max-filesize 65536 --fail --silent --cacert /etc/ssl/certs/ca-certificates.crt "$directory";printf '\nHGCA:%s\n' "$?") |
+   lua "$base/native-adapters.lua" ca-response "$ca" "$environment";exit $?;;
  cert-renew)
   [ "$#" -le 1 ] || fail 2
   if [ "$#" = 1 ];then names=$1;else

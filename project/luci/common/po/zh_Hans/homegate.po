@@ -637,6 +637,24 @@ msgstr "已有主机的 MAC 地址不能修改。要更换地址，请删除该�
 msgid "Public Services"
 msgstr "公网服务"
 
+msgid "This public port is already used by another service."
+msgstr "此公网端口已被其他条目使用。"
+
+msgid "This LAN URL is already used by another service."
+msgstr "此内网网址已被其他条目使用。"
+
+msgid "Certificate request rate limited"
+msgstr "证书请求受限"
+
+msgid "EAB Key ID"
+msgstr "EAB 绑定 ID"
+
+msgid "EAB HMAC Key"
+msgstr "EAB HMAC 密钥"
+
+msgid "Enter a valid EAB Key ID and HMAC Key."
+msgstr "请填写有效的 EAB 绑定 ID 和 HMAC 密钥。"
+
 msgid "System Maintenance"
 msgstr "系统维护"
 
@@ -750,6 +768,9 @@ msgstr "恢复默认配置"
 
 msgid "Restore HomeGate default configuration? Cloud AAAA records for configured DDNS hostnames, service settings, access rules, access history and region data will be removed."
 msgstr "确认恢复 HomeGate 默认配置？将删除已配置 DDNS 主机名下的云端 AAAA 记录，并清除本地服务设置、访问规则、访问记录和地区数据。"
+
+msgid "Restore HomeGate defaults? Managed cloud AAAA records, local settings, certificates and keys, access rules, access history and region data will be removed."
+msgstr "确认恢复 HomeGate 默认配置？将删除托管的云端 AAAA 记录，并清除本地设置、证书和私钥、访问规则、访问记录及地区数据。"
 
 msgid "This resets HomeGate settings and rules but keeps existing certificate files, ACME account data and logs."
 msgstr "此操作会重置 HomeGate 设置和规则，但保留现有证书文件、ACME 账户数据和日志。"
@@ -1519,6 +1540,9 @@ msgstr "不支持的 DNS 服务商"
 msgid "Unsupported certificate authority"
 msgstr "不支持的证书颁发机构"
 
+msgid "Certificate authority is already fixed for this domain"
+msgstr "此域名已绑定证书颁发机构。"
+
 msgid "is required"
 msgstr "为必填项"
 
@@ -1700,7 +1724,19 @@ msgid "Access Time"
 msgstr "访问时间"
 
 msgid "Automatically renew below %d days by default"
-msgstr "默认不足%d天时自动续期"
+msgstr "留空则默认不足%d天自动续期"
+
+msgid "DNS account saved"
+msgstr "DNS 账户已保存"
+
+msgid "HomeGate is disabled"
+msgstr "HomeGate 未启用"
+
+msgid "Certificate issuance in progress"
+msgstr "证书正在签发"
+
+msgid "Certificate will be retried"
+msgstr "证书稍后重试"
 
 msgid "days"
 msgstr "天"
@@ -1837,6 +1873,9 @@ msgstr "服务概览"
 msgid "Router Management"
 msgstr "路由管理"
 
+msgid "Router Management Page"
+msgstr "路由管理页面"
+
 msgid "Router Management URL"
 msgstr "路由管理网址"
 
@@ -1857,3 +1896,60 @@ msgstr "暂不可用"
 
 msgid "Choose a port other than 80 or 443"
 msgstr "填写公网端口，80 和 443 除外"
+
+msgid "16-entry limit reached."
+msgstr "已达 16 条上限。"
+
+msgid "Refresh Account"
+msgstr "刷新账户"
+
+msgid "Show host records"
+msgstr "展开主机记录"
+
+msgid "Previous Service Settings"
+msgstr "历史配置"
+
+msgid "Select previous settings"
+msgstr "选择历史配置"
+
+msgid "Cloud and local"
+msgstr "云端＋本地"
+
+msgid "Cloud only"
+msgstr "仅云端"
+
+msgid "Local only"
+msgstr "仅本地"
+
+msgid "DNS account rejected the request."
+msgstr "DNS 账户验证失败，请检查凭据和权限。"
+
+msgid "DNS account is busy. Try again shortly."
+msgstr "DNS 账户忙，请稍后刷新。"
+
+msgid "DNS provider has limited requests. Try again later."
+msgstr "DNS 请求受限，请稍后刷新。"
+
+msgid "DNS provider did not respond in time."
+msgstr "DNS 服务响应超时，请重试。"
+
+msgid "Could not connect to the DNS provider."
+msgstr "无法连接 DNS 服务，请检查网络。"
+
+msgid "The primary domain is unavailable."
+msgstr "主域名不可用。"
+
+msgid "The DNS account or primary domain was not found."
+msgstr "未找到 DNS 账户或主域名。"
+
+msgid "This DNS provider does not support listing cloud host records."
+msgstr "此 DNS 服务商暂不支持读取云端主机记录。"
+
+msgid "Could not read the DNS account."
+msgstr "读取 DNS 账户失败，请查看运行日志。"
+
+msgid "DNS account refreshed."
+msgstr "DNS 账户已刷新。"
+
+msgid "Reading DNS account..."
+msgstr "正在读取 DNS 账户…"

@@ -37,7 +37,7 @@ elseif mode=='ids'then
  local raw=io.stdin:read(262145);local doc=raw and #raw<=262144 and codec.parse(raw);if not doc then fail()end
  if arg[3] or (arg[2]~='certificate' and arg[2]~='ddns_rule') then fail()end
  for _,s in ipairs(doc)do
-  if s.kind==arg[2] and (s.kind~='ddns_rule' or s.values.type=='AAAA') then io.write(s.name,'\n')end
+  if s.kind==arg[2] and (s.kind~='ddns_rule' or (s.values.type=='AAAA' and s.values.external_dns~='1')) then io.write(s.name,'\n')end
  end
  return
 elseif mode=='aggregate'then

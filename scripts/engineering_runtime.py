@@ -4,6 +4,8 @@ The prototypes stay closed. Only these gates and fixed namespaces change in
 installed copies; no caller environment variable can select paths or features.
 """
 from pathlib import Path
+import hashlib
+import json
 import re
 
 SCOPE = 'isolated-ddns-contract-engineering'
@@ -112,6 +114,88 @@ def payload(root):
             files[PROTO+file.name]=render(file.name,file.read_bytes())
     for name in ['acme.sh','LICENSE.md','PROVENANCE.json']:
         files['acme/'+name]=(root/'third_party/acme.sh-3.1.6'/name).read_bytes()
+    provenance=json.loads(files['acme/PROVENANCE.json'])
+    upstream=files['acme/acme.sh']
+    original=provenance['files_sha256']['acme.sh']
+    if hashlib.sha256(upstream).hexdigest()!=original:
+        raise ValueError('ACME vendor source does not match its manifest')
+    anchor=b'''    response="$(_post "$body" "$url" "$needbase64" "POST" "$__request_conent_type")"
+    _CACHED_NONCE=""
+
+    if [ "$?" != "0" ]; then
+      _err "Cannot make POST request to $url"
+      return 1
+    fi
+'''
+    patched=b'''    if response="$(_post "$body" "$url" "$needbase64" "POST" "$__request_conent_type")"; then
+      _CACHED_NONCE=""
+    else
+      _post_status=$?
+      _CACHED_NONCE=""
+      # HomeGate 2026-11-20: transport returns 75 for retryable network failures.
+      # An empty ACME payload fetches an existing resource (POST-as-GET).
+      if [ "$_post_status" = 75 ] && [ -z "$payload" ] && [ "$_request_retry_times" -lt 3 ]; then
+        _info "Retry ACME resource read after transport failure."
+        _sleep "$(_retry_backoff_sec "$_request_retry_times")"
+        continue
+      fi
+      _err "Cannot make POST request to $url"
+      return 1
+    fi
+'''
+    client=PROTO+'homegate-acme-client.sh'
+    if upstream.count(anchor)!=1 or files[client].count(original.encode())!=1:
+        raise ValueError('ACME transport fix no longer matches its source')
+    validation_status=b'''      status=$(echo "$response" | _egrep_o '"status":"[^"]*' | cut -d : -f 2 | tr -d '"')
+      _debug2 status "$status"
+'''
+    parsed_status=b'''      status="$(_hg_acme_validation_status)" || status=""
+      _debug2 status "$status"
+'''
+    validation_delay=b'''      _debug "Sleep 2 seconds before verifying again"
+      _sleep 2
+'''
+    polling_delay=b'''      # The challenge trigger and authorization polls can both request a delay.
+      _retryafter=$(printf '%s\\n' "$responseHeaders" | _retryafter_seconds)
+      _validation_delay=${_retryafter:-2}
+      if ! [ "$_validation_delay" -le 600 ] 2>/dev/null; then
+        _info "The Retry-After value exceeds the challenge wait limit (600s)."
+        _clearupwebbroot "$_currentRoot" "$removelevel" "$token"
+        _clearup
+        _on_issue_err "$_post_hook" "$vlist"
+        return 1
+      fi
+      _sleep "$_validation_delay"
+'''
+    post_poll_delay=b'''      _retryafter=$(echo "$responseHeaders" | _retryafter_seconds)
+      _sleep_overload_retry_sec=$_retryafter
+      if [ "$_sleep_overload_retry_sec" ]; then
+        if [ $_sleep_overload_retry_sec -le 600 ]; then
+          _sleep $_sleep_overload_retry_sec
+        else
+          _info "The retryafter=$_retryafter value is too large (> 600), will not retry anymore."
+          _clearupwebbroot "$_currentRoot" "$removelevel" "$token"
+          _clearup
+          _on_issue_err "$_post_hook" "$vlist"
+          return 1
+        fi
+      fi
+'''
+    poll_start=b'    _debug "Let\'s check the authz status"\n'
+    if upstream.count(poll_start)!=1:
+        raise ValueError('ACME authorization polling loop no longer matches its source')
+    prefix,poll=upstream.replace(anchor,patched).split(poll_start,1)
+    poll,end=poll.split(b'  _info "Verification finished, beginning signing."\n',1)
+    for original_text,replacement in ((validation_status,parsed_status),(validation_delay,polling_delay),(post_poll_delay,b'')):
+        if poll.count(original_text)!=1:
+            raise ValueError('ACME authorization polling fix no longer matches its source')
+        poll=poll.replace(original_text,replacement)
+    files['acme/acme.sh']=prefix+poll_start+poll+b'  _info "Verification finished, beginning signing."\n'+end
+    installed_hash=hashlib.sha256(files['acme/acme.sh']).hexdigest()
+    files[client]=files[client].replace(original.encode(),installed_hash.encode())
+    provenance.update(upstream_script_modified=True,installed_script_SHA256=installed_hash,
+                      local_patch='Preserve signed transport status, retry transient reads, parse challenge status and honor Retry-After')
+    files['acme/PROVENANCE.json']=(json.dumps(provenance,indent=2)+'\n').encode()
     files['acme/dnsapi/dns_homegate.sh']=render('dns_homegate.sh',(root/'packaging/engineering/files/dns_homegate.sh').read_bytes())
     for name in ['project/luci/lua/luasrc/model/homegate/backup.lua','VERSION','RELEASE']:
         files[name]=(root/name).read_bytes()

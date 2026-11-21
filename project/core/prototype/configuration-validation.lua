@@ -54,6 +54,16 @@ function M.target(value,ip)
     if port and (#port>5 or tonumber(port)<1 or tonumber(port)>65535) then return false end
     return true
 end
+function M.target_key(value,ip)
+    if not M.target(value,ip) then return nil end
+    local scheme,authority,path=value:match('^(https?)://([^/?]+)(.*)$')
+    local host,port=authority:match('^(.-):(%d+)$')
+    if not host or authority:sub(1,1)=='[' and host:sub(-1)~=']' then host,port=authority,nil end
+    if host:sub(1,1)=='[' then host='['..ip.ipv6(host:sub(2,-2))..']'
+    else host=host:lower():gsub('%.$','') end
+    if path=='' or path:sub(1,1)=='?' then path='/'..path end
+    return scheme..'://'..host..':'..(tonumber(port) or (scheme=='https' and 443 or 80))..path
+end
 function M.validate(snapshot,candidate,encode,ip)
     if type(snapshot)~='table' or type(candidate)~='table' then return nil,'invalid_configuration' end
     local expected,actual=indexed(snapshot.configuration),indexed(candidate.configuration)

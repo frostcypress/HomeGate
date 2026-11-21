@@ -21,7 +21,11 @@ local mode=arg[1]
 if mode=='plan' then
  local selection,policy=arg[2],arg[3];if (arg[4] and arg[4]~='native') or (policy~='open' and policy~='allow') or type(selection)~='string' or #selection>1039 then fail()end
  local snapshot=assert(loadfile(dir..'/private-snapshot.lua'))().read(io.stdin,codec);if not snapshot then fail()end
- local indexed={};for _,s in ipairs(snapshot.configuration)do indexed[s.name]=s end
+ local indexed,certificates={},{}
+ for _,s in ipairs(snapshot.configuration)do
+  indexed[s.name]=s
+  if s.kind=='certificate'then certificates[s.name]=s end
+ end
  local main=indexed.main.values
  if policy=='allow' and main.access_region=='CN'then local f=io.open('/etc/homegate/access/CN.cidr','rb');if not f then fail()end;local ok=pcall(assert(loadfile(dir..'/access-region.lua'))().cache,f,nil,os.time());f:close();if not ok then fail()end end
  local hp,sp=tonumber(main.proxy_http_port),tonumber(main.proxy_https_port)
@@ -43,10 +47,11 @@ if mode=='plan' then
    if native and indexed[cert].values.source=='acme'then out.optional_certificates[cert]=true end
   end
  end
- if native and (main.management_domain or '')~='' then
+ local management_domain=native and codec.active_management_domain(snapshot.configuration)
+ if management_domain then
   local cert=indexed[main.management_certificate]
   if not out.auto_firewall or not local_listeners or not local_listeners.backend or not cert or cert.kind~='certificate' then fail()end
-  out.management={domain=main.management_domain,wan=main.management_wan=='1',
+  out.management={domain=management_domain,wan=true,
                   certificate=cert.name,backend=local_listeners.backend}
   add_certificate(cert.name)
  end
@@ -72,11 +77,7 @@ if mode=='plan' then
   if base:sub(-1)=='/'then base=base:sub(1,-2)end
   local cert=''
   if v.https=='1'then
-   cert=v.certificate
-   if cert==''then
-    local candidates={};for n,c in pairs(indexed)do if c.kind=='certificate'then for _,d in ipairs(c.values.domains)do if covers(d,v.domain)then candidates[#candidates+1]={name=n,exact=d==v.domain};break end end end end
-    table.sort(candidates,function(a,b)if a.exact~=b.exact then return a.exact end;return a.name<b.name end);if #candidates==0 then fail()end;cert=candidates[1].name
-   end
+   cert=codec.web_certificate_id(v,certificates)
    if not indexed[cert] or indexed[cert].kind~='certificate'then fail()end
    local covered=false;for _,d in ipairs(indexed[cert].values.domains)do if covers(d,v.domain)then covered=true end end;if not covered then fail()end
    add_certificate(cert)
@@ -210,8 +211,26 @@ if mode=='render' or mode=='render-access'then
  end
  add('map $hg_reason $hg_allowed { manual-deny false; denied false; default true; }')
  local audit=read(root..'/audit-token',33):match('^([0-9a-f]+)\n$');if not audit or #audit~=32 then fail()end
- add([[log_format hg_access escape=json '{"ip":"$remote_addr","host":"$host","allowed":$hg_allowed,"reason":"$hg_reason"}';]])
- local function logging()add('access_log syslog:server=unix:/var/run/homegate-audit/socket,nohostname,tag='..audit..' hg_access;')end
+ local function public_port(port,default)return type(port)=='number' and port>0 and port or default end
+ local http_public=public_port(d.public_http_port,80)
+ local formats={}
+ local function format(port,management)
+  local name=(management and 'hg_management_' or 'hg_access_')..port
+  if not formats[name]then
+   formats[name]=true
+   local allowed,reason='$hg_allowed','$hg_reason'
+   if management then allowed,reason='true','disabled' end
+   add(string.format([[log_format %s escape=json '{"ip":"$remote_addr","host":"$host","scheme":"$scheme","port":%d,"allowed":%s,"reason":"%s"}';]],name,port,allowed,reason))
+  end
+  return name
+ end
+ local function route_port(r)return r.public_port or (r.https and public_port(d.public_https_port,443) or http_public) end
+ format(http_public)
+ for _,r in ipairs(d.routes)do format(route_port(r))end
+ if d.management then format(80,true);format(443,true)end
+ local function logging(port,management)
+  add('access_log syslog:server=unix:/var/run/homegate-audit/socket,nohostname,tag='..audit..' '..format(port,management)..';')
+ end
  local function listeners(port,tls,default)
   add('listen 0.0.0.0:'..port..(tls and ' ssl' or '')..(default and ' default_server' or '')..';')
   add('listen [::]:'..port..(tls and ' ssl' or '')..(default and ' default_server ipv6only=on' or '')..';')
@@ -245,7 +264,7 @@ if mode=='render' or mode=='render-access'then
   if domain:sub(1,2)=='*.'then return quote('~^[^.]+\\.'..domain:sub(3):gsub('%.','\\.')..'$')end
   return domain
  end
- local function acl()logging();add('if ($hg_reason = manual-deny) { return 403; }');add('if ($hg_reason = denied) { return 403; }')end
+ local function acl(port)logging(port);add('if ($hg_reason = manual-deny) { return 403; }');add('if ($hg_reason = denied) { return 403; }')end
  local function upgrade_to_https(public)
   add('add_header Cache-Control "no-store" always; return 307 https://$host'..(public==443 and '' or ':'..public)..'$request_uri;')
  end
@@ -255,12 +274,14 @@ if mode=='render' or mode=='render-access'then
   local name=management.domain
   local pair=pairs[management.certificate]
   add('server { listen [::]:'..d.http_port..'; server_name '..name..';')
+  logging(80,true)
   add('if ($http_host = "") { return 421; } if ($host != '..name..') { return 421; }')
   if pair then add('add_header Cache-Control "no-store" always; return 307 https://'..name..'$request_uri; }')
   else add('return 503; }') end
   add('server { listen [::]:'..d.https_port..' ssl; server_name '..name..';')
   if not pair then add('ssl_reject_handshake on; return 503; }')
   else
+   logging(443,true)
    add('ssl_protocols TLSv1.2 TLSv1.3; ssl_certificate '..pair..'/fullchain.pem; ssl_certificate_key '..pair..'/privkey.pem;')
    add('if ($http_host = "") { return 421; } if ($host != '..name..') { return 421; }')
    add('location = / { return 307 https://'..name..'/cgi-bin/luci/; }')
@@ -276,22 +297,22 @@ if mode=='render' or mode=='render-access'then
   local redirects=redirect[r.domain]==r and not http_names[r.domain]
   if r.https and not pairs[r.certificate] then
    -- Keep an exact pending name from falling through to a working wildcard.
-   if redirects then add('server {');listeners(d.http_port,false,false);add('server_name '..servername(r.domain)..';');acl();add('return 503; }')end
+   if redirects then add('server {');listeners(d.http_port,false,false);add('server_name '..servername(r.domain)..';');acl(http_public);add('return 503; }')end
    add('server {');listeners(port,true,false);add('server_name '..servername(r.domain)..'; ssl_reject_handshake on; return 503; }')
   else
   add('upstream hg_up_'..r.id..' {')
   for _,authority in ipairs(r.upstreams or {r.authority})do add('server '..authority..';')end
   add('keepalive 4; }')
   if redirects then
-   add('server {');listeners(d.http_port,false,false);add('server_name '..servername(r.domain)..';');acl()
+   add('server {');listeners(d.http_port,false,false);add('server_name '..servername(r.domain)..';');acl(http_public)
    upgrade_to_https(r.public_port or d.public_https_port);add('}')
   end
-  add('server {');listeners(port,r.https,false);add('server_name '..servername(r.domain)..';');acl()
+  add('server {');listeners(port,r.https,false);add('server_name '..servername(r.domain)..';');acl(route_port(r))
   if r.https then
    add('ssl_protocols TLSv1.2 TLSv1.3; ssl_certificate '..pairs[r.certificate]..'/fullchain.pem; ssl_certificate_key '..pairs[r.certificate]..'/privkey.pem;')
    local public=r.public_port or d.public_https_port
    if public>0 and public~=443 then
-    add('error_page 497 = @hg_https_same_port; location @hg_https_same_port {');acl()
+    add('error_page 497 = @hg_https_same_port; location @hg_https_same_port {');acl(public)
     upgrade_to_https(public);add('}')
    end
   end

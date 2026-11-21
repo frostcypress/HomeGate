@@ -29,7 +29,9 @@ installed packages. Parsed CN prefixes are stored in the private runtime cache.
 acme.sh 3.1.6 (commit 807da6498377ee5e0cf43a78091f46f12dc59a89)
 Copyright: acme.sh contributors; GPL version 3.
 Official source: https://github.com/acmesh-official/acme.sh
-Unmodified executable source and complete license: third_party/acme.sh-3.1.6/.
+Upstream source and complete license: third_party/acme.sh-3.1.6/.
+The packaged GPL-3.0 script includes HomeGate's transport status and authorization
+polling fixes from scripts/engineering_runtime.py. Installed provenance records both hashes.
 HomeGate supplies its own fixed DNS/HTTP adapters and does not run the installer, cron, or automatic upgrade.
 
 Ubuntu AppArmor 4.0.1 (CI host prerequisite only)

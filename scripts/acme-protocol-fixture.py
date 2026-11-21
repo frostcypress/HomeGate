@@ -4,7 +4,7 @@
 Runs only inside the existing unprivileged native LuCI namespace. It verifies
 real account signatures and signs the client's real CSR with a private CA.
 """
-import base64,hashlib,json,re,subprocess,sys,time
+import base64,hashlib,hmac,json,re,subprocess,sys,time
 from pathlib import Path
 from urllib.parse import urlsplit,parse_qs
 
@@ -19,11 +19,12 @@ def derint(v):
     if v[0]&128:v=b'\0'+v
     return b'\x02'+bytes([len(v)])+v
 def save():DB.write_text(json.dumps(db))
-def output(body,status=200,location=None,pem=False):
+def output(body,status=200,location=None,pem=False,retry_after=None):
     if ca:
         db['nonce']+=1;nonce='fixture-nonce-'+str(db['nonce']);db['nonces'].append(nonce)
         headers='HTTP/1.1 '+str(status)+' OK\r\nReplay-Nonce: '+nonce+'\r\nContent-Type: '+('application/pem-certificate-chain' if pem else 'application/json')+'\r\n'
         if location:headers+='Location: '+location+'\r\n'
+        if retry_after is not None:headers+='Retry-After: '+str(retry_after)+'\r\n'
         Path(config['dump-header'][0]).write_bytes((headers+'\r\n').encode())
         save()
         if method!='HEAD':sys.stdout.write(body if isinstance(body,str) else json.dumps(body,separators=(',',':')))
@@ -37,7 +38,7 @@ for line in raw.splitlines():
     if m:
         v=m[2];config.setdefault(m[1],[]).append(json.loads(v) if v.startswith('"') else v)
 url=config.get('url',[None])[0] or sys.argv[sys.argv.index('--url')+1]
-method=config.get('request',['GET'])[0];parts=urlsplit(url);ca=parts.hostname in ['acme-staging-v02.api.letsencrypt.org','acme-v02.api.letsencrypt.org']
+method=config.get('request',['GET'])[0];parts=urlsplit(url);zero=parts.hostname=='acme.zerossl.com';ca=zero or parts.hostname in ['acme-staging-v02.api.letsencrypt.org','acme-v02.api.letsencrypt.org']
 db=json.loads(DB.read_text()) if DB.exists() else {'nonce':0,'nonces':[],'accounts':{},'orders':{},'records':[],'events':[]}
 db['events'].append({'host':parts.hostname,'path':parts.path,'method':method})
 mode=(ROOT/'acme-mode').read_text() if (ROOT/'acme-mode').exists() else 'success'
@@ -115,7 +116,10 @@ if not ca:
 base='https://'+parts.hostname
 if parts.path=='/directory' and mode=='hold-directory':
     save();(ROOT/'acme-entered').touch();time.sleep(30)
-if parts.path=='/directory':output({k:base+v for k,v in {'newNonce':'/nonce','newAccount':'/account','newOrder':'/new-order','revokeCert':'/revoke','keyChange':'/key-change'}.items()})
+if parts.path in ('/directory','/v2/DV90'):
+    directory={k:base+v for k,v in {'newNonce':'/nonce','newAccount':'/account','newOrder':'/new-order','revokeCert':'/revoke','keyChange':'/key-change'}.items()}
+    if zero:directory['meta']={'externalAccountRequired':True}
+    output(directory)
 if method=='HEAD' and parts.path=='/nonce':output({})
 assert method=='POST',(method,url)
 jws=json.loads(Path(config['data-binary'][0][1:]).read_text());protected=json.loads(un64(jws['protected']))
@@ -131,10 +135,26 @@ run('dgst','-sha256','-verify',str(ROOT/'jws-public.pem'),'-signature',str(ROOT/
 db['verified_jws']=db.get('verified_jws',0)+1
 payload=json.loads(un64(jws['payload'])) if jws['payload'] else None
 if parts.path=='/account':
-    kid=base+'/account/1';old=db['accounts'].get(kid);assert not old or old==jwk
+    existing=next((name for name,key in db['accounts'].items() if name.startswith(base+'/account/') and key==jwk),None)
+    if existing:output({'status':'valid','orders':base+'/orders'},200,existing)
+    account_count=sum(name.startswith(base+'/account/') for name in db['accounts'])
+    kid=base+'/account/'+str(account_count+1)
+    if zero:
+        eab=payload['externalAccountBinding']
+        binding=json.loads(un64(eab['protected']))
+        allowed={'fixture-eab-id':b'ZERO_FIXTURE_EAB_KEY_20261120_0123',
+                 'fixture-replacement-id':b'ZERO_FIXTURE_REPLACEMENT_01234567'}
+        assert binding=={'alg':'HS256','kid':binding['kid'],'url':url}
+        assert json.loads(un64(eab['payload']))==jwk
+        signed=(eab['protected']+'.'+eab['payload']).encode()
+        assert hmac.compare_digest(un64(eab['signature']),hmac.new(allowed[binding['kid']],signed,hashlib.sha256).digest())
+        db['zero_eab_verified']=True
+        db.setdefault('zero_eab_bindings',[]).append(binding['kid'])
     db['accounts'][kid]=jwk;output({'status':'valid','orders':base+'/orders'},201,kid)
 if parts.path=='/new-order':
-    oid=str(len(db['orders'])+1);ids=payload['identifiers'];db['orders'][oid]={'ids':ids,'valid':[],'jwk':jwk}
+    if mode=='rate-limited':
+        output({'type':'urn:ietf:params:acme:error:rateLimited','status':429},429,retry_after=1200)
+    oid=str(len(db['orders'])+1);ids=payload['identifiers'];db['orders'][oid]={'ids':ids,'valid':[],'jwk':jwk,'issuer':parts.hostname}
     if mode=='preexisting':
         thumb=b64(hashlib.sha256(json.dumps({k:jwk[k] for k in ['crv','kty','x','y']},sort_keys=True,separators=(',',':')).encode()).digest())
         db['records'].append({'id':'a'*32,'type':'TXT','name':'_acme-challenge.example.test','content':'UNRELATED_KEEP','ttl':120})
@@ -145,6 +165,7 @@ if parts.path=='/new-order':
 path=parts.path.strip('/').split('/');kind,oid=path[:2];order=db['orders'][oid]
 if kind in ['authz','challenge']:
     i=int(path[2]);domain=order['ids'][i]['value'];token=b64(hashlib.sha256((oid+':'+str(i)).encode()).digest())
+    processing=zero and mode=='certificate-transport-once'
     if kind=='challenge':
         if mode=='hold-challenge':
             (ROOT/'acme-entered').touch();time.sleep(30)
@@ -152,8 +173,19 @@ if kind in ['authz','challenge']:
         value=b64(hashlib.sha256((token+'.'+thumb).encode()).digest());name='_acme-challenge.'+domain.removeprefix('*.')
         assert any(v['type']=='TXT' and v['name']==name and v['content']==value for v in db['records']), 'Challenge TXT missing'
         if mode=='ca-reject':output({'type':'urn:ietf:params:acme:error:unauthorized','detail':'private fixture rejection'},400)
+        if processing:
+            order.setdefault('verification_wait',{})[str(i)]=[time.monotonic(),name,value]
+            output('{\n  "sta\\u0074us" : "processing"\n}',retry_after=3)
         if i not in order['valid']:order['valid'].append(i)
         output({'status':'valid'})
+    wait=order.get('verification_wait',{}).pop(str(i),None)
+    if wait:
+        start,name,value=wait
+        elapsed=time.monotonic()-start
+        assert payload is None and elapsed>=3,elapsed
+        assert any(v['type']=='TXT' and v['name']==name and v['content']==value for v in db['records']), 'TXT deleted before verification completed'
+        db.setdefault('verification_waits',[]).append(elapsed)
+        order['valid'].append(i)
     auth={'status':'valid' if i in order['valid'] else 'pending','identifier':{'type':'dns','value':domain.removeprefix('*.')},'challenges':[{'type':'dns-01','url':base+'/challenge/'+oid+'/'+str(i),'token':token,'status':'valid' if i in order['valid'] else 'pending'}]}
     if domain.startswith('*.'):auth['wildcard']=True
     output(auth)
@@ -163,5 +195,12 @@ if kind=='finalize':
     cert=run('x509','-req','-inform','DER','-in',str(csr),'-CA',str(ROOT/'fixture-ca.pem'),'-CAkey',str(ROOT/'fixture-ca.key'),'-set_serial',oid,'-days','1' if mode=='short-cert' else '90','-copy_extensions','copy')
     order['certificate']=cert.decode();output({'status':'valid','certificate':base+'/certificate/'+oid})
 if kind=='order':output({'status':'valid' if order.get('certificate') else 'ready','finalize':base+'/finalize/'+oid,'certificate':base+'/certificate/'+oid})
-if kind=='certificate':output(order['certificate']+(ROOT/'fixture-ca.pem').read_text(),pem=True)
+if kind=='certificate':
+    if mode=='certificate-transport-once' and not db.get('certificate_transport_failed'):
+        assert zero and payload is None
+        db['certificate_transport_failed']=True
+        Path(config['dump-header'][0]).write_bytes(b'')
+        save()
+        sys.exit(28)
+    output(order['certificate']+(ROOT/'fixture-ca.pem').read_text(),pem=True)
 raise AssertionError(url)

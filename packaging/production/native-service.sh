@@ -177,25 +177,28 @@ receipt=$run/native-service.json;next_receipt=$receipt.next
 published_status=;published_report=;previous_log_state=
 emit() {
  complete=${3:-false}
+ retry_id=
+ if [ "$2" = certificate_retry ];then retry_id=$retry_certificate;fi
+ report_key="$1:$2:$complete:$retry_id"
  case "$1" in failed|restart_required) final_state=$1;final_reason=$2;;esac
  # Keep the published receipt when its state, bytes and private metadata agree.
- if [ "$published_status" = "$1:$2:$complete" ] && ! exists "$next_receipt" &&
+ if [ "$published_status" = "$report_key" ] && ! exists "$next_receipt" &&
     [ -f "$receipt" ] && [ ! -L "$receipt" ] &&
     [ "$(stat -c '%u:%a:%h:%s' "$receipt")" = "0:600:1:$((${#published_report}+1))" ] &&
     IFS= read -r existing_report < "$receipt" && [ "$existing_report" = "$published_report" ];then
   return 0
  fi
  for file in "$receipt" "$next_receipt";do ! exists "$file" || private_file "$file" || return 1;done
- lua "$codec" emit "$1" "$$" "$birth" "$revision" "$2" "$binding_digest" "$complete" 9>&- > "$next_receipt" &&
+ lua "$codec" emit "$1" "$$" "$birth" "$revision" "$2" "$binding_digest" "$complete" "$retry_id" 9>&- > "$next_receipt" &&
  IFS= read -r report < "$next_receipt" && fsync "$next_receipt" &&
  mv -f "$next_receipt" "$receipt" && fsync "$receipt" "$run" || return 1
- published_status=$1:$2:$complete;published_report=$report
+ published_status=$report_key;published_report=$report
  if [ "$1:$2" != "$previous_log_state" ];then
   ash "$base/native-log.sh" service "$1" "$2" 9>&- >/dev/null || :
   previous_log_state=$1:$2
  fi
 }
-stopping=false;reload=false;job=;ddns_started=false;proxy_started=false;certificate_blocked=false;certificate_retry=false;final_state=stopped;final_reason=known
+stopping=false;reload=false;job=;job_certificate=;retry_certificate=;ddns_started=false;proxy_started=false;certificate_blocked=false;certificate_rate_limited=false;final_state=stopped;final_reason=known
 trap 'stopping=true' TERM INT
 trap 'reload=true' HUP
 trap ':' USR1
@@ -340,13 +343,16 @@ while :;do
   if state=$(entry acme-job "$job");then
    printf '%s\n' "$state" | lua "$codec" ready job 9>&-;code=$?
   else code=7;fi
-  if [ "$code" = 0 ];then job=;next_check=0;certificate_retry=false
+  if [ "$code" = 0 ];then job=;next_check=0;retry_certificate=
   elif [ "$code" != 3 ];then
-   [ "$proxy_started" = true ] || { emit failed certificate_failed;exit 7; }
-   if [ "$code" = 5 ];then
+   if [ "$code" = 9 ];then
+    job=;next_check=0;certificate_rate_limited=true
+   elif [ "$code" = 5 ];then
+    [ "$proxy_started" = true ] || { emit failed certificate_failed;exit 7; }
     job=;now=$(lua "$dir/worker-process.lua" now 9>&-) || fail
-    next_check=$((now+300));certificate_retry=true
+    next_check=$((now+300));retry_certificate=$job_certificate
    else
+    [ "$proxy_started" = true ] || { emit failed certificate_failed;exit 7; }
     # Keep the existing proxy available, but do not admit another DNS
     # mutation until the uncertain certificate job has been reconciled.
     certificate_blocked=true
@@ -357,6 +363,7 @@ while :;do
   now=$(lua "$dir/worker-process.lua" now 9>&-) || fail
   if [ "$now" -ge "$next_check" ];then
    next_check=$((now+60))
+   certificate_rate_limited=false
    for certificate in $certificates;do
     # Take a read under the same ordered locks as DDNS and the firewall.
     # A busy reader reschedules the scan without stopping the DDNS lease.
@@ -368,17 +375,25 @@ while :;do
     if [ "$code" = 3 ];then next_check=$((now+5));break;fi
     if [ "$code" != 0 ];then
      [ "$proxy_started" = true ] || { emit failed certificate_unavailable;exit 7; }
-     certificate_retry=true;continue
+     retry_certificate=$certificate;continue
     fi
     printf '%s\n' "$material" | lua "$codec" ready due 9>&-;code=$?
-    if [ "$code" = 3 ];then continue;fi
+    if [ "$code" = 3 ];then
+     [ "$retry_certificate" != "$certificate" ] || retry_certificate=
+     continue
+    fi
     if [ "$code" != 0 ];then
      [ "$proxy_started" = true ] || { emit failed certificate_unknown;exit 7; }
      certificate_blocked=true;break
     fi
     pause_ddns || { emit failed ddns_pause_unknown;exit 4; }
     job=$(lua "$dir/cloudflare-codec.lua" nonce < /proc/sys/kernel/random/uuid 9>&-) || fail
-    if ! entry acme-renew "$certificate" "$job" --confirm >/dev/null;then
+    job_certificate=$certificate
+    [ "$retry_certificate" != "$certificate" ] || retry_certificate=
+    entry acme-renew "$certificate" "$job" --confirm >/dev/null;code=$?
+    if [ "$code" = 9 ];then
+     job=;certificate_rate_limited=true;continue
+    elif [ "$code" != 0 ];then
      [ "$proxy_started" = true ] || { emit failed certificate_start_failed;exit 7; }
      certificate_blocked=true
     fi
@@ -393,7 +408,8 @@ while :;do
  if [ "$certificate_blocked" = true ];then emit running certificate_unknown
  elif [ -n "$job" ];then
   if [ "$proxy_started" = true ];then emit running certificate;else emit renewing certificate;fi
- elif [ "$certificate_retry" = true ];then emit running certificate_retry
+ elif [ "$certificate_rate_limited" = true ];then emit running certificate_rate_limited
+ elif [ -n "$retry_certificate" ];then emit running certificate_retry
  else emit running ready;fi || fail
  sleep 1 9>&- || fail
 done

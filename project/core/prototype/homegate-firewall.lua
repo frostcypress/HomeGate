@@ -91,7 +91,10 @@ local function report(ok,known,active,state,desired,quiet)
  save('report',d);if not quiet then io.write(codec.json(d)..'\n')end;return d
 end
 local function port(n,optional)if optional and n==0 then return 0 end;if type(n)~='number' or n%1~=0 or n<1 or n>65535 then error('port')end;return n end
-local wan_reject=' -j REJECT --reject-with tcp-reset'
+local reject=' -j REJECT --reject-with tcp-reset'
+local function reject_target(drop_ports,port)
+ return drop_ports and drop_ports[tostring(port)]==true and ' -j DROP' or reject
+end
 local function plan(wan_drop_ports)
  if type(token)~='string' or #token~=32 or not token:match('^[0-9a-f]+$') then error('token')end
  local idle=mode=='protect-idle'
@@ -147,7 +150,10 @@ local function plan(wan_drop_ports)
  end
  if p.management then
   local http,https=port(p.http_port),port(p.https_port)
-  if public_address and p.management.wan==true then management_redirect(wan.device,443,https)end
+  if public_address and p.management.wan==true then
+   management_redirect(wan.device,80,http)
+   management_redirect(wan.device,443,https)
+  end
   if public_address and lan_device and lan_device~=wan.device then
    management_redirect(lan_device,80,http)
    management_redirect(lan_device,443,https)
@@ -160,7 +166,7 @@ local function plan(wan_drop_ports)
  end
  if p.custom_ports_only and public_address then
   for _,public in ipairs({80,443})do
-   local target=wan_drop_ports and wan_drop_ports[tostring(public)]==true and ' -j DROP' or wan_reject
+   local target=reject_target(wan_drop_ports,public)
    out.filter[#out.filter+1]='-A HG_ENG_INPUT -d '..public_address..'/128 -i '..wan.device..' -p tcp --dport '..public..target
   end
  end
@@ -174,7 +180,7 @@ local function plan(wan_drop_ports)
   -- listener through LAN input. Only guard the exact WAN address and port.
   for _,public in ipairs({80,443})do
    if not mapped[public]then
-    out.filter[#out.filter+1]='-A HG_ENG_INPUT -d '..public_address..'/128 -i '..lan_device..' -p tcp --dport '..public..' -j DROP'
+    out.filter[#out.filter+1]='-A HG_ENG_INPUT -d '..public_address..'/128 -i '..lan_device..' -p tcp --dport '..public..reject_target(wan_drop_ports,public)
    end
   end
  end
@@ -233,11 +239,11 @@ local ok,err=pcall(function()
   for index,rule in ipairs(desired.filter)do
    guard()
    if not append('filter','HG_ENG_INPUT',rule)then
-    -- Some firmware lacks the IPv6 TCP-reset target. Keep these exact WAN
+    -- Some firmware lacks the IPv6 TCP-reset target. Keep these exact public
     -- ports blocked and retain the installed fallback for watch reconciliation.
     local public=rule:match(' %-%-dport (%d+) %-j REJECT %-%-reject%-with tcp%-reset$')
     if not public then error('command')end
-    local drop=rule:sub(1,-#wan_reject-1)..' -j DROP'
+    local drop=rule:sub(1,-#reject-1)..' -j DROP'
     guard();if not append('filter','HG_ENG_INPUT',drop)then error('command')end
     desired.filter[index]=drop
     desired.wan_drop_ports=desired.wan_drop_ports or {}

@@ -13,7 +13,7 @@ case "$account" in ''|*[!a-zA-Z0-9_-]*) exit 2;; esac
 [ "${#account}" -le 64 ] || exit 2
 case "$revision:$job" in *[!0-9:]*) exit 2;; esac
 [ "$revision" -ge 1 ] && [ "$revision" -le 999999999 ] && [ "${#job}" -le 9 ] && [ "$job" -ge 2 ] || exit 2
-case "$mode" in check|zones) ;; records) [ "$aliyun_records_enabled" = true ] || exit 2;; reconcile) [ "$aliyun_records_enabled" = true ] && [ "$aliyun_reconcile_enabled" = true ] || exit 2;; *) exit 2;; esac
+case "$mode" in check|zones|hosts:*) ;; records) [ "$aliyun_records_enabled" = true ] || exit 2;; reconcile) [ "$aliyun_records_enabled" = true ] && [ "$aliyun_reconcile_enabled" = true ] || exit 2;; *) exit 2;; esac
 [ -p /proc/self/fd/0 ] || exit 1
 work=/var/run/homegate/.dns-check-$job
 [ -d "$work" ] && [ ! -L "$work" ] && [ "$(stat -c '%u:%a' "$work")" = 0:700 ] || exit 1

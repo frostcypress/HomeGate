@@ -6,29 +6,19 @@ local validation=assert(loadfile(base..'configuration-validation.lua'))()
 local nixio=require('nixio')
 local codec=assert(loadfile(base..'../../luci/lua/luasrc/model/homegate/backup.lua'))()
 
-function M.domains(document,wan,observe,selected)
- local address=ip.ipv6(wan)
- local eligible={}
- if not address or not address:match('^[23]') then return eligible end
- local names={}
+local function certificate_matcher(document,observe)
  local certificates={}
- local function add(value)
-  local name=codec.management_domain(value)
-  if name and name~='' and (not selected or selected==name) then names[name]=true end
- end
  for _,section in ipairs(document)do
   local values=section.values
-  if section.kind=='homegate' then add(values.management_domain)
-  elseif section.kind=='web_rule' then add(values.domain)
-  elseif section.kind=='ddns_rule' and values.type=='AAAA' then
-   add(values.host=='@' and values.zone or values.host)
-  elseif section.kind=='certificate' and values.enabled=='1' and values.environment~='staging' then
+  if section.kind=='certificate' and values.enabled=='1' and values.environment=='production' and type(values.domains)=='table' then
    certificates[#certificates+1]=section
   end
  end
  table.sort(certificates,function(a,b)return a.name<b.name end)
  local validity={}
- for name in pairs(names)do
+ return function(name)
+  name=codec.management_domain(name)
+  if not name or name=='' then return nil end
   local parent=name:match('^[^.]+%.(.+)$')
   local chosen,exact
   for _,cert in ipairs(certificates)do
@@ -37,13 +27,41 @@ function M.domains(document,wan,observe,selected)
     if (same or pattern=='*.'..parent) and (not chosen or same and not exact) then
      if validity[cert.name]==nil then
       local ok,status=pcall(observe,cert.name,cert.values)
-      validity[cert.name]=ok and type(status)=='table' and status.valid==true
+      validity[cert.name]=ok and type(status)=='table' and status.valid==true and status.identity_valid==true
      end
      if validity[cert.name] then chosen,exact=cert.name,same end
     end
    end
    if exact then break end
   end
+  return chosen
+ end
+end
+
+function M.certificate(document,name,observe)
+ return certificate_matcher(document,observe)(name)
+end
+
+function M.domains(document,wan,observe)
+ local address=ip.ipv6(wan)
+ local eligible={}
+ if not address or not address:match('^[23]') then return eligible end
+ local names={}
+ local function add(value)
+  local name=codec.management_domain(value)
+  if name and name~='' then names[name]=true end
+ end
+ for _,section in ipairs(document)do
+  local values=section.values
+  if section.kind=='homegate' then add(values.management_domain)
+  elseif section.kind=='web_rule' then add(values.domain)
+  elseif section.kind=='ddns_rule' and values.type=='AAAA' then
+   add(values.host=='@' and values.zone or values.host)
+  end
+ end
+ local match=certificate_matcher(document,observe)
+ for name in pairs(names)do
+  local chosen=match(name)
   if chosen then
    local records=nixio.getaddrinfo(name..'.','inet6')
    local found,other=false,false

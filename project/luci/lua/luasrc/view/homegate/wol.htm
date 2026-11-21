@@ -16,6 +16,7 @@
 <form method="post" action="<%=url('admin/services/homegate/wol_apply')%>" id="homegate-wol-form">
 <input type="hidden" name="mode" value="apply" />
 <input type="hidden" name="token" value="<%=pcdata(token)%>" />
+<input type="hidden" name="configuration_revision" value="<%=pcdata(configuration_revision or '')%>" />
 <div id="hg-wol-stage"></div>
 <div class="cbi-section hg-section hg-form-fields">
 <h3><%:Wake Settings%></h3>
@@ -35,8 +36,10 @@
 <div class="cbi-section hg-section">
 <div class="hg-section-head">
 <h3><%:Hosts%></h3>
-<button class="cbi-button hg-btn-4" type="button" onclick="hgWolOpenAdd()"><%:Add%></button>
+<button id="hg-wol-add" class="cbi-button hg-btn-4" type="button" onclick="hgWolOpenAdd()"><%:Add%></button>
+<span id="hg-wol-full" class="hg-muted" hidden><%:16-entry limit reached.%></span>
 </div>
+<input type="hidden" id="hg-wol-pending-add" value="<%=pcdata(wol_pending_add or '')%>" />
 <div class="hg-table-scroll-wrap"><table class="hg-table hg-table-stable hg-wol-table">
 <colgroup><col style="width:34%"/><col/><col class="hg-wol-actions-col"/></colgroup>
 <thead><tr><th><%:Name%></th><th><%:MAC Address%></th><th class="hg-action-head hg-wol-action-head"><div class="hg-wol-actions-head"><%:Actions%></div></th></tr></thead>
@@ -142,8 +145,14 @@ function hgWolSyncStage(){
     hgAppendHidden(box,'wol_host_mac_'+(i+1),hgWolRows[i].mac||'');
   }
 }
+function hgWolHasPendingAdd(){
+  return !!document.getElementById('hg-wol-pending-add').value||hgWolRows.some(function(row){return !row.id;});
+}
 function hgWolRender(){
   var body=document.getElementById('hg-wol-hosts');if(!body)return;
+  var full=Math.max(hgWolRows.length,Object.keys(hgWolSavedRows).length)>=16;
+  document.getElementById('hg-wol-add').disabled=full||hgWolHasPendingAdd();
+  document.getElementById('hg-wol-full').hidden=!full;
   if(!hgWolRows.length){hgTableMessage(body,3,hgLabel('hg-wol-label-empty'),'hg-muted');hgWolSyncStage();return;}
   hgClearNode(body);
   for(var i=0;i<hgWolRows.length;i++){
@@ -174,6 +183,7 @@ function hgWolMacChanged(){
   if(!custom){c.value='';var o=s.options[s.selectedIndex];if(n && o && !n.value && o.getAttribute('data-name'))n.value=o.getAttribute('data-name');}
 }
 function hgWolOpenAdd(){
+  if(Math.max(hgWolRows.length,Object.keys(hgWolSavedRows).length)>=16||hgWolHasPendingAdd())return;
   var choice=document.getElementById('hg-wol-mac-choice'),custom=document.getElementById('hg-wol-mac-custom');
   var used=new Set(hgWolRows.map(function(row){return hgWolNormalizeMac(row.mac);}));
   choice.querySelectorAll('option[data-name]').forEach(function(option){
@@ -208,6 +218,7 @@ function hgWolConfirm(){
     var row=hgWolRows[Number(idx)];if(!row)return;
     row.name=name||row.mac;
   }else{
+    if(hgWolHasPendingAdd())return;
     var choice=document.getElementById('hg-wol-mac-choice'),custom=document.getElementById('hg-wol-mac-custom');
     var mac=hgWolNormalizeMac(choice.value==='__custom__'?custom.value:choice.value);
     if(!mac){alert('<%:Valid MAC address is required%>');return;}

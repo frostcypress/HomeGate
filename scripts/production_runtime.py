@@ -121,7 +121,7 @@ for tool in ash lua stat sha256sum flock fsync head $session_tool;do''')
     files[dns_read] = files[dns_read].replace(observer, b'observe_dns').replace(anchor, b'''result=0
 observe_dns() {
     case "$mode" in
-        check|zones) exec lua /usr/libexec/homegate/native-web-session.lua observe-dns "$ticket" "$revision" "$job" "$watchdog_mode" "$account" "$mode";;
+        check|zones|hosts:*) exec lua /usr/libexec/homegate/native-web-session.lua observe-dns "$ticket" "$revision" "$job" "$watchdog_mode" "$account" "$mode";;
         records|reconcile) exec lua /usr/libexec/homegate/native-web-session.lua dns-records "$ticket" "$revision" "$job" "$watchdog_mode" "$account" "$mode";;
         *) exit 2;;
     esac

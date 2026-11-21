@@ -36,6 +36,15 @@ if mode=='web-previous-owner'then
  local d=fs.lstat(receipt_path) and report(read(receipt_path,16384))
  io.write(d and owner_key(d) or 'none','\n');return
 end
+if mode=='web-certificate-retry'then
+ if not fs.lstat(receipt_path) then return end
+ local d=report(read(receipt_path,16384))
+ local id=d.certificate_retry_id
+ if d.configuration_revision==tonumber(arg[2]) and d.phase=='native-service' and d.version==version() and
+    d.state=='running' and d.running==true and d.reason=='certificate_retry' and
+    type(id)=='string' and #id<=64 and id:match('^[A-Za-z0-9_-]+$') and identity(d) then io.write(id,'\n') end
+ return
+end
 if mode=='web-running'then
  if not fs.lstat(receipt_path)then os.exit(3)end
  local d=report(read(receipt_path,16384));local revision=tonumber(arg[2])
@@ -56,7 +65,7 @@ if mode=='web-running'then
  end
  if d.state~='running' or d.running~=true or d.healthy~=true or not identity(d)then os.exit(3)end
  if arg[3]then
-  local certificate_state=({certificate='pending',certificate_unknown='unknown',certificate_retry='retry'})[d.reason]
+ local certificate_state=({certificate='pending',certificate_unknown='unknown',certificate_retry='retry',certificate_rate_limited='rate_limited'})[d.reason]
   emit({api_version=1,native=true,ok=true,configuration_revision=revision,verification='source-bound-coordinator',certificate_state=certificate_state,service={configured=true,enabled=true,running=true,healthy=true}})
  end
  return
@@ -67,20 +76,25 @@ end
 if mode=='plan' or mode=='plan-set'then
  local raw=read('/etc/config/homegate',262144);local doc=codec.private_configuration(raw);if not doc then fail()end
  local out={ddns={},certificates={},web={},policy='open'}
- local web_configured,management_configured=false,false
- local custom_web={}
+ local web_configured=false
+ local management_configured=codec.active_management_domain(doc.configuration)~=nil
+ local custom_web,certificates={},{}
+ local management_certificate
  for _,s in ipairs(doc.configuration)do
   local sw=doc.switches[s.name] or {};local enabled=sw.enabled=='1'
   if s.kind=='homegate' then
    if sw.access_enabled=='1' then out.policy='allow' end
    out.access_region=s.values.access_region;out.access_enabled=sw.access_enabled=='1'
    out.auto_firewall=s.values.auto_firewall=='1'
-   management_configured=(s.values.management_domain or '')~=''
-  elseif s.kind=='ddns_rule' and enabled then out.ddns[#out.ddns+1]=s.name
-  elseif s.kind=='certificate' and enabled and s.values.source=='acme' then out.certificates[#out.certificates+1]=s.name
+   if management_configured then management_certificate=s.values.management_certificate end
+   web_configured=web_configured or s.values.management_wan~=nil or (s.values.management_domain or '')~=''
+  elseif s.kind=='ddns_rule' and enabled and s.values.retained~='1' and s.values.external_dns~='1' then out.ddns[#out.ddns+1]=s.name
+  elseif s.kind=='certificate' then
+   certificates[s.name]=s
+   if enabled and s.values.source=='acme' then out.certificates[#out.certificates+1]=s.name end
   elseif s.kind=='web_rule' then
    web_configured=true
-   if codec.custom_public_port(s.values.external_port) then
+   if s.values.retained~='1' and codec.custom_public_port(s.values.external_port) then
     custom_web[s.name]=true
     if enabled then out.web[#out.web+1]=s.name end
    end
@@ -108,6 +122,25 @@ if mode=='plan' or mode=='plan-set'then
   saved.web=web
   out=saved
  end
+ -- Keep explicitly scheduled standalone certificates and certificates shared
+ -- by active routes or router management. Skip certificates used only by inactive routes.
+ local active_web,referenced,needed={},{},{}
+ for _,name in ipairs(out.web)do active_web[name]=true end
+ if management_certificate then needed[management_certificate]=true end
+ for _,s in ipairs(doc.configuration)do
+  if s.kind=='web_rule' and s.values.https=='1' then
+   local certificate=codec.web_certificate_id(s.values,certificates)
+   if certificate then
+    referenced[certificate]=true
+    if active_web[s.name] then needed[certificate]=true end
+   end
+  end
+ end
+ local scheduled={}
+ for _,name in ipairs(out.certificates)do
+  if needed[name] or (not referenced[name] and certificates[name] and certificates[name].values.retained~='1') then scheduled[#scheduled+1]=name end
+ end
+ out.certificates=scheduled
  if #out.ddns>32 or #out.web>16 or #out.certificates>32 then fail()end
  for _,k in ipairs({'ddns','certificates','web'})do table.sort(out[k])end
  out.web_configured=web_configured
@@ -124,7 +157,9 @@ elseif mode=='field'then
  else fail()end;return
 elseif mode=='ready'then
  local d=report(io.stdin:read(16385))
- if arg[2]=='job' and d.pending==false and d.cleanup_required==false and d.state=='failed' then os.exit(5)end
+ if arg[2]=='job' and d.pending==false and d.cleanup_required==false and d.state=='failed' then
+  os.exit(d.error_kind=='rate_limited' and 9 or 5)
+ end
  if d.ok~=true then fail()end
  if arg[2]=='intent' then if d.known~=true or d.active_overlay~=true or d.main_enabled~=true or d.source_bound~=true then fail()end
  elseif arg[2]=='due' then if d.pending~=false or type(d.renew)~='boolean' or type(d.exists)~='boolean' or type(d.valid)~='boolean' then fail()end;if not d.renew and d.exists and d.valid then os.exit(3)end
@@ -141,7 +176,10 @@ elseif mode=='emit'then
  local state,pid,ticks,revision=arg[2],tonumber(arg[3]),tonumber(arg[4]),tonumber(arg[5]);local reason=arg[6]
  if not states[state] or not number(pid,999999999) or not number(ticks,9007199254740991) or not number(revision,999999999) or not reason or #reason>64 or reason:find('[^a-z_]')then fail()end
  local digest=arg[7];if not digest or #digest~=64 or not digest:match('^[0-9a-f]+$')then fail()end
- emit({api_version=1,native=true,ok=state~='failed' and state~='restart_required',phase='native-service',version=version(),state=state,pid=pid,process_start_ticks=ticks,configuration_revision=revision,source_binding_digest=digest,reason=reason,cleanup_confirmed=arg[8]=='true',healthy=state=='running',running=state=='starting' or state=='running' or state=='renewing' or state=='stopping',effect='none',write_ready=false});return
+ local retry_id=arg[9]
+ if retry_id=='' then retry_id=nil end
+ if retry_id and (reason~='certificate_retry' or #retry_id>64 or not retry_id:match('^[A-Za-z0-9_-]+$')) then fail()end
+ emit({api_version=1,native=true,ok=state~='failed' and state~='restart_required',phase='native-service',version=version(),state=state,pid=pid,process_start_ticks=ticks,configuration_revision=revision,source_binding_digest=digest,reason=reason,certificate_retry_id=retry_id,cleanup_confirmed=arg[8]=='true',healthy=state=='running',running=state=='starting' or state=='running' or state=='renewing' or state=='stopping',effect='none',write_ready=false});return
 elseif mode=='alive'then
  local d=report(read('/var/run/homegate/native-service.json',16384))
  if d.phase~='native-service' or d.running~=true or not identity(d)then fail()end;return

@@ -11,7 +11,7 @@
      access_scope = (main.access_region and main.access_region ~= '') and main.access_region or '__manual__'
    end %>
 <div class="hg-wrap">
-<% if notice ~= "" then %><div class="hg-notice"><%=pcdata(translate(notice))%></div><% end %>
+<% if notice ~= "" and resume_public ~= 'add' then %><div class="hg-notice"><%=pcdata(translate(notice))%></div><% end %>
 <% if error_message ~= "" then %><div class="hg-notice hg-notice-error"><%=pcdata(translate(error_message))%></div><% end %>
 <% if retired_access_region then %><div class="hg-notice hg-notice-pending"><%:Province filtering has been retired. Only your allow list is permitted until you select and save a new access scope.%></div><% end %>
 <div class="hg-notice hg-notice-pending" id="hg-public-dirty" style="display:none"><%:Changes are not saved yet.%></div>
@@ -19,6 +19,7 @@
 <form method="post" action="<%=url('admin/services/homegate/public_apply')%>" id="homegate-public-form" onsubmit="hgPublicSyncStage(true)">
 <input type="hidden" name="mode" value="apply" />
 <input type="hidden" name="token" value="<%=pcdata(token)%>" />
+<input type="hidden" name="configuration_revision" value="<%=pcdata(configuration_revision or '')%>" />
 <input type="hidden" id="hg-public-access-allow-source" value="<%=pcdata((main and main.access_allow) or '')%>" />
 <input type="hidden" id="hg-public-access-deny-source" value="<%=pcdata((main and main.access_deny) or '')%>" />
 <input type="hidden" id="hg-public-access-observed" value="<%=pcdata((main and main['.access_observed']) or '')%>" />
@@ -47,24 +48,14 @@
   </div>
 </div>
 
-<div class="cbi-section hg-section hg-form-fields">
-  <h3><%:Router Management%></h3>
-  <div class="hg-form-row">
-    <label class="hg-form-label" for="hg-management-domain"><%:Router Management URL%></label>
-    <div class="hg-form-field"><select class="hg-control" id="hg-management-domain" disabled="disabled" onchange="hgPublicManagementChanged()">
-      <option value="<%=pcdata(main.management_domain or '')%>"><% if main.management_domain and main.management_domain ~= '' then %><%=pcdata('https://' .. main.management_domain)%><% else %><%:Checking management domains…%><% end %></option>
-    </select></div>
-  </div>
-  <div class="hg-form-row">
-    <label class="hg-form-label" for="hg-management-wan"><%:Allow WAN Management%></label>
-    <div class="hg-form-field"><input class="cbi-input-checkbox" type="checkbox" id="hg-management-wan" <%=b(main.management_wan) and 'checked="checked"' or 'disabled="disabled"'%> onchange="hgPublicManagementChanged()" /></div>
-  </div>
-</div>
+<span id="hg-public-management-state" data-domain="<%=pcdata(main.management_domain or '')%>" data-enabled="<%=b(main.management_wan) and '1' or '0'%>" hidden></span>
+<span id="hg-public-zerossl-state" data-key-id="<%=pcdata(zerossl_eab_key_id or '')%>" hidden></span>
 
 <div class="cbi-section hg-section">
 <div class="hg-section-head">
 <h3><%:Service List%></h3>
-<button class="cbi-button hg-btn-4" type="button" onclick="hgPublicOpenAdd()"><%:Add%></button>
+<button id="hg-public-add" class="cbi-button hg-btn-4" type="button" onclick="hgPublicOpenAdd()"><%:Add%></button>
+<span id="hg-public-full" class="hg-muted" hidden><%:16-entry limit reached.%></span>
 </div>
 <div class="hg-table-scroll-wrap hg-public-list-wrap"><table class="hg-table hg-public-table">
 <thead><tr><th><%:Enabled%></th><th><%:External URL%></th><th><%:LAN URL%></th><th class="hg-action-head hg-public-action-head"><%:Actions%></th></tr></thead>
@@ -73,17 +64,18 @@
 <% for _, r in ipairs(services) do %>
 <tr class="hg-public-row"
  data-web-id="<%=pcdata(r.web_id or '')%>"
+ data-external-dns="<%=r.external_dns and '1' or '0'%>"
  data-ddns-id="<%=pcdata(r.ddns_id or '')%>"
  data-account-id="<%=pcdata(r.account_id or '')%>"
  data-cert-id="<%=pcdata(r.cert_id or '')%>"
  data-cert-source="<%=pcdata(r.cert_source or r.cert_mode or 'auto')%>"
  data-cert-ca="<%=pcdata(r.cert_ca or 'letsencrypt')%>"
+ data-cert-ca-lock="<%=pcdata(r.cert_ca_lock or '')%>"
  data-cert-environment="<%=pcdata(r.cert_environment or 'production')%>"
 
  data-cert-managed="<%=r.cert_managed and '1' or '0'%>"
  data-cert-renew-days="<%=pcdata(r.cert_renew_days or default_renew_days or '5')%>"
  data-cert-shared="<%=r.cert_shared and '1' or '0'%>"
- data-delete-confirm="<%=r.delete_confirm and '1' or '0'%>"
  data-enabled="<%=b(r.enabled) and '1' or '0'%>"
  data-domain="<%=pcdata(r.domain or '')%>"
  data-target="<%=pcdata(r.target or '')%>"
@@ -134,41 +126,49 @@
   </div>
 </div>
 
-<div class="hg-modal-backdrop" id="hg-public-modal" aria-hidden="true" onclick="hgModalBackdrop(event)">
+<div class="hg-modal-backdrop" id="hg-public-modal" aria-hidden="true" onclick="if(event.target===this)hgPublicClose()">
 <div class="hg-modal hg-public-service-modal" role="dialog" aria-modal="true" aria-labelledby="hg-public-modal-title">
 <div class="hg-public-service-scroll" id="hg-public-service-scroll">
 <div class="hg-modal-head">
 <h3 id="hg-public-modal-title"><%:Add Public Service%></h3>
 </div>
-<div id="hg-public-account-result" class="hg-notice" role="status" hidden></div>
 <input type="hidden" id="hg-public-edit-index" value="" />
 <input type="hidden" id="hg-public-edit-cert-id" value="" />
 <input type="hidden" id="hg-public-edit-cert-managed" value="0" />
 <input type="hidden" id="hg-public-edit-cert-shared" value="0" />
 <input type="hidden" id="hg-public-resume-mode" value="<%=pcdata(resume_public or '')%>" />
 <input type="hidden" id="hg-public-resume-account" value="<%=pcdata(resume_account or '')%>" />
+<input type="hidden" id="hg-public-pending-add" value="<%=pcdata(public_pending_add or '')%>" />
 <div class="hg-modal-grid">
 <label><%:DNS Account%></label>
 <select class="hg-control" id="hg-public-account" onchange="hgPublicAccountChanged(false)">
 <% for _, a in ipairs(dns_accounts or {}) do %><option value="<%=pcdata(a.id or '')%>" data-provider="<%=pcdata(a.provider or 'aliyun')%>" data-key-id="<%=pcdata(a.key_id or '')%>" data-provider-account-id="<%=pcdata(a.provider_account_id or '')%>" data-endpoint="<%=pcdata(a.endpoint or '')%>" data-secret-saved="<%=a.secret_saved and '1' or '0'%>" data-use-count="<%=tonumber(a.use_count or 0) or 0%>"><%=pcdata(a.label or a.display_name or a.id or '-')%></option><% end %>
 <option value="__new__"><%:New DNS Account...%></option>
 </select>
+<div id="hg-public-account-result" class="hg-notice" role="status" hidden></div>
 <label id="hg-public-provider-label" for="hg-public-provider"><%:DNS Provider%></label><select class="hg-control" id="hg-public-provider" onchange="hgPublicProviderChanged()"><% for _, p in ipairs(dns_provider_catalog or {}) do %><option value="<%=pcdata(p.name or '')%>"><%=pcdata(p.display_name or p.name or '')%></option><% end %></select>
 <label id="hg-public-key-id-label" for="hg-public-key-id"><%:AccessKey ID%></label><input class="hg-control" type="text" id="hg-public-key-id" value="" autocomplete="off" />
 <label id="hg-public-secret-label" for="hg-public-secret"><%:AccessKey Secret%></label><input class="hg-control" type="password" id="hg-public-secret" value="" autocomplete="new-password" />
 <label id="hg-public-provider-account-id-label" for="hg-public-provider-account-id"><%:Account ID%></label><input class="hg-control" type="text" id="hg-public-provider-account-id" value="" autocomplete="off" />
 <label id="hg-public-endpoint-label" for="hg-public-endpoint"><%:DNS API Endpoint%></label><input class="hg-control" type="text" id="hg-public-endpoint" value="" autocomplete="off" />
 <div id="hg-public-provider-data" style="display:none"><% for _, p in ipairs(dns_provider_catalog or {}) do local k=credential(p,'key_id'); local sec=credential(p,'secret'); local aid=credential(p,'account_id'); local ep=credential(p,'endpoint') %><span data-name="<%=pcdata(p.name or '')%>" data-display-name="<%=pcdata(p.display_name or p.name or '')%>" data-key-enabled="<%=k and '1' or '0'%>" data-key-label="<%=pcdata((k and k.label) or '')%>" data-key-required="<%=k and k.required and '1' or '0'%>" data-secret-enabled="<%=sec and '1' or '0'%>" data-secret-label="<%=pcdata((sec and sec.label) or '')%>" data-secret-required="<%=sec and sec.required and '1' or '0'%>" data-account-enabled="<%=aid and '1' or '0'%>" data-account-label="<%=pcdata((aid and aid.label) or '')%>" data-account-required="<%=aid and aid.required and '1' or '0'%>" data-endpoint-enabled="<%=ep and '1' or '0'%>" data-endpoint-label="<%=pcdata((ep and ep.label) or '')%>" data-endpoint-required="<%=ep and ep.required and '1' or '0'%>" data-endpoint-placeholder="<%=pcdata((ep and ep.placeholder) or '')%>"></span><% end %></div>
-<label id="hg-public-save-account-label" style="display:none"><%:DNS Account%></label><div id="hg-public-save-account-control" style="display:none"><button class="cbi-button hg-btn-4" type="button" onclick="hgPublicSaveAccount(this)"><%:Save Account%></button></div>
+<div id="hg-public-save-account-control" class="hg-account-actions"><button id="hg-public-save-account" class="cbi-button hg-btn-4" type="button" onclick="hgPublicSaveAccount(this)"><%:Save Account%></button> <button id="hg-public-refresh-account" class="cbi-button hg-btn-4" type="button" onclick="hgPublicRefreshAccount()"><%:Refresh Account%></button></div>
 <label for="hg-public-zone"><%:Zone%></label>
 <div class="hg-modal-control-stack">
-<select class="hg-control" id="hg-public-zone" onchange="hgPublicPreviewDomain()" disabled="disabled"><option value=""><%:Detecting Primary Domains...%></option></select>
+<select class="hg-control" id="hg-public-zone" onchange="hgPublicPreviewDomain();hgPublicLoadHosts()" disabled="disabled"><option value=""><%:Detecting Primary Domains...%></option></select>
 <div class="hg-field-note hg-field-note-compact" id="hg-public-zone-note"><%:Primary domains are detected from the selected DNS account.%></div>
-<button class="cbi-button hg-btn-4" type="button" id="hg-public-zone-retry" hidden onclick="hgPublicRetryZones()"><%:Retry%></button>
 </div>
-<label for="hg-public-host"><%:Host Record%></label><input class="hg-control" type="text" id="hg-public-host" value="" placeholder="home / @" autocomplete="off" oninput="hgPublicPreviewDomain()" />
+<label for="hg-public-host"><%:Host Record%></label><div class="hg-host-record" id="hg-public-host-record">
+  <div class="hg-host-input"><input class="hg-control" type="text" id="hg-public-host" value="" placeholder="home / @" autocomplete="off" aria-controls="hg-public-host-options" oninput="hgPublicHostInput()" />
+    <button id="hg-public-host-toggle" type="button" class="hg-host-toggle" aria-label="<%:Show host records%>" aria-expanded="false" aria-controls="hg-public-host-options" onclick="hgPublicToggleHosts()"><span aria-hidden="true"></span></button></div>
+  <div id="hg-public-host-options" class="hg-host-options" hidden></div>
+</div>
+<label for="hg-public-history-choice" id="hg-public-history-label" hidden><%:Previous Service Settings%></label><select id="hg-public-history-choice" class="hg-control" hidden onchange="hgPublicRestoreHistory()"></select>
+<div id="hg-public-history-data" hidden><% for _, r in ipairs(public_history or {}) do %><span data-account="<%=pcdata(r.account_id or '')%>" data-zone="<%=pcdata(r.zone or '')%>" data-host="<%=pcdata(r.host or '')%>" data-domain="<%=pcdata(r.domain or '')%>" data-port="<%=pcdata(r.external_port or '')%>" data-target="<%=pcdata(r.target or '')%>" data-https="<%=pcdata(r.https or '')%>" data-ca="<%=pcdata(r.cert_ca or '')%>" data-environment="<%=pcdata(r.cert_environment or '')%>" data-source="<%=pcdata(r.cert_source or '')%>" data-renew="<%=pcdata(r.cert_renew_days or '')%>"></span><% end %></div>
 <label for="hg-public-external-port"><%:External Port%></label><input class="hg-control" type="number" id="hg-public-external-port" min="1" max="65535" step="1" data-https-default="<%=pcdata(main.https_port or '443')%>" data-http-default="<%=pcdata(main.http_port or '0')%>" placeholder="<%:Choose a port other than 80 or 443%>" oninput="hgPublicPreviewAddress()" />
 <label><%:External URL%></label><div class="hg-modal-static" id="hg-public-domain-preview">-</div>
+<label id="hg-public-management-label" for="hg-public-management"><%:Router Management Page%></label>
+<div class="hg-modal-check"><input class="cbi-input-checkbox" type="checkbox" id="hg-public-management" aria-describedby="hg-public-management-url" onchange="hgPublicPreviewDomain()" disabled /> <span id="hg-public-management-url" hidden></span></div>
 <label for="hg-public-target"><%:LAN URL%></label><input class="hg-control" type="text" id="hg-public-target" value="" placeholder="http://192.168.1.100:8080" autocomplete="off" />
 <label for="hg-public-https"><%:HTTPS%></label><div class="hg-modal-check"><input class="cbi-input-checkbox" type="checkbox" id="hg-public-https" value="1" checked="checked" onchange="hgPublicPreviewDomain()" /></div>
 
@@ -187,6 +187,13 @@
 <select class="hg-control" id="hg-public-ca" onchange="hgPublicCAChanged()"><% for _, c in ipairs(acme_ca_catalog or {}) do %><option value="<%=pcdata(c.name or '')%>"><%=pcdata(c.display_name or c.name or '')%></option><% end %></select>
 <div id="hg-public-ca-data" style="display:none"><% for _, c in ipairs(acme_ca_catalog or {}) do %><span data-name="<%=pcdata(c.name or '')%>" data-display-name="<%=pcdata(c.display_name or c.name or '')%>" data-production="<%=pcdata(ca_directory(c,'production'))%>" data-staging="<%=pcdata(ca_directory(c,'staging'))%>"></span><% end %></div>
 
+<label id="hg-public-eab-id-label" for="hg-public-eab-id" style="display:none"><%:EAB Key ID%></label>
+<input id="hg-public-eab-id" class="hg-control" type="text" autocomplete="off" spellcheck="false" maxlength="128" style="display:none" oninput="hgPublicEabPlaceholder()" />
+<label id="hg-public-eab-key-label" for="hg-public-eab-key" style="display:none"><%:EAB HMAC Key%></label>
+<input id="hg-public-eab-key" class="hg-control" type="password" autocomplete="new-password" maxlength="512" style="display:none" />
+<span id="hg-public-eab-error-label" style="display:none" aria-hidden="true"></span>
+<div id="hg-public-eab-error" class="hg-notice hg-notice-error" role="alert" style="display:none"><%:Enter a valid EAB Key ID and HMAC Key.%></div>
+
 <label id="hg-public-environment-label" for="hg-public-environment"><%:Certificate Environment%></label>
 <div id="hg-public-environment-control" class="hg-modal-control-stack">
 <select class="hg-control" id="hg-public-environment" onchange="hgPublicUpdateCertificateUI()"></select>
@@ -196,7 +203,7 @@
 <div id="hg-public-renew-control" class="hg-modal-control-stack"><input class="hg-control" type="number" min="1" max="3650" id="hg-public-renew-days" inputmode="numeric" value="" placeholder="<%=pcdata(string.format(translate('Automatically renew below %d days by default'), tonumber(default_renew_days) or 5))%>" /></div>
 
 <div id="hg-public-certificate-data" style="display:none">
-<% for _, c in ipairs(certificates or {}) do %><span data-id="<%=pcdata(c.id or '')%>" data-domains="<%=pcdata(c.domain_text or '')%>" data-renew-days="<%=pcdata(c.renew_days or default_renew_days or '5')%>" data-ca="<%=pcdata(c.ca or 'letsencrypt')%>" data-environment="<%=pcdata(c.environment or 'production')%>" data-use-count="<%=c.use_count or 0%>" data-enabled="<%=b(c.enabled) and '1' or '0'%>" data-source="<%=pcdata(c.source or 'acme')%>"><%=pcdata((c.domain_text and c.domain_text ~= '') and c.domain_text or c.name or c.id or '-')%></span><% end %>
+<% for _, c in ipairs(certificates or {}) do %><span data-id="<%=pcdata(c.id or '')%>" data-domains="<%=pcdata(c.domain_text or '')%>" data-renew-days="<%=pcdata(c.renew_days or default_renew_days or '5')%>" data-ca="<%=pcdata(c.ca or 'letsencrypt')%>" data-environment="<%=pcdata(c.environment or 'production')%>" data-use-count="<%=c.use_count or 0%>" data-enabled="<%=b(c.enabled) and '1' or '0'%>" data-source="<%=pcdata(c.source or 'acme')%>" data-retained="<%=c.retained == '1' and '1' or '0'%>"><%=pcdata((c.domain_text and c.domain_text ~= '') and c.domain_text or c.name or c.id or '-')%></span><% end %>
 </div>
 </div>
 <div class="hg-field-note hg-modal-footnote" id="hg-public-secret-note"><%:Saved DNS accounts can be reused by multiple public services without re-entering credentials.%></div>
@@ -223,9 +230,9 @@
 <span id="hg-public-label-empty" style="display:none"><%:No public services configured.%></span>
 <span id="hg-public-label-add-title" style="display:none"><%:Add Public Service%></span>
 <span id="hg-public-label-edit-title" style="display:none"><%:Edit Public Service%></span>
-<span id="hg-public-label-delete-confirm" style="display:none"><%:This is the last service using its certificate or primary-domain resources. Delete the service, its public DNS record, and all now-unused local DNS/certificate resources?%></span>
 <span id="hg-public-label-dns-error" style="display:none"><%:DNS Error%></span>
 <span id="hg-public-label-cert-error" style="display:none"><%:Certificate Error%></span>
+<span id="hg-public-label-cert-rate-limited" hidden><%:Certificate request rate limited%></span>
 <span id="hg-public-label-cert-days" style="display:none"><%:Certificate %d days%></span>
 <span id="hg-public-label-renew-failed" style="display:none"><%:Renewal Failed · %d days%></span>
 <span id="hg-public-label-proxy-error" style="display:none"><%:Proxy Error%></span>
@@ -280,10 +287,17 @@
 <span id="hg-public-region-limited" hidden><%:Two region data updates have been applied today%></span>
 <span id="hg-public-cert-staging" hidden><%:Staging Environment%></span>
 <span id="hg-public-cert-production" hidden><%:Production Environment%></span>
+<span id="hg-public-label-disabled" hidden><%:HomeGate is disabled%></span>
+<span id="hg-public-label-issuing" hidden><%:Certificate issuance in progress%></span>
+<span id="hg-public-label-cert-retry" hidden><%:Certificate will be retried%></span>
 
 <script type="text/javascript">
 var hgPublicRows=[], hgPublicDDNS={}, hgPublicCerts={}, hgPublicProxy=null, hgPublicHasUnsaved=false, hgPublicCertificateChoices=[], hgPublicSavedSignature='', hgPublicSavedRows={}, hgPublicRecentRows=[], hgPublicSavedAccessScope='', hgPublicSavedAccessAllow='', hgPublicSavedAccessDeny='', hgPublicZoneRequest=0, hgPublicConfirmPending=null;
-var hgPublicZoneCache=Object.create(null), hgPublicZonePending=Object.create(null), hgPublicCertsLoaded=false;
+var hgPublicZoneCache=Object.create(null), hgPublicZonePending=Object.create(null), hgPublicCertsLoaded=false, hgPublicCertsLoading=false;
+var hgPublicManagementDomain='', hgPublicSavedManagementDomain='', hgPublicModalManagementDomain=null;
+var hgPublicPendingEab=null, hgPublicEabVisible=false;
+var hgPublicMasterEnabled='<%=pcdata(public_master_enabled or main.enabled or '')%>'==='1';
+var hgPublicCertTimer, hgPublicCertPolls=12;
 function hgPublicTrim(v){return String(v===undefined||v===null?'':v).replace(/^\s+|\s+$/g,'');}
 function hgPublicFullDomain(zone,host){zone=hgPublicTrim(zone).toLowerCase().replace(/\.$/,'');host=hgPublicTrim(host).toLowerCase().replace(/\.$/,'');if(!zone)return '';if(!host||host=='@')return zone;if(host==zone||host.slice(-(zone.length+1))=='.'+zone)return host;return host+'.'+zone;}
 function hgPublicHostPrefix(zone,host){
@@ -300,17 +314,20 @@ function hgPublicExternalPort(r){
   var input=document.getElementById('hg-public-external-port');
   return Number(r.external_port||(input&&(r.https?input.dataset.httpsDefault:input.dataset.httpDefault)))||(r.https?443:80);
 }
-function hgPublicRowState(r){return [r.web_id||'',r.ddns_id||'',r.account_id||'',r.cert_id||'',r.cert_source||'auto',r.cert_ca||'letsencrypt',r.cert_environment||'production',r.cert_renew_days||'',r.local_upload?'1':'0',r.enabled?'1':'0',r.domain||'',r.target||'',r.external_port||'',r.https?'1':'0',r.provider||'aliyun',r.key_id||'',r.provider_account_id||'',r.endpoint||'',r.secret||'',r.zone||'',hgPublicHostPrefix(r.zone,r.host)||'@',r.ttl||'600'];}
+function hgPublicRowState(r){return [r.web_id||'',r.ddns_id||'',r.external_dns?'1':'0',r.account_id||'',r.cert_id||'',r.cert_source||'auto',r.cert_ca||'letsencrypt',r.cert_environment||'production',r.cert_renew_days||'',r.local_upload?'1':'0',r.enabled?'1':'0',r.domain||'',r.target||'',r.external_port||'',r.https?'1':'0',r.provider||'aliyun',r.key_id||'',r.provider_account_id||'',r.endpoint||'',r.secret||'',r.zone||'',hgPublicHostPrefix(r.zone,r.host)||'@',r.ttl||'600'];}
 function hgPublicRowSignature(r){return JSON.stringify(hgPublicRowState(r));}
-function hgPublicStateSignature(){var rows=[];for(var i=0;i<hgPublicRows.length;i++)rows.push(hgPublicRowState(hgPublicRows[i]));var scope=document.getElementById('hg-public-access-scope'),allow=document.getElementById('hg-public-access-allow-source'),deny=document.getElementById('hg-public-access-deny-source');return JSON.stringify([(scope&&scope.value)||'',(allow&&allow.value)||'',(deny&&deny.value)||'',rows,document.getElementById('hg-management-domain').value,document.getElementById('hg-management-wan').checked]);}
-function hgPublicCaptureSavedState(){hgPublicSavedRows={};for(var i=0;i<hgPublicRows.length;i++){var r=hgPublicRows[i],k=hgPublicRowIdentity(r);r.dirty=false;if(k)hgPublicSavedRows[k]=hgPublicRowSignature(r);}var scope=document.getElementById('hg-public-access-scope'),allow=document.getElementById('hg-public-access-allow-source'),deny=document.getElementById('hg-public-access-deny-source');hgPublicSavedAccessScope=(scope&&scope.value)||'';hgPublicSavedAccessAllow=(allow&&allow.value)||'';hgPublicSavedAccessDeny=(deny&&deny.value)||'';hgPublicSavedSignature=hgPublicStateSignature();hgPublicHasUnsaved=false;hgSetPending('hg-public-dirty',false);}
-function hgPublicRecomputeDirty(){for(var i=0;i<hgPublicRows.length;i++){var r=hgPublicRows[i],k=hgPublicRowIdentity(r),saved=k?hgPublicSavedRows[k]:null;r.dirty=!saved||hgPublicRowSignature(r)!==saved;}hgPublicHasUnsaved=hgPublicStateSignature()!==hgPublicSavedSignature;hgSetPending('hg-public-dirty',hgPublicHasUnsaved);}
+function hgPublicStateSignature(){var rows=[];for(var i=0;i<hgPublicRows.length;i++)rows.push(hgPublicRowState(hgPublicRows[i]));var scope=document.getElementById('hg-public-access-scope'),allow=document.getElementById('hg-public-access-allow-source'),deny=document.getElementById('hg-public-access-deny-source');return JSON.stringify([(scope&&scope.value)||'',(allow&&allow.value)||'',(deny&&deny.value)||'',rows]);}
+function hgPublicCaptureSavedState(){hgPublicSavedRows={};for(var i=0;i<hgPublicRows.length;i++){var r=hgPublicRows[i],k=hgPublicRowIdentity(r);r.dirty=false;if(k)hgPublicSavedRows[k]=hgPublicRowSignature(r);}var scope=document.getElementById('hg-public-access-scope'),allow=document.getElementById('hg-public-access-allow-source'),deny=document.getElementById('hg-public-access-deny-source');hgPublicSavedAccessScope=(scope&&scope.value)||'';hgPublicSavedAccessAllow=(allow&&allow.value)||'';hgPublicSavedAccessDeny=(deny&&deny.value)||'';hgPublicSavedSignature=hgPublicStateSignature();hgPublicSavedManagementDomain=hgPublicManagementDomain;hgPublicHasUnsaved=false;hgSetPending('hg-public-dirty',false);}
+function hgPublicRecomputeDirty(){for(var i=0;i<hgPublicRows.length;i++){var r=hgPublicRows[i],k=hgPublicRowIdentity(r),saved=k?hgPublicSavedRows[k]:null;r.dirty=!saved||hgPublicRowSignature(r)!==saved;}if(hgPublicPendingEab&&!hgPublicRows.some(function(row){return row.https&&row.cert_source==='auto'&&row.cert_ca==='zerossl';}))hgPublicPendingEab=null;hgPublicHasUnsaved=hgPublicStateSignature()!==hgPublicSavedSignature||hgPublicManagementDomain!==hgPublicSavedManagementDomain||!!hgPublicPendingEab;hgSetPending('hg-public-dirty',hgPublicHasUnsaved);}
 function hgPublicLoadRows(){
   hgPublicRows=[];var rows=document.querySelectorAll('#hg-public-services tr.hg-public-row');
-  for(var i=0;i<rows.length;i++){var x=rows[i],env=x.getAttribute('data-cert-environment')||'production';hgPublicRows.push({web_id:x.getAttribute('data-web-id')||'',ddns_id:x.getAttribute('data-ddns-id')||'',account_id:x.getAttribute('data-account-id')||'',cert_id:x.getAttribute('data-cert-id')||'',cert_source:x.getAttribute('data-cert-source')==='local'?'local':'auto',cert_ca:x.getAttribute('data-cert-ca')||'letsencrypt',cert_environment:env,cert_managed:x.getAttribute('data-cert-managed')=='1',cert_renew_days:x.getAttribute('data-cert-renew-days')||'<%=pcdata(default_renew_days or '5')%>',cert_shared:x.getAttribute('data-cert-shared')=='1',delete_confirm:x.getAttribute('data-delete-confirm')=='1',local_upload:false,local_cert_pem:'',local_key_pem:'',enabled:x.getAttribute('data-enabled')=='1',domain:x.getAttribute('data-domain')||'',target:x.getAttribute('data-target')||'',external_port:x.getAttribute('data-external-port')||'',https:x.getAttribute('data-https')=='1',provider:x.getAttribute('data-provider')||'aliyun',key_id:x.getAttribute('data-key-id')||'',provider_account_id:x.getAttribute('data-provider-account-id')||'',endpoint:x.getAttribute('data-endpoint')||'',secret:'',secret_saved:x.getAttribute('data-secret-saved')=='1',zone:x.getAttribute('data-zone')||'',host:x.getAttribute('data-host')||'',ttl:x.getAttribute('data-ttl')||'600',dirty:false});}
-  hgPublicCaptureSavedState();hgPublicRender();
+  for(var i=0;i<rows.length;i++){var x=rows[i],env=x.getAttribute('data-cert-environment')||'production';hgPublicRows.push({web_id:x.getAttribute('data-web-id')||'',ddns_id:x.getAttribute('data-ddns-id')||'',external_dns:x.dataset.externalDns==='1',account_id:x.getAttribute('data-account-id')||'',cert_id:x.getAttribute('data-cert-id')||'',cert_source:x.getAttribute('data-cert-source')==='local'?'local':'auto',cert_ca:x.getAttribute('data-cert-ca')||'letsencrypt',cert_environment:env,cert_managed:x.getAttribute('data-cert-managed')=='1',cert_renew_days:x.getAttribute('data-cert-renew-days')||'<%=pcdata(default_renew_days or '5')%>',cert_shared:x.getAttribute('data-cert-shared')=='1',local_upload:false,local_cert_pem:'',local_key_pem:'',enabled:x.getAttribute('data-enabled')=='1',domain:x.getAttribute('data-domain')||'',target:x.getAttribute('data-target')||'',external_port:x.getAttribute('data-external-port')||'',https:x.getAttribute('data-https')=='1',provider:x.getAttribute('data-provider')||'aliyun',key_id:x.getAttribute('data-key-id')||'',provider_account_id:x.getAttribute('data-provider-account-id')||'',endpoint:x.getAttribute('data-endpoint')||'',secret:'',secret_saved:x.getAttribute('data-secret-saved')=='1',zone:x.getAttribute('data-zone')||'',host:x.getAttribute('data-host')||'',ttl:x.getAttribute('data-ttl')||'600',dirty:false});}
+  var management=document.getElementById('hg-public-management-state');
+  for(var index=0;index<rows.length;index++)hgPublicRows[index].cert_ca_lock=rows[index].getAttribute('data-cert-ca-lock')||'';
+  hgPublicManagementDomain=management.dataset.enabled==='1'?management.dataset.domain:'';
+  hgPublicClearUnusedManagement();hgPublicCaptureSavedState();hgPublicRender();
 }
-function hgPublicReadCertificateChoices(){var box=document.getElementById('hg-public-certificate-data'),nodes=box?box.querySelectorAll('span[data-id]'):[];hgPublicCertificateChoices=[];for(var i=0;i<nodes.length;i++){var o=nodes[i];hgPublicCertificateChoices.push({id:o.getAttribute('data-id')||'',label:o.textContent||'',domains:o.getAttribute('data-domains')||'',renew_days:o.getAttribute('data-renew-days')||'<%=pcdata(default_renew_days or '5')%>',use_count:parseInt(o.getAttribute('data-use-count')||'0',10)||0,enabled:o.getAttribute('data-enabled')!='0',source:o.getAttribute('data-source')==='local'?'local':'acme',ca:o.getAttribute('data-ca')||'letsencrypt',environment:o.getAttribute('data-environment')||'production'});}}
+function hgPublicReadCertificateChoices(){var box=document.getElementById('hg-public-certificate-data'),nodes=box?box.querySelectorAll('span[data-id]'):[];hgPublicCertificateChoices=[];for(var i=0;i<nodes.length;i++){var o=nodes[i];hgPublicCertificateChoices.push({id:o.getAttribute('data-id')||'',label:o.textContent||'',domains:o.getAttribute('data-domains')||'',renew_days:o.getAttribute('data-renew-days')||'<%=pcdata(default_renew_days or '5')%>',use_count:parseInt(o.getAttribute('data-use-count')||'0',10)||0,enabled:o.getAttribute('data-enabled')!='0',retained:o.dataset.retained==='1',source:o.getAttribute('data-source')==='local'?'local':'acme',ca:o.getAttribute('data-ca')||'letsencrypt',environment:o.getAttribute('data-environment')||'production'});}}
 function hgPublicCertificateById(id){for(var i=0;i<hgPublicCertificateChoices.length;i++)if(hgPublicCertificateChoices[i].id==id)return hgPublicCertificateChoices[i];return null;}
 function hgPublicCurrentCA(){var e=document.getElementById('hg-public-ca');return e&&e.value?e.value:'letsencrypt';}
 function hgPublicCurrentEnvironment(){var e=document.getElementById('hg-public-environment');return e&&e.value?e.value:'production';}
@@ -321,7 +338,7 @@ function hgPublicAutomaticScopeBase(zone,host){zone=hgPublicTrim(zone).toLowerCa
 function hgPublicAutomaticScopeDomains(zone,host){var base=hgPublicAutomaticScopeBase(zone,host);return base?base+', *.'+base:'';}
 function hgPublicSameCertificateScope(a,b){var aa=hgPublicCertificateScopeParts(a).sort(),bb=hgPublicCertificateScopeParts(b).sort();if(aa.length!==bb.length)return false;for(var i=0;i<aa.length;i++)if(aa[i]!==bb[i])return false;return true;}
 function hgPublicAutomaticCertificate(domain,zone,host,ca,environment){var desired=hgPublicAutomaticScopeDomains(zone,host),base=hgPublicAutomaticScopeBase(zone,host),wild=base?'*.'+base:'';for(var i=0;i<hgPublicCertificateChoices.length;i++){var c=hgPublicCertificateChoices[i];if(c.enabled&&hgPublicCertificateIdentityMatches(c,ca,environment)&&hgPublicSameCertificateScope(c.domains,desired))return c;}for(var j=0;j<hgPublicCertificateChoices.length;j++){var d=hgPublicCertificateChoices[j],parts=hgPublicCertificateScopeParts(d.domains);if(!d.enabled||!hgPublicCertificateIdentityMatches(d,ca,environment)||!hgPublicCertCovers(d.domains,domain))continue;for(var k=0;k<parts.length;k++)if(parts[k]===wild)return d;}return null;}
-function hgPublicSetZoneOptions(zones,preferred,note,retry){
+function hgPublicSetZoneOptions(zones,preferred,note){
   var select=document.getElementById('hg-public-zone'),hint=document.getElementById('hg-public-zone-note');
   var list=[],seen=Object.create(null);
   zones.concat([preferred]).forEach(function(value){
@@ -337,21 +354,21 @@ function hgPublicSetZoneOptions(zones,preferred,note,retry){
   if(!select.disabled&&!select.value)select.selectedIndex=0;
   hint.textContent=list.length?note||'':'';
   hint.style.display=hint.textContent?'':'none';
-  document.getElementById('hg-public-zone-retry').hidden=!retry;
   hgPublicPreviewDomain();
+  hgPublicRenderHosts();
 }
 function hgPublicFetchZones(accountId,reply){
   var pending=hgPublicZonePending[accountId];
   if(pending){pending.push(reply);return;}
   pending=hgPublicZonePending[accountId]=[reply];
-  var timer=setTimeout(function(){finish(null);},20000),retries=0;
+  var timer=setTimeout(function(){finish(null,'timeout');},20000),retries=0;
   var retryDelays=[500,1000,2000,3000,4000];
-  function finish(zones){
+  function finish(zones,reason){
     if(hgPublicZonePending[accountId]!==pending)return;
     clearTimeout(timer);
     delete hgPublicZonePending[accountId];
     if(zones)hgPublicZoneCache[accountId]={zones:zones,expires:Date.now()+60000};
-    pending.forEach(function(callback){callback(zones);});
+    pending.forEach(function(callback){callback(zones,reason);});
   }
   function fetch(){
     if(hgPublicZonePending[accountId]!==pending)return;
@@ -368,29 +385,140 @@ function hgPublicFetchZones(accountId,reply){
       }
       var zones=data&&data.ok===true?data.zones:null;
       if(zones&&typeof zones==='object'&&Object.keys(zones).length===0)zones=[];
-      finish(Array.isArray(zones)?zones:null);
+      finish(Array.isArray(zones)?zones:null,data&&data.error_kind);
     });
   }
   fetch();
 }
-function hgPublicLoadZones(accountId,preferred){
+function hgPublicLoadZones(accountId,preferred,refresh){
   var request=++hgPublicZoneRequest,select=document.getElementById('hg-public-zone');
   var known=hgPublicRows.filter(function(row){return row.account_id===accountId&&row.zone;})
     .map(function(row){return row.zone;});
+  known=known.concat(hgPublicHistory(accountId).map(function(row){return row.zone;}));
   var cached=hgPublicZoneCache[accountId],fresh=cached&&cached.expires>Date.now();
   var available=cached?known.concat(cached.zones):known;
   hgPublicSetZoneOptions(available,preferred,available.length||preferred?'':hgLabel('hg-public-label-zones-loading'));
-  if(!accountId||fresh)return;
-  function showZones(zones){
+  if(!accountId)return;
+  if(fresh&&!refresh){hgPublicLoadHosts();return;}
+  function showZones(zones,reason){
     if(request!==hgPublicZoneRequest)return;
     var selected=select.value||preferred;
-    if(zones===null)hgPublicSetZoneOptions(available,selected,hgLabel(available.length||selected?'hg-public-label-zones-saved':'hg-public-label-zones-unavailable'),true);
-    else hgPublicSetZoneOptions(known.concat(zones),selected,'');
+    if(zones===null){
+      hgPublicSetZoneOptions(available,selected,'');
+      hgPublicAccountNotice(reason||'unknown');return;
+    }
+    hgPublicSetZoneOptions(known.concat(zones),selected,'');
+    hgPublicLoadHosts(refresh);
   }
   hgPublicFetchZones(accountId,showZones);
 }
-function hgPublicRetryZones(){
-  hgPublicLoadZones(document.getElementById('hg-public-account').value,document.getElementById('hg-public-zone').value);
+function hgPublicAccountNotice(reason){
+  var notice=document.getElementById('hg-public-account-result');
+  var labels={
+    authentication:'<%:DNS account rejected the request.%>',
+    busy:'<%:DNS account is busy. Try again shortly.%>',
+    rate_limit:'<%:DNS provider has limited requests. Try again later.%>',
+    timeout:'<%:DNS provider did not respond in time.%>',
+    network_unavailable:'<%:Could not connect to the DNS provider.%>',
+    invalid_zone:'<%:The primary domain is unavailable.%>',
+    not_found:'<%:The DNS account or primary domain was not found.%>',
+    unsupported:'<%:This DNS provider does not support listing cloud host records.%>'
+  };
+  hgShowNotice(notice,reason?(labels[reason]||'<%:Could not read the DNS account.%>'):'<%:DNS account refreshed.%>',reason?'error':'success');
+}
+function hgPublicRefreshAccount(){
+  var account=document.getElementById('hg-public-account').value;
+  if(!account||account==='__new__')return;
+  hgShowNotice(document.getElementById('hg-public-account-result'),'<%:Reading DNS account...%>');
+  hgPublicLoadZones(account,document.getElementById('hg-public-zone').value,true);
+}
+var hgPublicHostCache=Object.create(null), hgPublicHostRequest=0;
+function hgPublicHistory(account,zone){
+  return Array.prototype.map.call(document.querySelectorAll('#hg-public-history-data span'),function(node){return node.dataset;})
+    .filter(function(row){return row.account===account&&(!zone||row.zone===zone);});
+}
+function hgPublicCloudHosts(){
+  var account=document.getElementById('hg-public-account').value,zone=document.getElementById('hg-public-zone').value;
+  var entry=hgPublicHostCache[account+'/'+zone];
+  return entry?entry.hosts:null;
+}
+function hgPublicLoadHosts(refresh){
+  var request=++hgPublicHostRequest,accountSelect=document.getElementById('hg-public-account');
+  var account=accountSelect.value,zone=document.getElementById('hg-public-zone').value;
+  hgPublicRenderHosts();
+  if(!account||account==='__new__'||!zone){if(refresh)hgPublicAccountNotice();return;}
+  var provider=accountSelect.options[accountSelect.selectedIndex].getAttribute('data-provider');
+  if(provider!=='aliyun'){if(refresh)hgPublicAccountNotice('unsupported');return;}
+  var cached=hgPublicHostCache[account+'/'+zone];
+  if(!refresh&&cached&&cached.until>Date.now())return;
+  var timer=setTimeout(function(){finish(null,'timeout');},20000);
+  function finish(hosts,reason){
+    clearTimeout(timer);
+    if(request!==hgPublicHostRequest||accountSelect.value!==account||document.getElementById('hg-public-zone').value!==zone)return;
+    hgPublicHostRequest++;
+    if(hosts)hgPublicHostCache[account+'/'+zone]={hosts:hosts,until:Date.now()+60000};
+    hgPublicRenderHosts();
+    if(refresh||!hosts)hgPublicAccountNotice(hosts?null:reason);
+  }
+  XHR.get('<%=url('admin/services/homegate/api/dns_zones')%>',{account:account,zone:zone},function(xhr,data){
+    if(!data){try{data=JSON.parse(xhr.responseText);}catch(e){data=null;}}
+    var hosts=data&&data.ok===true?data.hosts:null;
+    if(hosts&&typeof hosts==='object'&&Object.keys(hosts).length===0)hosts=[];
+    finish(Array.isArray(hosts)?hosts:null,data&&data.error_kind||'unknown');
+  });
+}
+function hgPublicToggleHosts(){
+  var list=document.getElementById('hg-public-host-options'),button=document.getElementById('hg-public-host-toggle');
+  list.hidden=!list.hidden;button.setAttribute('aria-expanded',String(!list.hidden));
+  if(!list.hidden)hgPublicRenderHosts();
+}
+function hgPublicHostInput(){
+  hgPublicPreviewDomain();hgPublicRenderHosts();
+}
+function hgPublicRenderHosts(){
+  var account=document.getElementById('hg-public-account').value,zone=document.getElementById('hg-public-zone').value;
+  var input=document.getElementById('hg-public-host'),list=document.getElementById('hg-public-host-options');
+  var toggle=document.getElementById('hg-public-host-toggle'),choice=document.getElementById('hg-public-history-choice');
+  var editing=document.getElementById('hg-public-edit-index').value!=='';
+  var cloud=hgPublicCloudHosts(),history=zone?hgPublicHistory(account,zone):[],entries=Object.create(null);
+  var historyLabel=document.getElementById('hg-public-history-label');
+  function localHost(host){host=hgPublicHostPrefix(zone,host)||'@';entries[host]=(entries[host]||0)|1;}
+  history.forEach(function(row){localHost(row.host);});
+  hgPublicRows.forEach(function(row){if(row.account_id===account&&row.zone===zone)localHost(row.host);});
+  (cloud||[]).forEach(function(host){entries[host]=(entries[host]||0)|2;});
+  var names=Object.keys(entries).sort(function(a,b){return entries[b]-entries[a]||a.localeCompare(b);});
+  toggle.disabled=!zone||!names.length;
+  if(toggle.disabled){list.hidden=true;toggle.setAttribute('aria-expanded','false');}
+  if(!list.hidden){
+    hgClearNode(list);
+    names.forEach(function(host){
+      var button=document.createElement('button'),origin=document.createElement('span');
+      var origins={3:'<%:Cloud and local%>',2:'<%:Cloud only%>',1:cloud?'<%:Local only%>':''};
+      button.type='button';button.textContent=host;origin.textContent=origins[entries[host]];
+      button.appendChild(origin);list.appendChild(button);
+      button.onclick=function(){input.value=host;hgPublicToggleHosts();hgPublicHostInput();input.focus();};
+    });
+  }
+  var relativeHost=hgPublicHostPrefix(zone,input.value)||'@';
+  var options=editing?[]:history.filter(function(row){return hgPublicHostPrefix(zone,row.host)===relativeHost;});
+  var selected=choice.value;hgClearNode(choice);
+  choice.add(new Option('<%:Select previous settings%>',''));
+  options.forEach(function(row,index){choice.add(new Option(':'+row.port+' · '+row.target,String(index)));});
+  if(selected&&Number(selected)<options.length)choice.value=selected;
+  choice._hgHistory=options;
+  choice.hidden=historyLabel.hidden=options.length===0;
+}
+function hgPublicRestoreHistory(){
+  var choice=document.getElementById('hg-public-history-choice'),row=choice.value!==''&&choice._hgHistory[Number(choice.value)];
+  if(!row)return;
+  document.getElementById('hg-public-external-port').value=row.port;
+  document.getElementById('hg-public-target').value=row.target;
+  document.getElementById('hg-public-https').checked=row.https==='1';
+  document.getElementById('hg-public-cert-source').value=row.source==='local'?'local':'auto';
+  document.getElementById('hg-public-ca').value=row.ca||'letsencrypt';
+  hgPublicCAChanged(row.environment||'production');
+  document.getElementById('hg-public-renew-days').value=row.renew;
+  hgPublicPreviewDomain();
 }
 async function hgPublicSaveAccount(button){
   if(button.disabled)return;
@@ -428,44 +556,69 @@ function hgPublicSyncStage(includeSensitive){
   var box=document.getElementById('hg-public-stage');if(!box)return;hgClearNode(box);
   hgAppendHidden(box,'public_service_count',String(hgPublicRows.length));
   hgAppendHidden(box,'access_scope',(document.getElementById('hg-public-access-scope')||{}).value||'');
-  var domain=document.getElementById('hg-management-domain').value, wan=document.getElementById('hg-management-wan').checked;
-  var saved=JSON.parse(hgPublicSavedSignature);
-  if(domain!==hgManagementStoredDomain||wan!==saved[5]){
-    hgAppendHidden(box,'management_domain',domain);
-    hgAppendHidden(box,'management_wan',wan?'1':'0');
+  hgAppendHidden(box,'management_domain',hgPublicManagementDomain);
+  hgAppendHidden(box,'management_wan',hgPublicManagementDomain?'1':'0');
+  if(includeSensitive&&hgPublicPendingEab){
+    hgAppendHidden(box,'zerossl_eab_id',hgPublicPendingEab.kid);
+    hgAppendHidden(box,'zerossl_eab_hmac',hgPublicPendingEab.hmac);
   }
-  for(var i=0;i<hgPublicRows.length;i++){var r=hgPublicRows[i],p='public_service_'+(i+1)+'_';hgAppendHidden(box,p+'web_id',r.web_id||'');hgAppendHidden(box,p+'ddns_id',r.ddns_id||'');hgAppendHidden(box,p+'account_id',r.account_id||'');hgAppendHidden(box,p+'cert_id',r.cert_id||'');hgAppendHidden(box,p+'cert_mode',r.cert_source||'auto');hgAppendHidden(box,p+'cert_ca',r.cert_ca||'letsencrypt');hgAppendHidden(box,p+'cert_environment',r.cert_environment||'production');hgAppendHidden(box,p+'cert_renew_days',r.cert_renew_days||'<%=pcdata(default_renew_days or '5')%>');if(includeSensitive&&r.local_upload){hgAppendHidden(box,p+'local_cert_pem',r.local_cert_pem||'');hgAppendHidden(box,p+'local_key_pem',r.local_key_pem||'');}hgAppendHidden(box,p+'enabled',r.enabled?'1':'0');hgAppendHidden(box,p+'domain',r.domain||'');hgAppendHidden(box,p+'target',r.target||'');hgAppendHidden(box,p+'external_port',r.external_port||'');hgAppendHidden(box,p+'https',r.https?'1':'0');hgAppendHidden(box,p+'provider',r.provider||'aliyun');hgAppendHidden(box,p+'key_id',r.key_id||'');hgAppendHidden(box,p+'provider_account_id',r.provider_account_id||'');hgAppendHidden(box,p+'endpoint',r.endpoint||'');if(includeSensitive)hgAppendHidden(box,p+'secret',r.secret||'');hgAppendHidden(box,p+'zone',r.zone||'');hgAppendHidden(box,p+'host',r.host||'');hgAppendHidden(box,p+'ttl',r.ttl||'600');}
+  for(var i=0;i<hgPublicRows.length;i++){var r=hgPublicRows[i],p='public_service_'+(i+1)+'_';hgAppendHidden(box,p+'web_id',r.web_id||'');hgAppendHidden(box,p+'ddns_id',r.ddns_id||'');hgAppendHidden(box,p+'external_dns',r.external_dns?'1':'0');hgAppendHidden(box,p+'account_id',r.account_id||'');hgAppendHidden(box,p+'cert_id',r.cert_id||'');hgAppendHidden(box,p+'cert_mode',r.cert_source||'auto');hgAppendHidden(box,p+'cert_ca',r.cert_ca||'letsencrypt');hgAppendHidden(box,p+'cert_environment',r.cert_environment||'production');hgAppendHidden(box,p+'cert_renew_days',r.cert_renew_days||'<%=pcdata(default_renew_days or '5')%>');if(includeSensitive&&r.local_upload){hgAppendHidden(box,p+'local_cert_pem',r.local_cert_pem||'');hgAppendHidden(box,p+'local_key_pem',r.local_key_pem||'');}hgAppendHidden(box,p+'enabled',r.enabled?'1':'0');hgAppendHidden(box,p+'domain',r.domain||'');hgAppendHidden(box,p+'target',r.target||'');hgAppendHidden(box,p+'external_port',r.external_port||'');hgAppendHidden(box,p+'https',r.https?'1':'0');hgAppendHidden(box,p+'provider',r.provider||'aliyun');hgAppendHidden(box,p+'key_id',r.key_id||'');hgAppendHidden(box,p+'provider_account_id',r.provider_account_id||'');hgAppendHidden(box,p+'endpoint',r.endpoint||'');if(includeSensitive)hgAppendHidden(box,p+'secret',r.secret||'');hgAppendHidden(box,p+'zone',r.zone||'');hgAppendHidden(box,p+'host',r.host||'');hgAppendHidden(box,p+'ttl',r.ttl||'600');}
 }
 function hgPublicAccessScopeChanged(){hgPublicRecomputeDirty();hgPublicSyncStage();hgPublicAccessRenderRegionData();hgPublicAccessRenderEmptyWarning();}
-var hgManagementDomains=[];
-var hgManagementStoredDomain=document.getElementById('hg-management-domain').value;
-function hgPublicManagementChanged(){
-  var select=document.getElementById('hg-management-domain'),wan=document.getElementById('hg-management-wan');
-  if(!select.value)wan.checked=false;
-  wan.disabled=!wan.checked&&hgManagementDomains.indexOf(select.value)===-1;
-  hgPublicRecomputeDirty();hgPublicSyncStage();
+function hgPublicClearUnusedManagement(){
+  if(hgPublicManagementDomain&&!hgPublicRows.some(function(row){return row.domain===hgPublicManagementDomain&&row.target;}))hgPublicManagementDomain='';
 }
-function hgPublicLoadManagementDomains(){
-  var select=document.getElementById('hg-management-domain'),saved=hgManagementStoredDomain;
-  hgGet('<%=url('admin/services/homegate/api/management_domains')%>',function(data){
-    hgManagementDomains=data&&data.ok&&Array.isArray(data.domains)?data.domains:[];
-    var available=hgManagementDomains.length;
-    hgClearNode(select);
-    hgManagementDomains.forEach(function(name){select.add(new Option('https://'+name,name));});
-    if(saved&&hgManagementDomains.indexOf(saved)===-1){
-      var unavailable=new Option('https://'+saved,saved);
-      unavailable.disabled=true;unavailable.title='<%:Unavailable%>';select.add(unavailable);
-    }
-    if(!available&&!saved)select.add(new Option(data&&data.ok?'<%:No management domain available%>':'<%:Management domain check unavailable%>',''));
-    select.value=saved||(hgManagementDomains[0]||'');
-    select.disabled=!available;
-    // The detected default is shown on entry. It still needs to be included
-    // in the next explicit save if the router has never stored a domain.
-    var signature=JSON.parse(hgPublicSavedSignature);
-    signature[4]=select.value;
-    hgPublicSavedSignature=JSON.stringify(signature);
-    hgPublicManagementChanged();
+function hgPublicManagementCertificateReady(domain){
+  if(!domain)return false;
+  return Object.keys(hgPublicCerts).some(function(id){
+    var cert=hgPublicCerts[id];
+    return cert.enabled===true&&cert.valid===true&&cert.identity_valid===true&&cert.environment==='production'&&hgPublicCertCovers(cert.domains,domain);
   });
+}
+function hgPublicUpdateManagementControl(domain){
+  var check=document.getElementById('hg-public-management'),label=document.getElementById('hg-public-management-label');
+  var address=document.getElementById('hg-public-management-url'),last=hgPublicModalManagementDomain;
+  var disabled=!hgPublicManagementCertificateReady(domain)||!!(hgPublicManagementDomain&&domain!==hgPublicManagementDomain);
+  if(disabled)check.checked=false;
+  else if(last!==domain||check.disabled)check.checked=domain===hgPublicManagementDomain;
+  hgPublicModalManagementDomain=domain;
+  check.disabled=disabled;
+  label.classList.toggle('hg-public-locked',check.disabled);
+  address.textContent=domain?'https://'+domain:'';
+  address.hidden=check.disabled||!check.checked;
+}
+function hgPublicRefreshCertificates(){
+  if(hgPublicCertsLoading)return;
+  hgPublicCertsLoading=true;
+  hgGet('<%=url('admin/services/homegate/api/certs')%>',function(d){
+    hgPublicCertsLoading=false;
+    if(d&&d.ok===true){
+      var cs=d.certificates||[];hgPublicCerts=Object.create(null);hgPublicCertsLoaded=true;
+      for(var i=0;i<cs.length;i++)if(cs[i].id)hgPublicCerts[cs[i].id]=cs[i];
+      if(!hgPublicManagementCertificateReady(hgPublicSavedManagementDomain))hgPublicSavedManagementDomain='';
+      if(!hgPublicManagementCertificateReady(hgPublicManagementDomain))hgPublicManagementDomain='';
+      hgPublicRecomputeDirty();
+      hgPublicUpdateManagementControl(hgPublicModalManagementDomain||'');hgPublicRender();
+      if(hgPublicMasterEnabled&&cs.some(function(cert){return cert.pending===true||cert.retrying===true||(hgPublicCertPolls>0&&cert.waiting===true);})){
+        if(hgPublicCertPolls>0)hgPublicCertPolls--;
+        clearTimeout(hgPublicCertTimer);hgPublicCertTimer=setTimeout(hgPublicRefreshCertificates,5000);
+      }
+    }
+  });
+}
+function hgPublicModalBindings(domain){
+  hgPublicUpdateManagementControl(domain);
+  var account=document.getElementById('hg-public-account'),idx=document.getElementById('hg-public-edit-index').value;
+  var companion=domain&&hgPublicRows.find(function(row,i){return String(i)!==idx&&row.domain===domain&&row.account_id;});
+  var editing=idx!==''&&hgPublicRows[Number(idx)];
+  var saved=editing&&editing.account_id&&(editing.web_id||editing.ddns_id);
+  var bound=saved?editing.account_id:(companion&&companion.account_id);
+  account.disabled=!!(saved||bound);
+  account.classList.toggle('hg-public-locked',account.disabled);
+  if(!saved&&bound&&account.value!==bound){
+    hgPublicSelectAccount(bound);
+    hgPublicAccountChanged(true,companion.zone);
+  }
 }
 function hgPublicAccessRenderRegionData(){
   var row=document.getElementById('hg-public-region-data-row'),select=document.getElementById('hg-public-access-scope'),status=document.getElementById('hg-public-region-data-status');if(!row||!select||!status)return;
@@ -759,6 +912,11 @@ async function hgPublicAccessUpdate(button){
 function hgPublicHintText(r){
   var parts=[],c=r.https&&r.cert_id?hgPublicCerts[r.cert_id]:null;
   if(r.https&&r.cert_source!=='local')parts.push(hgLabel(r.cert_environment==='staging'?'hg-public-cert-staging':'hg-public-cert-production'));
+  if(!hgPublicMasterEnabled){
+    if(c&&c.valid)parts.push(hgLabel('hg-public-label-cert-days').replace('%d',String(c.days)));
+    parts.push(hgLabel(r.enabled?'hg-public-label-disabled':'hg-public-label-not-enabled'));
+    return parts.join(' · ');
+  }
   // Transient automatic work (first DDNS sync, entering the renewal window,
   // staged edits) is intentionally not shown here. This column is stable by
   // default and is replaced only by an issue that still needs attention.
@@ -779,7 +937,16 @@ function hgPublicHintText(r){
   }
   if(r.https){
     var certDays=c?Number(c.days):NaN,identityBad=!!(c&&c.identity_valid===false),expired=isFinite(certDays)&&certDays<0;
-    if(c&&(!c.exists||identityBad||expired||c.valid===false))parts.push(hgLabel('hg-public-label-cert-error'));
+    if(c&&Number(c.retry_at)*1000>Date.now()){
+      if(c.valid&&isFinite(certDays))parts.push(hgLabel('hg-public-label-cert-days').replace('%d',String(certDays)));
+      parts.push(hgLabel('hg-public-label-cert-rate-limited'));
+    }else if(c&&c.pending===true){
+      if(c.valid&&isFinite(certDays))parts.push(hgLabel('hg-public-label-cert-days').replace('%d',String(certDays)));
+      parts.push(hgLabel('hg-public-label-issuing'));
+    }else if(c&&c.retrying===true){
+      if(c.valid&&isFinite(certDays))parts.push(hgLabel('hg-public-label-cert-days').replace('%d',String(certDays)));
+      parts.push(hgLabel('hg-public-label-cert-retry'));
+    }else if(c&&!c.waiting&&(!c.exists||identityBad||expired||c.valid===false))parts.push(hgLabel('hg-public-label-cert-error'));
     else if(c&&String(c.renew_state||'').toLowerCase()==='failed'){
       var failedFmt=hgLabel('hg-public-label-renew-failed'),failedDays=Number(c.days);
       parts.push(failedFmt.replace('%d',String(isFinite(failedDays)?failedDays:0)));
@@ -796,11 +963,25 @@ function hgPublicHintText(r){
   return parts.join(' · ');
 }
 function hgPublicPostAction(op,id){if(!id)return;hgSubmitPost('<%=url('admin/services/homegate/public_action')%>','<%=pcdata(token)%>',{op:op,id:id});}
+function hgPublicHasPendingAdd(){
+  return !!document.getElementById('hg-public-pending-add').value||hgPublicRows.some(function(row){return !!row.target&&!row.web_id;});
+}
 function hgPublicRender(){
   var body=document.getElementById('hg-public-services');if(!body)return;
+  var full=Math.max(hgPublicRows.length,Object.keys(hgPublicSavedRows).length)>=16;
+  document.getElementById('hg-public-add').disabled=full||hgPublicHasPendingAdd();
+  document.getElementById('hg-public-full').hidden=!full;
   if(!hgPublicRows.length){hgTableMessage(body,4,hgLabel('hg-public-label-empty'),'hg-muted');hgPublicSyncStage();return;}
   hgClearNode(body);
-  for(var i=0;i<hgPublicRows.length;i++)(function(idx){
+  var groups=new Map();
+  hgPublicRows.forEach(function(row,index){
+    if(!groups.has(row.domain))groups.set(row.domain,[]);
+    groups.get(row.domain).push(index);
+  });
+  function enabled(index){return hgPublicRows[index].enabled;}
+  var grouped=Array.from(groups.values());
+  var ordered=grouped.filter(function(group){return group.some(enabled);}).concat(grouped.filter(function(group){return !group.some(enabled);}));
+  ordered.forEach(function(group){group.filter(enabled).concat(group.filter(function(index){return !enabled(index);})).forEach(function(idx){
     var r=hgPublicRows[idx],tr=document.createElement('tr');tr.className='hg-public-row';
     var enabledLabel=hgLabel('hg-public-label-enabled');
     var ec=hgAppendTableCell(tr,'',enabledLabel),ch=document.createElement('input');
@@ -822,11 +1003,12 @@ function hgPublicRender(){
     hgAppendTableCell(tr,r.target||'-',hgLabel('hg-public-label-target'),'hg-public-target');
     var a=hgAppendTableCell(tr,'',hgLabel('hg-public-label-actions'),'hg-actions hg-action-cell hg-action-group');
     a.appendChild(hgCreateButton(hgLabel('hg-public-label-edit'),'cbi-button hg-btn-4 hg-public-edit',function(){hgPublicOpenIndex(idx);}));
-    a.appendChild(hgCreateButton(hgLabel('hg-public-label-sync'),'cbi-button hg-btn-4 hg-public-sync',function(){hgPublicPostAction('ddns_sync',r.ddns_id);},{disabled:hgPublicHasUnsaved||!!r.dirty||!r.ddns_id||!r.enabled}));
-    if(r.https&&r.cert_source!=='local'&&r.cert_id)a.appendChild(hgCreateButton(hgLabel('hg-public-label-renew'),'cbi-button hg-btn-4 hg-public-renew',function(){hgPublicPostAction('cert_renew',r.cert_id);},{disabled:hgPublicHasUnsaved||!!r.dirty}));
+    a.appendChild(hgCreateButton(hgLabel('hg-public-label-sync'),'cbi-button hg-btn-4 hg-public-sync',function(){hgPublicPostAction('ddns_sync',r.ddns_id);},{disabled:!hgPublicMasterEnabled||hgPublicHasUnsaved||!!r.dirty||!r.ddns_id||r.external_dns||!r.enabled}));
+    var cert=hgPublicCerts[r.cert_id],rateLimited=cert&&Number(cert.retry_at)*1000>Date.now();
+    if(r.https&&r.cert_source!=='local'&&r.cert_id)a.appendChild(hgCreateButton(hgLabel('hg-public-label-renew'),'cbi-button hg-btn-4 hg-public-renew',function(){hgPublicPostAction('cert_renew',r.cert_id);},{disabled:!hgPublicMasterEnabled||hgPublicHasUnsaved||!!r.dirty||!!rateLimited||!!(cert&&cert.pending)}));
     a.appendChild(hgCreateButton(hgLabel('hg-public-label-delete'),'cbi-button hg-btn-4 hg-public-delete',function(){hgPublicDelete(idx);}));
     body.appendChild(tr);
-  })(i);
+  });});
   hgPublicSyncStage();
 }
 function hgPublicSetPair(labelId,controlId,show){var l=document.getElementById(labelId),c=document.getElementById(controlId);if(l)l.style.display=show?'':'none';if(c)c.style.display=show?'':'none';}
@@ -836,43 +1018,106 @@ function hgPublicAccountChanged(preserveNew,preferredZone){
   hgShowNotice(document.getElementById('hg-public-account-result'),'');
   var s=document.getElementById('hg-public-account'),provider=document.getElementById('hg-public-provider'),key=document.getElementById('hg-public-key-id'),secret=document.getElementById('hg-public-secret'),account=document.getElementById('hg-public-provider-account-id'),endpoint=document.getElementById('hg-public-endpoint'),note=document.getElementById('hg-public-secret-note');if(!s||!provider||!key||!secret||!account||!endpoint)return;
   var isNew=s.value=='__new__',o=s.options[s.selectedIndex];
-  hgPublicSetPair('hg-public-provider-label','hg-public-provider',isNew);hgPublicSetPair('hg-public-save-account-label','hg-public-save-account-control',isNew);if(note)note.style.display=isNew?'none':'';
+  hgPublicSetPair('hg-public-provider-label','hg-public-provider',isNew);document.getElementById('hg-public-save-account').disabled=!isNew;document.getElementById('hg-public-refresh-account').disabled=isNew;if(note)note.style.display=isNew?'none':'';
+  document.getElementById('hg-public-host-options').hidden=true;document.getElementById('hg-public-host-toggle').setAttribute('aria-expanded','false');document.getElementById('hg-public-history-choice').value='';
   if(isNew){provider.disabled=false;if(!preserveNew){key.value='';secret.value='';account.value='';endpoint.value='';}hgPublicProviderChanged();hgPublicZoneRequest++;hgPublicSetZoneOptions([], '', hgLabel('hg-public-label-save-account-first'));return;}
   provider.value=(o&&o.getAttribute('data-provider'))||'aliyun';provider.disabled=true;key.value=(o&&o.getAttribute('data-key-id'))||'';secret.value='';account.value=(o&&o.getAttribute('data-provider-account-id'))||'';endpoint.value=(o&&o.getAttribute('data-endpoint'))||'';hgPublicSetPair('hg-public-key-id-label','hg-public-key-id',false);hgPublicSetPair('hg-public-secret-label','hg-public-secret',false);hgPublicSetPair('hg-public-provider-account-id-label','hg-public-provider-account-id',false);hgPublicSetPair('hg-public-endpoint-label','hg-public-endpoint',false);hgPublicLoadZones(s.value,preferredZone||'');
 }
 function hgPublicCAMeta(name){var box=document.getElementById('hg-public-ca-data'),nodes=box?box.querySelectorAll('span[data-name]'):[];for(var i=0;i<nodes.length;i++)if(nodes[i].getAttribute('data-name')===name)return nodes[i];return null;}
+function hgPublicBoundAuthority(domain,zone,host){
+  for(var i=0;i<hgPublicRows.length;i++){
+    var row=hgPublicRows[i];
+    if(row.domain===domain){
+      var saved=row.cert_ca_lock;
+      var certificate=hgPublicCertificateById(row.cert_id);
+      if(saved||(certificate&&certificate.source==='acme'))return saved||certificate.ca;
+    }
+  }
+  var base=hgPublicAutomaticScopeBase(zone,host),pattern=domain===base?base:'*.'+base;
+  var shared=hgPublicCertificateChoices.find(function(cert){
+    return !cert.retained&&cert.enabled&&cert.source==='acme'&&hgPublicCertificateScopeParts(cert.domains).indexOf(pattern)>=0;
+  });
+  return shared&&shared.ca;
+}
 function hgPublicCAChanged(preferredEnvironment){var ca=document.getElementById('hg-public-ca'),env=document.getElementById('hg-public-environment'),meta=ca?hgPublicCAMeta(ca.value):null;if(!ca||!env||!meta)return;var wanted=preferredEnvironment||env.value||'production';hgClearNode(env);if(meta.getAttribute('data-production')){var p=document.createElement('option');p.value='production';p.text='<%:Production Environment%>';env.appendChild(p);}if(meta.getAttribute('data-staging')){var st=document.createElement('option');st.value='staging';st.text='<%:Staging Environment%>';env.appendChild(st);}if(wanted&&Array.prototype.some.call(env.options,function(x){return x.value===wanted;}))env.value=wanted;else if(env.options.length)env.selectedIndex=0;hgPublicUpdateCertificateUI();}
+function hgPublicEabKeyId(){
+  return hgPublicPendingEab?hgPublicPendingEab.kid:document.getElementById('hg-public-zerossl-state').dataset.keyId;
+}
+function hgPublicEabPlaceholder(){
+  var savedId=hgPublicEabKeyId();
+  document.getElementById('hg-public-eab-key').placeholder=savedId&&hgPublicTrim(document.getElementById('hg-public-eab-id').value)===savedId?'••••••••':'';
+}
+function hgPublicClearEabInputs(){
+  hgPublicEabVisible=false;
+  document.getElementById('hg-public-eab-id').value='';
+  document.getElementById('hg-public-eab-key').value='';
+  hgPublicEabPlaceholder();
+  hgPublicSetPair('hg-public-eab-error-label','hg-public-eab-error',false);
+}
+function hgPublicUpdateEab(visible){
+  if(visible&&!hgPublicEabVisible){
+    document.getElementById('hg-public-eab-id').value=hgPublicEabKeyId();
+    hgPublicEabPlaceholder();
+  }else if(!visible&&hgPublicEabVisible)hgPublicClearEabInputs();
+  hgPublicEabVisible=visible;
+  hgPublicSetPair('hg-public-eab-id-label','hg-public-eab-id',visible);
+  hgPublicSetPair('hg-public-eab-key-label','hg-public-eab-key',visible);
+}
 function hgPublicUpdateCertificateUI(){
   var https=document.getElementById('hg-public-https').checked,source=(document.getElementById('hg-public-cert-source')||{}).value||'auto',isLocal=source==='local',ca=hgPublicCurrentCA(),environment=hgPublicCurrentEnvironment();
+  var zone=document.getElementById('hg-public-zone').value,host=document.getElementById('hg-public-host').value;
+  var bound= https&&!isLocal&&hgPublicBoundAuthority(hgPublicFullDomain(zone,host),zone,host);
+  if(bound&&ca!==bound){document.getElementById('hg-public-ca').value=bound;hgPublicCAChanged(environment);return;}
+  hgPublicUpdateEab(https&&!isLocal&&ca==='zerossl');
   hgPublicSetPair('hg-public-cert-source-label','hg-public-cert-source',https);
   hgPublicSetPair('hg-public-local-cert-label','hg-public-local-cert-control',https&&isLocal);hgPublicSetPair('hg-public-local-key-label','hg-public-local-key-control',https&&isLocal);
   hgPublicSetPair('hg-public-ca-label','hg-public-ca',https&&!isLocal);hgPublicSetPair('hg-public-environment-label','hg-public-environment-control',https&&!isLocal);hgPublicSetPair('hg-public-renew-label','hg-public-renew-control',https&&!isLocal);
-  if(https&&!isLocal){var domain=hgPublicFullDomain((document.getElementById('hg-public-zone')||{}).value,(document.getElementById('hg-public-host')||{}).value),currentId=document.getElementById('hg-public-edit-cert-id').value||'',managed=document.getElementById('hg-public-edit-cert-managed').value=='1',shared=document.getElementById('hg-public-edit-cert-shared').value=='1',current=hgPublicCertificateById(currentId),renew=document.getElementById('hg-public-renew-days'),env=document.getElementById('hg-public-environment'),caSelect=document.getElementById('hg-public-ca'),editable=true,reuse=null,identityLocked=false;if(current&&current.source==='acme'&&hgPublicCertCovers(current.domains,domain)){if(hgPublicCertificateIdentityMatches(current,ca,environment)){reuse=current;editable=managed&&!shared;}else if(shared){identityLocked=true;reuse=current;}}if(!reuse&&!identityLocked){reuse=hgPublicAutomaticCertificate(domain,(document.getElementById('hg-public-zone')||{}).value,(document.getElementById('hg-public-host')||{}).value,ca,environment);if(reuse){editable=false;identityLocked=true;}}if(identityLocked&&reuse){if(caSelect)caSelect.value=reuse.ca||'letsencrypt';if(env&&reuse.environment)env.value=reuse.environment;}if(renew)renew.disabled=!editable;if(caSelect)caSelect.disabled=identityLocked;if(env)env.disabled=identityLocked;if(!editable&&reuse&&reuse.renew_days&&renew)renew.value=reuse.renew_days;if(renew)renew.title=editable?renew.placeholder:hgLabel('hg-public-label-reused-policy');}
+  if(https&&!isLocal){var domain=hgPublicFullDomain((document.getElementById('hg-public-zone')||{}).value,(document.getElementById('hg-public-host')||{}).value),currentId=document.getElementById('hg-public-edit-cert-id').value||'',managed=document.getElementById('hg-public-edit-cert-managed').value=='1',shared=document.getElementById('hg-public-edit-cert-shared').value=='1',current=hgPublicCertificateById(currentId),renew=document.getElementById('hg-public-renew-days'),env=document.getElementById('hg-public-environment'),caSelect=document.getElementById('hg-public-ca'),editable=true,reuse=null,identityLocked=false;if(current&&current.source==='acme'&&hgPublicCertCovers(current.domains,domain)){if(hgPublicCertificateIdentityMatches(current,ca,environment)){reuse=current;editable=managed&&!shared;}else if(shared){identityLocked=true;reuse=current;}}if(!reuse&&!identityLocked){reuse=hgPublicAutomaticCertificate(domain,(document.getElementById('hg-public-zone')||{}).value,(document.getElementById('hg-public-host')||{}).value,ca,environment);if(reuse){editable=false;identityLocked=!reuse.retained;}}if(identityLocked&&reuse){if(caSelect)caSelect.value=reuse.ca||'letsencrypt';if(env&&reuse.environment)env.value=reuse.environment;}if(renew)renew.disabled=!editable;if(caSelect)caSelect.disabled=identityLocked;if(env)env.disabled=identityLocked;if(!editable&&reuse&&reuse.renew_days&&renew)renew.value=reuse.renew_days;if(renew)renew.title=editable?renew.placeholder:hgLabel('hg-public-label-reused-policy');}
   if(!https||isLocal){var envControl=document.getElementById('hg-public-environment'),caControl=document.getElementById('hg-public-ca');if(envControl)envControl.disabled=false;if(caControl)caControl.disabled=false;}
+  if(bound)document.getElementById('hg-public-ca').disabled=true;
   
 }
 function hgPublicCustomPort(value){
   var port=Number(value);
   return /^\d+$/.test(value)&&Number.isInteger(port)&&port>=1&&port<=65535&&port!==80&&port!==443;
 }
+function hgPublicTargetKey(value){
+  var parts=String(value||'').match(/^(https?):\/\/([^/?]+)(.*)$/);
+  if(!parts)return '';
+  try{
+    var url=new URL(parts[1]+'://'+parts[2]),path=parts[3];
+    if(!path||path[0]==='?')path='/'+path;
+    return url.protocol+'//'+url.hostname.replace(/\.$/,'')+':'+(url.port||(parts[1]==='https'?'443':'80'))+path;
+  }catch(e){return '';}
+}
 function hgPublicPreviewAddress(){
   var domain=hgPublicFullDomain(document.getElementById('hg-public-zone').value,document.getElementById('hg-public-host').value);
   var input=document.getElementById('hg-public-external-port'),https=document.getElementById('hg-public-https').checked;
   hgText('hg-public-domain-preview',domain&&hgPublicCustomPort(input.value)?(https?'https://':'http://')+domain+':'+Number(input.value):'-');
 }
-function hgPublicPreviewDomain(){hgPublicPreviewAddress();hgPublicUpdateCertificateUI();}
+function hgPublicPreviewDomain(){
+  hgPublicPreviewAddress();hgPublicUpdateCertificateUI();
+  hgPublicModalBindings(hgPublicFullDomain(document.getElementById('hg-public-zone').value,document.getElementById('hg-public-host').value));
+}
 function hgPublicSelectAccount(accountId){var s=document.getElementById('hg-public-account'),found=false;if(!s)return;if(accountId){for(var i=0;i<s.options.length;i++){if(s.options[i].value==accountId){s.selectedIndex=i;found=true;break;}}}if(!found){for(var j=0;j<s.options.length;j++){if(s.options[j].value=='__new__'){s.selectedIndex=j;break;}}}}
 function hgPublicChooseFile(id){var e=document.getElementById(id);if(e)e.click();}
 function hgPublicFileChanged(inputId,nameId){var e=document.getElementById(inputId),n=document.getElementById(nameId),f=e&&e.files&&e.files[0];if(n)n.textContent=f?f.name:'<%:No file selected%>'; }
 function hgPublicClearLocalFiles(){var c=document.getElementById('hg-public-local-cert'),k=document.getElementById('hg-public-local-key');if(c)c.value='';if(k)k.value='';hgPublicFileChanged('hg-public-local-cert','hg-public-local-cert-name');hgPublicFileChanged('hg-public-local-key','hg-public-local-key-name');}
 function hgPublicOpenAdd(preferredAccount){
+  if(Math.max(hgPublicRows.length,Object.keys(hgPublicSavedRows).length)>=16||(!preferredAccount&&hgPublicHasPendingAdd()))return;
+  hgPublicClearEabInputs();
+  hgPublicModalManagementDomain=null;
   document.getElementById('hg-public-modal-title').textContent=hgLabel('hg-public-label-add-title');document.getElementById('hg-public-edit-index').value='';document.getElementById('hg-public-edit-cert-id').value='';document.getElementById('hg-public-edit-cert-managed').value='0';document.getElementById('hg-public-edit-cert-shared').value='0';
   var as=document.getElementById('hg-public-account');if(preferredAccount)hgPublicSelectAccount(preferredAccount);else if(as&&as.options.length>1){as.selectedIndex=0;}else hgPublicSelectAccount('');document.getElementById('hg-public-provider').value='aliyun';document.getElementById('hg-public-key-id').value='';document.getElementById('hg-public-secret').value='';document.getElementById('hg-public-provider-account-id').value='';document.getElementById('hg-public-endpoint').value='';
   document.getElementById('hg-public-host').value='';document.getElementById('hg-public-target').value='';document.getElementById('hg-public-external-port').value='';document.getElementById('hg-public-https').checked=true;document.getElementById('hg-public-cert-source').value='auto';document.getElementById('hg-public-ca').value='letsencrypt';hgPublicCAChanged('production');document.getElementById('hg-public-renew-days').value='';document.getElementById('hg-public-renew-days').disabled=false;hgPublicClearLocalFiles();hgPublicAccountChanged(true,'');hgPublicPreviewDomain();hgSetModalOpen('hg-public-modal',true);
+  hgPublicRefreshCertificates();
 }
 function hgPublicOpenIndex(i){
+  hgPublicClearEabInputs();
+  hgPublicModalManagementDomain=null;
   var r=hgPublicRows[i];if(!r)return;document.getElementById('hg-public-modal-title').textContent=hgLabel('hg-public-label-edit-title');document.getElementById('hg-public-edit-index').value=String(i);document.getElementById('hg-public-edit-cert-id').value=r.cert_id||'';document.getElementById('hg-public-edit-cert-managed').value=r.cert_managed?'1':'0';document.getElementById('hg-public-edit-cert-shared').value=r.cert_shared?'1':'0';
   hgPublicSelectAccount(r.account_id||'');document.getElementById('hg-public-provider').value=r.provider||'aliyun';document.getElementById('hg-public-key-id').value=r.key_id||'';document.getElementById('hg-public-secret').value='';document.getElementById('hg-public-provider-account-id').value=r.provider_account_id||'';document.getElementById('hg-public-endpoint').value=r.endpoint||'';document.getElementById('hg-public-host').value=hgPublicHostPrefix(r.zone,r.host);document.getElementById('hg-public-target').value=r.target||'';document.getElementById('hg-public-external-port').value=r.external_port||'';document.getElementById('hg-public-https').checked=!!r.https;document.getElementById('hg-public-cert-source').value=r.cert_source==='local'?'local':'auto';document.getElementById('hg-public-ca').value=r.cert_ca||'letsencrypt';hgPublicCAChanged(r.cert_environment||'production');document.getElementById('hg-public-renew-days').value=r.cert_renew_days||'<%=pcdata(default_renew_days or '5')%>';hgPublicClearLocalFiles();hgPublicAccountChanged(true,r.zone||'');hgPublicPreviewDomain();hgSetModalOpen('hg-public-modal',true);
+  hgPublicRefreshCertificates();
 }
 function hgPublicReadTextFile(file,done){var reader=new FileReader();reader.onload=function(){done(null,String(reader.result||''));};reader.onerror=function(){done(hgLabel('hg-public-label-file-read-error'),'');};reader.readAsText(file);}
 function hgPublicReadLocalPair(done){var c=document.getElementById('hg-public-local-cert'),k=document.getElementById('hg-public-local-key'),cf=c&&c.files&&c.files[0],kf=k&&k.files&&k.files[0];if(!cf&&!kf){done({uploaded:false,cert_pem:'',key_pem:''});return;}if(!cf||!kf){alert(hgLabel('hg-public-label-local-pair'));done(null);return;}if(cf.size>524288||kf.size>524288){alert(hgLabel('hg-public-label-local-too-large'));done(null);return;}var out={uploaded:true,cert_pem:'',key_pem:''},left=2,failed=false;function finish(err,name,value){if(failed)return;if(err){failed=true;alert(err);done(null);return;}out[name]=value;left--;if(left===0)done(out);}hgPublicReadTextFile(cf,function(e,v){finish(e,'cert_pem',v);});hgPublicReadTextFile(kf,function(e,v){finish(e,'key_pem',v);});}
@@ -886,12 +1131,27 @@ function hgPublicConfirm(){
     alert('<%:Choose a port other than 80 or 443%>');return;
   }
   externalPort=externalPort?String(Number(externalPort)):'';
-  var port=hgPublicExternalPort({https:https,external_port:externalPort});
-  if(hgPublicRows.some(function(row,index){return String(index)!==idx&&row.target&&row.domain===domain&&hgPublicExternalPort(row)===port;})){
-    alert('<%:Duplicate public service domain and external port%>');return;
+  if(hgPublicRows.some(function(row,index){return String(index)!==idx&&row.target&&Number(row.external_port)===Number(externalPort);})){
+    alert('<%:This public port is already used by another service.%>');return;
+  }
+  var targetKey=hgPublicTargetKey(target);
+  if(targetKey&&hgPublicRows.some(function(row,index){return String(index)!==idx&&hgPublicTargetKey(row.target)===targetKey;})){
+    alert('<%:This LAN URL is already used by another service.%>');return;
   }
   if(source==='auto'&&!hgPublicCAMeta(ca)){alert('<%:Unsupported certificate authority%>');return;}
-  var draft={idx:idx,zone:zone,host:host,domain:domain,accountId:accountId,accountOpt:accountOpt,provider:provider,key:key,provider_account_id:providerAccountId,endpoint:endpoint,target:target,externalPort:externalPort,https:https,source:source,ca:ca,environment:environment,renew:renew};if(https&&source==='local'){
+  if(https&&source==='auto'&&ca==='zerossl'){
+    var kidInput=document.getElementById('hg-public-eab-id'),keyInput=document.getElementById('hg-public-eab-key');
+    var kid=hgPublicTrim(kidInput.value),hmac=hgPublicTrim(keyInput.value),keyBody=hmac.replace(/=+$/,'');
+    var validKid=/^[A-Za-z0-9_-]{1,128}$/.test(kid);
+    var validKey=hmac?(/^[A-Za-z0-9_+/-]+={0,2}$/.test(hmac)&&hmac.length<=512&&keyBody.length>=16&&keyBody.length%4!==1):kid===hgPublicEabKeyId();
+    hgPublicSetPair('hg-public-eab-error-label','hg-public-eab-error',!validKid||!validKey);
+    if(!validKid||!validKey){(validKid?keyInput:kidInput).focus();return;}
+    if(hmac)hgPublicPendingEab={kid:kid,hmac:hmac};
+  }
+  var management=document.getElementById('hg-public-management');
+  var cloud=hgPublicCloudHosts();
+  var relative=hgPublicHostPrefix(zone,host)||'@';
+  var draft={externalDns:!!(cloud&&cloud.indexOf(relative)>=0),idx:idx,zone:zone,host:host,domain:domain,management:management.disabled?null:management.checked,accountId:accountId,accountOpt:accountOpt,provider:provider,key:key,provider_account_id:providerAccountId,endpoint:endpoint,target:target,externalPort:externalPort,https:https,source:source,ca:ca,environment:environment,renew:renew};if(https&&source==='local'){
     var originalRow=idx!==''?hgPublicRows[parseInt(idx,10)]:null;
     hgPublicConfirmPending=epoch;
     hgPublicReadLocalPair(function(pair){
@@ -904,21 +1164,28 @@ function hgPublicConfirm(){
 }
 function hgPublicConfirmReady(d,pair){
   var certId='',old=null;if(d.idx!=='')old=hgPublicRows[parseInt(d.idx,10)];if(d.https&&d.source==='auto'){if(old&&old.cert_source==='auto')certId=old.cert_id||'';}else if(d.https&&d.source==='local'){if(!pair.uploaded&&old&&old.cert_source==='local')certId=old.cert_id||'';}else if(old)certId=old.cert_id||'';
-  var row={web_id:'',ddns_id:'',account_id:d.accountId,cert_id:certId,cert_source:d.source,cert_ca:d.ca||'letsencrypt',cert_environment:d.environment||'production',cert_managed:false,cert_renew_days:d.renew||'<%=pcdata(default_renew_days or '5')%>',cert_shared:false,local_upload:!!pair.uploaded,local_cert_pem:pair.cert_pem||'',local_key_pem:pair.key_pem||'',enabled:false,domain:d.domain,target:d.target,external_port:d.externalPort,https:d.https,provider:d.provider,key_id:d.key,provider_account_id:d.provider_account_id||'',endpoint:d.endpoint||'',secret:'',secret_saved:d.accountOpt?d.accountOpt.getAttribute('data-secret-saved')=='1':false,zone:d.zone,host:d.host||'@',ttl:'600',dirty:true};
+  var row={web_id:'',ddns_id:'',external_dns:d.externalDns,account_id:d.accountId,cert_id:certId,cert_source:d.source,cert_ca:d.ca||'letsencrypt',cert_environment:d.environment||'production',cert_managed:false,cert_renew_days:d.renew||'<%=pcdata(default_renew_days or '5')%>',cert_shared:false,local_upload:!!pair.uploaded,local_cert_pem:pair.cert_pem||'',local_key_pem:pair.key_pem||'',enabled:false,domain:d.domain,target:d.target,external_port:d.externalPort,https:d.https,provider:d.provider,key_id:d.key,provider_account_id:d.provider_account_id||'',endpoint:d.endpoint||'',secret:'',secret_saved:d.accountOpt?d.accountOpt.getAttribute('data-secret-saved')=='1':false,zone:d.zone,host:d.host||'@',ttl:'600',dirty:true};
+  if(old&&old.domain===d.domain)row.cert_ca_lock=old.cert_ca_lock;
   if(d.idx===''){
     var companion=hgPublicRows.find(function(r){return r.domain===row.domain&&r.account_id===row.account_id&&r.zone===row.zone;});
-    if(companion){row.ddns_id=companion.ddns_id||'';row.ttl=companion.ttl||'600';}
+    if(companion){row.ddns_id=companion.ddns_id||'';row.external_dns=companion.external_dns;row.ttl=companion.ttl||'600';}
     hgPublicRows.push(row);
-  }else{var idx=parseInt(d.idx,10);old=hgPublicRows[idx];row.web_id=old.web_id||'';row.ddns_id=old.ddns_id||'';row.cert_managed=d.source==='auto'&&old.cert_source==='auto'?!!old.cert_managed:false;row.cert_shared=d.source===old.cert_source?!!old.cert_shared:false;row.enabled=!!old.enabled;row.ttl=old.ttl||'600';hgPublicRows[idx]=row;}
-  hgPublicRecomputeDirty();hgPublicRender();hgPublicClose();
+  }else{var idx=parseInt(d.idx,10);old=hgPublicRows[idx];row.web_id=old.web_id||'';row.ddns_id=old.ddns_id||'';if(old.domain===row.domain)row.external_dns=old.external_dns;row.cert_managed=d.source==='auto'&&old.cert_source==='auto'?!!old.cert_managed:false;row.cert_shared=d.source===old.cert_source?!!old.cert_shared:false;row.enabled=!!old.enabled;row.ttl=old.ttl||'600';hgPublicRows[idx]=row;}
+  if(d.management)hgPublicManagementDomain=d.domain;
+  else if(d.management===false&&hgPublicManagementDomain===d.domain)hgPublicManagementDomain='';
+  hgPublicClearUnusedManagement();hgPublicRecomputeDirty();hgPublicRender();hgPublicClose();
 }
-function hgPublicDeleteNeedsConfirmation(i){var r=hgPublicRows[i];if(!r||(!r.web_id&&!r.ddns_id))return false;var certLast=!!r.cert_id,zoneLast=!!(r.account_id&&r.zone);for(var j=0;j<hgPublicRows.length;j++){if(j===i)continue;var o=hgPublicRows[j];if(certLast&&o.cert_id&&o.cert_id===r.cert_id)certLast=false;if(zoneLast&&o.account_id===r.account_id&&hgPublicTrim(o.zone).toLowerCase()===hgPublicTrim(r.zone).toLowerCase())zoneLast=false;}return certLast||zoneLast;}
-function hgPublicDelete(i){var r=hgPublicRows[i];if(!r)return;if(hgPublicDeleteNeedsConfirmation(i)&&!confirm(hgLabel('hg-public-label-delete-confirm')))return;hgPublicRows.splice(i,1);hgPublicRecomputeDirty();hgPublicRender();}
-function hgPublicClose(){hgPublicZoneRequest++;hgSetModalOpen('hg-public-modal',false);}
-function hgPublicConsumeResumeQuery(){if(!window.history||typeof window.history.replaceState!=='function')return;var href=window.location.href,hash='',h=href.indexOf('#');if(h>=0){hash=href.substring(h);href=href.substring(0,h);}var q=href.indexOf('?');if(q<0)return;var base=href.substring(0,q),parts=href.substring(q+1).split('&'),keep=[],changed=false;for(var i=0;i<parts.length;i++){if(!parts[i])continue;var k=parts[i].split('=')[0];try{k=decodeURIComponent(k.replace(/\+/g,' '));}catch(e){}if(k==='resume_public'||k==='resume_account')changed=true;else keep.push(parts[i]);}if(changed)window.history.replaceState(null,document.title,base+(keep.length?'?'+keep.join('&'):'')+hash);}
-(function(){hgPublicReadCertificateChoices();hgPublicLoadRows();hgPublicLoadManagementDomains();hgPublicAccessRenderRegionData();hgPublicAccessRenderEmptyWarning();hgPublicUpdateCertificateUI();var resume=(document.getElementById('hg-public-resume-mode')||{}).value||'',resumeAccount=(document.getElementById('hg-public-resume-account')||{}).value||'';if(resume==='add'&&resumeAccount){hgPublicOpenAdd(resumeAccount);hgPublicConsumeResumeQuery();}
+function hgPublicDelete(i){var r=hgPublicRows[i];if(!r)return;hgPublicRows.splice(i,1);hgPublicClearUnusedManagement();hgPublicRecomputeDirty();hgPublicRender();}
+function hgPublicClose(){hgPublicClearEabInputs();hgPublicZoneRequest++;hgPublicHostRequest++;hgSetModalOpen('hg-public-modal',false);}
+function hgPublicConsumeResumeQuery(){
+  if(!window.history||typeof window.history.replaceState!=='function')return;
+  var current=new URL(window.location.href);
+  ['resume_public','resume_account','notice'].forEach(function(key){current.searchParams.delete(key);});
+  window.history.replaceState(null,document.title,current.href);
+}
+(function(){hgPublicReadCertificateChoices();hgPublicLoadRows();hgPublicAccessRenderRegionData();hgPublicAccessRenderEmptyWarning();hgPublicUpdateCertificateUI();hgPublicRender();var resume=(document.getElementById('hg-public-resume-mode')||{}).value||'',resumeAccount=(document.getElementById('hg-public-resume-account')||{}).value||'';if(resume==='add'&&resumeAccount){hgPublicOpenAdd(resumeAccount);if('<%=pcdata(notice or '')%>')hgShowNotice(document.getElementById('hg-public-account-result'),'<%:DNS account saved%>');hgPublicConsumeResumeQuery();}
   hgGet('<%=url('admin/services/homegate/api/ddns')%>',function(d){var rs=(d&&d.results)||[];hgPublicDDNS={};for(var i=0;i<rs.length;i++)if(rs[i].rule)hgPublicDDNS[rs[i].rule]=rs[i];hgPublicRender();});
-  hgGet('<%=url('admin/services/homegate/api/certs')%>',function(d){var cs=(d&&d.certificates)||[];hgPublicCerts=Object.create(null);hgPublicCertsLoaded=true;for(var i=0;i<cs.length;i++)if(cs[i].id)hgPublicCerts[cs[i].id]=cs[i];hgPublicRender();});
+  hgPublicRefreshCertificates();
   hgGet('<%=url('admin/services/homegate/api/proxy')%>',function(p){hgPublicProxy=p||{};hgPublicRender();});
 })();
 </script>

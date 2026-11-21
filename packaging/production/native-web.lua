@@ -17,9 +17,12 @@ else request=lib.request(arg[2],write);work=arg[2]:match('^(.*)/[^/]+$')end
 local result={api_version=1,ok=false,headers={}};local bytes=0;local private={};local documents={};local files={};local revision
 local needs_config_write=write and not ({config_export=true,diagnostic_download=true,log_clear=true,update_url_save=true})[request.route]
 if request.route=='config_import' and request.form.mode~='restore'then needs_config_write=false end
+if request.route=='wol_action' and request.form.op=='wake' then needs_config_write=false end
 local effect_started=false
 local failure_stage
 local pending_imports={}
+local pending_eab
+local initialized_configuration, public_add_before, wol_add_before, wol_add_pending
 local stopped_for_save=false
 local dns_delete_confirmed=false
 local prepared_region
@@ -41,6 +44,18 @@ local function call(argv,input,limit)
  if input then lib.write(path,input);command=command..' < '..quote(path)end
  local raw,code=capture(command,limit);if input then assert(fs.unlink(path))end
  return raw,code
+end
+local function zerossl_eab_key_id()
+ if fixture then return nil end
+ local raw,rc=call({'lua',proto..'/homegate-acme.lua','eab-status'},nil,130)
+ return rc==0 and raw:match('^([A-Za-z0-9_-]+)\n$') or nil
+end
+local function save_pending_eab()
+ if not pending_eab then return true end
+ local _,rc=call({'lua',proto..'/homegate-acme.lua','eab-save'},pending_eab,32)
+ if rc~=0 then result.failure_stage='zerossl-eab-save';return false end
+ pending_eab=nil
+ return true
 end
 local function core(args,input)
  if fixture then return fixture.shell('/usr/bin/homegate '..table.concat(args,' '))end
@@ -138,6 +153,7 @@ local function load_document(pkg)
   if rc~=0 then error('Configuration initialization unavailable') end
   state=read_editor_state()
   if not state then error('Prepared configuration could not be read') end
+  initialized_configuration=prepare=='prepare'
   failure_stage=nil
  end
  if state then revision=state.revision;documents[pkg]=state.configuration
@@ -171,14 +187,13 @@ end
 local function find(pkg,name)
  for _,s in ipairs(load_document(pkg))do if s.name==name then return s end end
 end
-local verified_management={}
-local function management_domains(selected)
+local function management_domains()
  local raw,code=call({'lua',proto..'/homegate-network.lua','overview-wan'},nil,8192)
  local wan=code==0 and json.parse(raw)
  if type(wan)~='table' or wan.ok~=true then return nil end
  local management=assert(loadfile(base..'/native-management.lua'))()
  local observe=assert(loadfile(base..'/native-certificates.lua'))('observe')
- return management.domains(load_document('homegate'),wan.public_ipv6,observe,selected)
+ return management.domains(load_document('homegate'),wan.public_ipv6,observe)
 end
 local function masked(s)
  s=s:gsub('(https?://)[^/@%s]+@','%1[redacted]@')
@@ -361,7 +376,10 @@ local function restore_before_publish()
 end
 function cursor:commit(pkg)
  if not write or pkg~='homegate'then return false end
- if not changed then result.configuration_saved=true;return true end
+ if not changed then
+  if not save_pending_eab() then return false end
+  result.configuration_saved=true;return true
+ end
  if fixture then
   fixture.commits=fixture.commits+1
   if fixture.fail_commit then return false end
@@ -380,6 +398,18 @@ function cursor:commit(pkg)
   access_store.write(access_baseline[1],access_baseline[2],main.values.access_allow or '',main.values.access_deny or '',access_origins)
   access_origins=assert(access_store.read(unpack(access_baseline))).origins
   changed=false;result.configuration_saved=true;return true
+ end
+ local wol_new
+ if wol_add_before then
+  local wol_count=0
+  for _,row in ipairs(load_document(pkg))do
+   if row.kind=='wol_host' then wol_count=wol_count+1 end
+   if row.kind=='wol_host' and not wol_add_before[row.name] then
+    if wol_new or wol_add_pending then result.failure_stage='wol-pending-add';return false end
+    wol_new=row.name
+   end
+  end
+  if wol_new and wol_count>16 then result.failure_stage='wol-list-full';return false end
  end
  local body=text(load_document(pkg))
  local checked,checked_code,blocker=editor('editor-check',body)
@@ -406,6 +436,12 @@ function cursor:commit(pkg)
   restore_before_publish()
   return false
  end
+ if public_add_before then
+  for _,row in ipairs(load_document(pkg)) do
+   if row.kind=='web_rule' and row.values.retained~='1' and not public_add_before[row.name] then lib.mark_pending_add('public',row.name);break end
+  end
+ end
+ if wol_new then lib.mark_pending_add('wol',wol_new) end
  local d,rc=decoded({'config-commit',preview.confirmation});if rc~=0 or not d or not d.ok then result.failure_stage='editor-publish';result.exit_code=rc;return false end
  result.configuration_saved=true
  if request.route=='config_reset' or request.route=='config_import' then
@@ -420,6 +456,7 @@ function cursor:commit(pkg)
   local material,code=decoded({'cert-import-stdin',id},codec.json(pair))
   if code~=0 or not material or not material.ok then result.failure_stage='certificate-publication';result.uncertain=true;return false end
  end
+ if not save_pending_eab() then return false end
  pending_imports={}
  changed=false;revision=d.configuration_revision or d.revision or revision+2;return true
 end
@@ -433,10 +470,17 @@ local stage_messages={
  ['editor-history']='无法为这次修改保留配置历史，请检查插件维护中的配置状态。',
  ['editor-storage']='无法写入配置，请检查路由器存储空间。',
  ['editor-stale']='配置已被其他操作更新，请刷新页面后重试。',
+ ['public-pending-add']='请先保存并应用上一条新增的公网服务。',
+ ['wol-pending-add']='请先保存并应用上一条新增的唤醒主机。',
+ ['public-list-full']='公网服务已达 16 条上限。',
+ ['wol-list-full']='网络唤醒已达 16 条上限。',
+ ['homegate-disabled']='HomeGate 未启用，本次操作未执行。',
+ ['wake-send']='唤醒包发送失败，请检查网络接口和主机 MAC 地址。',
  ['editor-preview']='配置校验未通过，请刷新页面核对当前配置。',
  ['editor-publish']='配置提交未完成，请到插件维护检查恢复状态。',
  ['legacy-certificate-adoption']='已有证书无法接管，请检查证书和私钥。',
  ['certificate-publication']='证书更新未完成，请检查证书状态。',
+ ['zerossl-eab-save']='无法保存 ZeroSSL EAB 凭据，请重新填写后保存并应用。',
  ['runtime-enable']='服务启用检查未通过，请检查配置和恢复状态。',
  ['runtime-disable']='服务停用检查未通过，请检查当前运行状态。',
  ['runtime-boot-disable']='服务已停止，开机自启停用未确认。',
@@ -454,6 +498,8 @@ local stage_messages={
  ['access-record-clear']='无法确认访问记录已清除，请刷新记录后重试。',
  ['reset-access-cache']='默认配置已保存，地区数据清理未确认，请重试恢复默认配置。',
  ['reset-access-records']='默认配置已保存，访问记录清理未确认，请重试恢复默认配置。',
+ ['reset-zerossl-eab']='默认配置已保存，ZeroSSL 凭据清理未确认，请重试恢复默认配置。',
+ ['reset-certificate-files']='默认配置已保存，证书文件清理未确认，请重试恢复默认配置。',
  ['access-live-reload']='访问规则已保存，代理加载尚未确认。',
  ['dns-busy']='后台正在处理 DNS 或证书任务，请稍后再试。',
  ['ddns-delete']='远端 DNS 记录未能删除，公网服务条目已保留。',
@@ -463,6 +509,7 @@ local stage_messages={
  ['ddns-unknown']='DDNS 更新结果待核对，请检查插件日志。',
  ['acme-admission']='续期未能启动，请检查插件日志和证书任务。',
  ['acme-failed']='证书续期失败，请检查插件日志。',
+ ['acme-rate-limited']='证书请求受限，重试时间见运行日志。',
  ['acme-unknown']='证书续期结果待核对，请检查插件日志。',
 }
 local function refused_stage(stage, code)
@@ -578,7 +625,12 @@ local function shell(command)
    pending_imports[argv[2]]={certificate_pem=cert,private_key_pem=key};return raw,0
   end
   if action=='dns-zones'then
-   local raw,rc=call({'ash',base..'/native-cli-core.sh',action,argv[2]})
+   local raw,rc
+   if #argv==3 and request.route=='api/dns_zones' then
+    raw,rc=call({'ash',proto..'/homegate-dns-status.sh',argv[2],'--hosts',argv[3]})
+   elseif #argv==2 then
+    raw,rc=call({'ash',base..'/native-cli-core.sh',action,argv[2]})
+   else return '',1 end
    if rc==4 then
     return codec.json({api_version=1,ok=false,phase='dns-provider',error_kind='busy',retryable=true,zones={}}),rc
    end
@@ -596,6 +648,7 @@ local function shell(command)
   end
   if action=='ddns-sync'then
    if not write or #argv~=2 then return '',1 end
+   local rule=find('homegate',argv[2]);result.log_subject=rule and rule.values.name
    effect_started=true
    local raw,rc=dns_action({'ash',proto..'/homegate-ddns-batch.sh','sync','--confirm-rule',argv[2]})
    local d=json.parse(raw)
@@ -626,11 +679,20 @@ local function shell(command)
   end
   if action=='cert-renew'then
    if not write or #argv~=2 then return '',1 end
+   local certificate=find('homegate',argv[2]);result.log_subject=certificate and table.concat(certificate.values.domains or {},', ')
    local job=work:match('/([0-9a-f]+)$');if not job or #job~=32 then return '',1 end
    local deadline=tonumber(lib.read(work..'/deadline',16));if not deadline then return '',1 end
    effect_started=true;result.native_job=job
+   local function rate_limited(status,code)
+    if type(status)=='table' and status.error_kind=='rate_limited' and type(status.retry_at)=='number' then
+     result.retry_at=status.retry_at
+     return refused_stage('acme-rate-limited',code)
+    end
+    return refused_stage('acme-admission',code)
+   end
    local raw,rc=dns_action({'ash',proto..'/homegate-acme-job.sh','issue-live',argv[2],job,'--confirm'})
    local d=json.parse(raw)
+   if rc==9 then return rate_limited(d,rc) end
    if rc~=0 or not d or not d.ok then return refused_stage(rc==8 and 'dns-busy' or 'acme-admission',rc) end
    while true do
     local status,code=decoded({'acme-job',job})
@@ -638,6 +700,7 @@ local function shell(command)
     if status.pending==false then
      local success=status.ok and status.cleanup_required==false and (status.state=='issued' or status.state=='skipped')
      if success then return codec.json(status),0 end
+     if status.error_kind=='rate_limited' and status.cleanup_required==false then return rate_limited(status,code) end
      if status.cleanup_required or status.state=='unknown'then result.uncertain=true end
      return refused_stage(result.uncertain and 'acme-unknown' or 'acme-failed',code)
     end
@@ -647,6 +710,14 @@ local function shell(command)
     end
     wait_ms(200)
    end
+  end
+  if action=='wol' and request.route=='wol_action' and #argv==2 then
+   local host=find('homegate',argv[2]);local main=find('homegate','main')
+   if not host or not main then return '',1 end
+   result.log_subject=(host.values.name or '')..' ('..(host.values.mac or '')..')'
+   local raw,rc=core({'wol',main.values.wol_interface or 'br-lan',host.values.mac or ''})
+   if rc~=0 then return refused_stage('wake-send',rc) end
+   return raw,rc
   end
   return core(argv)
  elseif argv and argv[1]=='/etc/init.d/homegate'then
@@ -690,6 +761,21 @@ local function shell(command)
      end
      local _,cache_code=call({'ash',proto..'/homegate-access-region.sh','clear-cache','--confirm'})
      if cache_code~=0 then return refused_stage('reset-access-cache',cache_code) end
+     local _,eab_code=call({'lua',proto..'/homegate-acme.lua','eab-reset'},nil,32)
+     if eab_code~=0 then return refused_stage('reset-zerossl-eab',eab_code) end
+     local root='/etc/homegate/certs'
+     if fs.lstat(root) then
+      if not lib.dir(root) then return refused_stage('reset-certificate-files',7) end
+      local ids={}
+      for name in assert(fs.dir(root)) do
+       local id=name:match('^%.purge%-([A-Za-z0-9_-]+)%.json$') or name:match('^%.purge%-([A-Za-z0-9_-]+)$') or name:match('^([A-Za-z0-9_-]+)$')
+       if id and #id<=64 then ids[id]=true end
+      end
+      for id in pairs(ids) do
+       local _,purge_code=core({'cert-purge',id,'--confirm'})
+       if purge_code~=0 then return refused_stage('reset-certificate-files',purge_code) end
+      end
+     end
     end
     return raw,code
    end
@@ -755,7 +841,12 @@ local modules={}
 modules['luci.model.uci']={cursor=function()return cursor end}
 modules['luci.model.homegate.backup']=codec
 if not fixture then
- modules['luci.model.homegate.management']={certificate=function(domain)return verified_management[domain]end}
+ modules['luci.model.homegate.management']={certificate=function(domain)
+  if fixture then return nil end
+  local management=assert(loadfile(base..'/native-management.lua'))()
+  local observe=assert(loadfile(base..'/native-certificates.lua'))('observe')
+  return management.certificate(load_document('homegate'),domain,observe)
+ end}
 end
 modules['luci.model.homegate.writer']={run=function(route,fn)if not write or route~=request.route then error('writer route')end;if fixture then fixture.begins=fixture.begins+1 end;return fn()end}
 modules['luci.jsonc']={parse=json.parse,stringify=codec.json}
@@ -769,6 +860,7 @@ modules['luci.http']={formvalue=function(k)if k then return request.form[k]end;r
   result.redirect=v;if result.material_retained then result.error='证书材料已保留，尚未完成清理。请先在维护中核对，不要重复操作。';result.redirect=nil
   elseif validation_error then
    result.error=stage_messages[result.failure_stage] or '操作未完成，请检查当前配置及未完成的操作。'
+   if result.failure_stage=='zerossl-eab-save' and result.configuration_saved then result.error='配置已保存。'..result.error end
    if request.route=='config_reset' and result.configuration_saved and
        not result.error:find('^默认配置已保存') then
     result.error='默认配置已保存。'..result.error
@@ -795,14 +887,17 @@ modules['luci.http']={formvalue=function(k)if k then return request.form[k]end;r
    end
    if request.route=='public_apply' and not result.failure_stage then
     local errors={
+     ['Certificate%20authority%20is%20already%20fixed%20for%20this%20domain']='该域名已绑定证书颁发机构，请沿用现有机构。',
      ['External%20port%20must%20be%20between%201%20and%2065535']='公网端口须为 1–65535 的整数。',
      ['External%20port%20conflicts%20with%20a%20reserved%20service%20port']='公网端口与服务保留端口冲突。',
      ['External%20port%20cannot%20serve%20both%20HTTP%20and%20HTTPS']='同一个公网端口不能同时用于 HTTP 和 HTTPS。',
      ['Public%20services%20require%20a%20custom%20port%20other%20than%2080%20or%20443']='请填写自定义公网端口。80 和 443 由本机管理页使用。',
      ['Invalid%20management%20domain']='请输入有效的管理域名。',
+     ['Router%20management%20requires%20a%20public%20service%20for%20this%20domain']='请为该域名保留一条公网服务，再开启路由管理页面。',
+     ['The%20DNS%20account%20of%20an%20existing%20public%20service%20is%20locked']='已保存公网服务的 DNS 账号不可更换。',
      ['Management%20domain%20required%20for%20WAN%20access']='允许外网访问前，请填写管理域名。',
      ['Automatic%20firewall%20is%20required%20for%20management%20domain']='使用管理域名需要启用 HomeGate 自动防火墙。',
-     ['Management%20domain%20requires%20a%20matching%20production%20certificate']='请选择已有有效证书覆盖的管理域名。',
+     ['Management%20domain%20requires%20a%20matching%20production%20certificate']='该域名暂时没有可用的正式证书，无法开启路由管理页面。',
      ['Duplicate%20public%20service%20domain%20and%20external%20port']='同一域名和公网端口只能添加一次。',
      ['Services%20for%20one%20domain%20must%20share%20DNS%20settings']='同一域名的多个端口必须共用 DNS 设置。'
     }
@@ -837,6 +932,25 @@ modules['luci.template']={render=function(name,data)
   data.configuration_migration_copied=path and fs.lstat(path..'/legacy.conf')~=nil or false
  end
  result.template=name;result.data=public(data)
+ if name=='homegate/public' then result.data.zerossl_eab_key_id=zerossl_eab_key_id() end
+ if name=='homegate/public' or name=='homegate/wol' then
+  load_document('homegate');result.data.configuration_revision=tostring(revision or 0)
+ end
+ if name=='homegate/public' and not fixture then
+  local pending=lib.pending_add('public')
+  local pending_row=pending and find('homegate',pending)
+  if pending_row and pending_row.values.retained~='1' then result.data.public_pending_add=pending end
+  local raw,rc=call({'ash',proto..'/homegate-startup-active.sh','status'},nil,2048)
+  local state=rc==0 and json.parse(raw)
+  if state and state.known==true and type(state.main_enabled)=='boolean' then
+   result.data.public_master_enabled=state.main_enabled and '1' or '0'
+  end
+ end
+ if name=='homegate/wol' and not fixture then
+  local pending=lib.pending_add('wol')
+  local row=pending and find('homegate',pending)
+  if row and row.kind=='wol_host' then result.data.wol_pending_add=pending end
+ end
  if name=='homegate/maintenance' and not fixture then result.data.plugin_update_url=read_update_url() end
 end}
 modules['nixio.fs']={chmod=function(path)if files[path]then return true end;return false end,stat=function(path)
@@ -860,6 +974,9 @@ local env={_M=nil,module=function()end,package={seeall=true},require=function(na
  io={open=virtual_file},os={time=os.time,date=os.date,remove=function(p)if files[p]then files[p]=nil;return true end;return false end},math=math,string=string,table=table,tonumber=tonumber,tostring=tostring,type=type,pairs=pairs,ipairs=ipairs,next=next,assert=assert,error=error,pcall=pcall,select=select,unpack=unpack,_=function(s)return s end}
 env._M=env
 local ok,err=pcall(function()
+ if request.route=='certificate_apply' and request.form.certificate_ca=='zerossl' and not zerossl_eab_key_id() then
+  result.error='请选择 ZeroSSL 并填写 EAB 绑定 ID 和 HMAC 密钥。';return
+ end
  if request.route=='update_url_save' and not fixture then
   result.error=save_update_url(request.form.plugin_update_url)
   result.ok=result.error==nil
@@ -899,10 +1016,34 @@ local ok,err=pcall(function()
   local certificates={}
   if revision then
    local observe=assert(loadfile(base..'/native-certificates.lua'))('observe')
+   local snapshot,rc=call({'lua',proto..'/homegate-acme.lua','web-acme-observations'},nil,262144)
+   local observation=rc==0 and json.parse(snapshot) or {}
+   local waits,jobs=observation.retries or {},observation.jobs or {}
+   local retrying,retry_rc=call({'lua',base..'/native-service.lua','web-certificate-retry',tostring(revision)},nil,128)
+   local retry_id=retry_rc==0 and retrying:match('^([A-Za-z0-9_-]+)\n$')
+   local main=find('homegate','main');local wanted={}
+   if main then
+    wanted[main.values.management_certificate or '']=main.values.management_wan=='1'
+    for _,row in ipairs(doc) do
+     if row.kind=='web_rule' and row.values.enabled=='1' and row.values.https=='1' then wanted[row.values.certificate or '']=true end
+    end
+   end
    for _,section in ipairs(doc)do
     if section.kind=='certificate'then
      local ok,status=pcall(observe,section.name,section.values)
-     if ok then certificates[#certificates+1]=status end
+     if ok then
+      local domains={};for _,name in ipairs(section.values.domains or {})do domains[#domains+1]=name end;table.sort(domains)
+      local key=(section.values.ca or 'letsencrypt')..'/'..(section.values.environment or '')..'/'..codec.json(domains)
+      local job=jobs[key];local retry=waits[key]
+      if section.values.source=='acme' then
+       if type(retry)=='number' then status.retry_at=retry end
+       status.pending=job and job.state=='pending' or false
+       status.retrying=retry_id==section.name and not status.pending or nil
+       status.waiting=not status.exists and not job and wanted[section.name]==true and main and main.values.enabled=='1' or nil
+       if job and job.state=='failed' and status.renew then status.renew_state='failed' end
+      end
+      certificates[#certificates+1]=status
+     end
     end
    end
   end
@@ -913,46 +1054,74 @@ local ok,err=pcall(function()
   result.ok=true
   return
  end
+ if not fixture and (request.route=='public_apply' or request.route=='wol_apply') and request.form.configuration_revision~=nil then
+  load_document('homegate')
+  local submitted=request.form.configuration_revision
+  if submitted~=tostring(revision) and not (submitted=='0' and initialized_configuration) then
+   result.failure_stage='editor-stale';result.error=stage_messages['editor-stale'];return
+  end
+ end
+ if not fixture and request.route=='public_action' and (request.form.op=='ddns_sync' or request.form.op=='cert_renew') then
+  local raw,rc=call({'ash',proto..'/homegate-startup-active.sh','status'},nil,2048)
+  local state=rc==0 and json.parse(raw)
+  if state and state.known==true and state.main_enabled==false then
+   local row=find('homegate',request.form.id);result.log_subject=row and row.values.name
+   result.failure_stage='homegate-disabled';result.error=stage_messages['homegate-disabled'];return
+  end
+ end
  if request.route=='public_apply' then
   local count=tonumber(request.form.public_service_count)
+  local needs_eab=false
   if count and count>=0 and count<=128 and count==math.floor(count) then
    local validation=assert(loadfile(proto..'/configuration-validation.lua'))()
    local ip=assert(loadfile(proto..'/cloudflare-record-plan.lua'))()
    local listening,owned
+   local used_targets,used_ports={},{}
    local main=find('homegate','main')
    local management=assert(loadfile(base..'/native-management.lua'))()
    local management_context
+   local new_rows=0
    if not fixture then
     management_context=management.read()
     local submitted=request.form.management_domain
     local domain=submitted and codec.management_domain(submitted:match('^%s*(.-)%s*$'))
-    local current=main and main.values or {}
-    local enabling=request.form.management_wan=='1' and current.management_wan~='1'
-    if domain and domain~='' and (domain~=current.management_domain or enabling) then
+    if domain and domain~='' and request.form.management_wan=='1' then
      if not management_context or not management_context.backend then
       result.error='无法确认本机 LuCI 的监听地址。请检查路由器管理服务。';return
-     end
-     verified_management=management_domains(domain) or {}
-     if not verified_management[domain] then
-      result.error='管理域名暂不可用。请确认 AAAA 记录指向本机公网 IPv6，且有有效证书。';return
      end
     end
    end
    for i=1,count do
     local prefix='public_service_'..i..'_'
     local target=(request.form[prefix..'target'] or ''):match('^%s*(.-)%s*$')
-    if target~='' and not validation.target(target,ip) then
+    if target~='' and (request.form[prefix..'web_id'] or '')=='' then new_rows=new_rows+1 end
+    if target~='' and request.form[prefix..'https']=='1' and request.form[prefix..'cert_ca']=='zerossl' and request.form[prefix..'cert_mode']~='local' then needs_eab=true end
+    local target_key=target~='' and validation.target_key(target,ip)
+    if target~='' and not target_key then
+    result.failure_stage='public-invalid-target'
      result.error='内网网址无效，请检查 HTTP/HTTPS 地址和端口（1–65535）。'
      return
     end
     if not fixture and target~='' then
      local allowed,reason=management.ordinary_target(management_context,target)
      if not allowed then
-      result.error=reason=='local_management' and '本机 LuCI 请通过「路由管理」设置。' or '无法核对内网网址。'
+      result.failure_stage=reason=='local_management' and 'public-local-management' or 'public-invalid-target'
+      result.error=reason=='local_management' and '当前应用条目禁填本机路由器内网网址。获取正式证书后开启「路由管理页面」。' or '无法核对内网网址。'
       return
      end
     end
-    local port=tonumber(request.form[prefix..'external_port'])
+    local submitted_port=request.form[prefix..'external_port']
+    local previous=submitted_port==nil and find('homegate',request.form[prefix..'web_id'])
+    local port=tonumber(submitted_port or previous and previous.values.external_port)
+    if target_key then
+     if port and used_ports[port] then
+      result.failure_stage='public-duplicate-port';result.log_subject='TCP '..port
+      result.error='公网端口 '..port..' 已被其他条目使用。';return
+     end
+     if used_targets[target_key] then result.failure_stage='public-duplicate-target';result.error='此内网网址已被其他条目使用。';return end
+     if port then used_ports[port]=true end
+     used_targets[target_key]=true
+    end
     local https=request.form[prefix..'https']=='1'
     local default=main and tonumber(main.values[https and 'https_port' or 'http_port'])
     if not fixture and target~='' and port and port%1==0 and port>0 and port<=65535 and port~=80 and port~=443 and port~=default then
@@ -966,11 +1135,48 @@ local ok,err=pcall(function()
       owned=assert(loadfile(base..'/native-public-listeners.lua'))()()
      end
      if listening[port] and not owned[port] then
+      result.failure_stage='public-occupied-port';result.log_subject='TCP '..port
       result.error='公网端口 '..port..' 已被路由器上的其他服务占用。';return
      end
     end
    end
+   if new_rows>0 and count>16 then
+    result.failure_stage='public-list-full';result.error=stage_messages['public-list-full'];return
+   end
+   if not fixture and request.form.configuration_revision~=nil and new_rows>0 then
+    local pending=lib.pending_add('public')
+    local pending_row=pending and find('homegate',pending)
+    if new_rows>1 or (pending_row and pending_row.values.retained~='1') then
+     result.failure_stage='public-pending-add';result.error=stage_messages['public-pending-add'];return
+    end
+    public_add_before={}
+    for _,row in ipairs(load_document('homegate')) do if row.kind=='web_rule' and row.values.retained~='1' then public_add_before[row.name]=true end end
+   end
   end
+  if needs_eab then
+   local kid,hmac=request.form.zerossl_eab_id,request.form.zerossl_eab_hmac
+   if kid~=nil or hmac~=nil then
+    if fixture or not kid or #kid>128 or not hmac or #hmac>512 then
+     result.error='请填写有效的 EAB 绑定 ID 和 HMAC 密钥。';return
+    end
+    local pair=codec.json({kid=kid,hmac=hmac})
+    local _,rc=call({'lua',proto..'/homegate-acme.lua','eab-check'},pair,32)
+    if rc~=0 then result.error='请填写有效的 EAB 绑定 ID 和 HMAC 密钥。';return end
+    pending_eab=pair
+   elseif not zerossl_eab_key_id() then
+    result.error='请选择 ZeroSSL 并填写 EAB 绑定 ID 和 HMAC 密钥。';return
+   end
+  end
+ elseif request.route=='wol_apply' and not fixture then
+  wol_add_before={}
+  for _,row in ipairs(load_document('homegate'))do
+   if row.kind=='wol_host' then wol_add_before[row.name]=true end
+  end
+  local pending=lib.pending_add('wol')
+  wol_add_pending=pending and wol_add_before[pending]
+ elseif request.route=='public_account_apply' then
+  local provider=request.form.provider
+  if provider and #provider<=32 and provider:match('^[a-z0-9_-]+$') then result.log_subject=provider end
  end
  if not fixture and request.route=='access_save_rule' and request.form.old_rule_token and request.form.rule_token then
   find('homegate','main')
@@ -987,6 +1193,17 @@ local ok,err=pcall(function()
   if rc~=0 then result.error=stage_messages[result.failure_stage] end
  end
  result.ok=result.error==nil
+ local apply_page=({public_apply='public',wol_apply='wol',basic_apply='all'})[request.route]
+ if not fixture and result.ok and request.form.mode=='apply' and apply_page then
+  result.add_applied_revision=revision
+  result.add_applied_page=apply_page
+  local main=find('homegate','main')
+  if request.route=='public_apply' and main and main.values.enabled~='1' and result.redirect then
+   local notice=modules['luci.http'].urlencode('已保存并应用，HomeGate 未启用')
+   result.redirect=result.redirect:gsub('([?&]notice=)[^&]*',function(prefix)return prefix..notice end)
+   result.homegate_disabled=true
+  end
+ end
  if access_rule_routes[request.route] then
   local main=find('homegate','main')
   if main and (not changed or result.configuration_saved) then

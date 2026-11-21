@@ -27,7 +27,7 @@ if mode=='scope' or mode=='scope-acme' or mode=='scope-any' then
  for _,section in ipairs(snapshot.configuration)do if section.kind=='certificate' and section.name==selected then
   local v=section.values;if (mode=='scope' and v.source~='local') or (mode=='scope-acme' and v.source~='acme') or #v.domains<1 then fail() end
   local names={};for _,name in ipairs(v.domains)do names[#names+1]=name end;table.sort(names)
-  io.write(codec.json({id=selected,source=v.source,environment=v.environment,domains=names,renew_days=tonumber(v.renew_days)})..'\n');return
+  io.write(codec.json({id=selected,source=v.source,ca=v.ca,environment=v.environment,domains=names,renew_days=tonumber(v.renew_days)})..'\n');return
  end end;fail()
 end
 local function pem(raw,types,max)
@@ -90,7 +90,8 @@ if mode=='status' then
   local function identities(d)return codec.json({id=d.id,source=d.source,environment=d.environment,domains=d.domains}) end
   out.identity_valid=identities(expected)==identities(saved);out.expires=pair.expires;out.days=math.floor((pair.expires_epoch-os.time())/86400)
   out.valid=out.identity_valid and os.time()>=pair.not_before_epoch and os.time()<pair.expires_epoch
-  out.renew=out.days<=expected.renew_days;out.error_kind=not out.identity_valid and 'configuration_changed' or (out.valid and '' or 'validity')
+  local issuer_changed=expected.source=='acme' and (expected.ca or 'letsencrypt')~=(saved.ca or 'letsencrypt')
+  out.renew=issuer_changed or out.days<=expected.renew_days;out.error_kind=not out.identity_valid and 'configuration_changed' or (out.valid and '' or 'validity')
  end
  io.write(codec.json(out)..'\n');return
 end

@@ -155,6 +155,10 @@ hg_jobs_clear || fail 4
 ready=$(ash "$HG_DIR/homegate-certificate.sh" admission-status-internal "$certificate" --confirm) || fail 4
 printf '%s\n' "$ready" | lua "$HG_DIR/homegate-acme.lua" certificate-ready "$certificate" || fail 4
 scope=$(hg_scope "$certificate") || fail
+printf '%s\n' "$scope" | lua "$HG_DIR/homegate-acme.lua" rate-limit-check
+rate_status=$?
+[ "$rate_status" != 9 ] || exit 9
+[ "$rate_status" = 0 ] || fail
 count=0;for member in "$HG_ROOT/"*;do hg_exists "$member" || continue;hg_dir "$member" || fail;count=$((count+1));done;[ "$count" -lt 16 ] || fail 4
 mkdir "$HG_PATH" "$HG_PATH/challenges" "$HG_PATH/receipts" "$HG_PATH/issued" || fail
 printf '%s\n' "$scope" > "$HG_PATH/scope.json" && hg_binding > "$HG_PATH/binding" && printf '%s\n' "$action" > "$HG_PATH/mode" && hg_seal > "$HG_PATH/seal" || fail

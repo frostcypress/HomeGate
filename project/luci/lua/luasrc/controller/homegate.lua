@@ -853,11 +853,10 @@ local function find_account_by_identity(cur, values, catalog)
     return found
 end
 
-local function find_certificate_for_domain(cur, domain, wanted_source, wanted_environment, wanted_ca, management)
+local function find_certificate_for_domain(cur, domain, wanted_source, wanted_environment, wanted_ca)
     local exact, wildcard = nil, nil
     cur:foreach("homegate", "certificate", function(s)
         if exact then return end
-        if management and (not bool_value(s.enabled) or certificate_environment(s) == CERT_ENV_STAGING) then return end
         if wanted_source and certificate_source(s) ~= wanted_source then return end
         if wanted_source == "acme" and (wanted_environment or wanted_ca) then
             if not certificate_acme_matches(s, wanted_ca or DEFAULT_CA, wanted_environment or CERT_ENV_PRODUCTION) then return end
@@ -910,7 +909,7 @@ local function enabled_certificate_pattern_owner(cur, wanted, exclude_id)
     exclude_id = safe_id(exclude_id)
     local found = nil
     cur:foreach("homegate", "certificate", function(s)
-        if found or not bool_value(s.enabled) or s[".name"] == exclude_id then return end
+        if found or not bool_value(s.enabled) or s.retained == "1" or s[".name"] == exclude_id then return end
         local row = {}
         for k, v in pairs(s) do row[k] = v end
         row.id = s[".name"]
@@ -974,7 +973,7 @@ local function certificate_use_count(cur, id)
     if id == "" then return 0 end
     local count = safe_id(cur:get("homegate","main","management_certificate")) == id and 1 or 0
     cur:foreach("homegate", "web_rule", function(s)
-        if safe_id(s.certificate) == id then count = count + 1 end
+        if s.retained ~= "1" and safe_id(s.certificate) == id then count = count + 1 end
     end)
     return count
 end
@@ -1079,8 +1078,8 @@ local function certificate_choices(cur, provider_catalog)
     return out
 end
 
-local function public_services(cur)
-    local ddns_by_domain, ddns_used, cert_by_id, rows, ddns_group_counts = {}, {}, {}, {}, {}
+local function public_services(cur, history)
+    local ddns_by_domain, ddns_used, cert_by_id, rows = {}, {}, {}, {}
     local provider_catalog = dns_provider_catalog()
     local main = cur:get_all("homegate", "main") or {}
     local default_renew = tonumber(main.renew_days or "5") or 5
@@ -1090,7 +1089,7 @@ local function public_services(cur)
     if management_certificate~="" then cert_use[management_certificate]=1 end
     cur:foreach("homegate", "web_rule", function(s)
         local cid = safe_id(s.certificate)
-        if cid ~= "" then cert_use[cid] = (cert_use[cid] or 0) + 1 end
+        if s.retained ~= "1" and cid ~= "" then cert_use[cid] = (cert_use[cid] or 0) + 1 end
     end)
     cur:foreach("homegate", "ddns_rule", function(s)
         local d = trim(s.name)
@@ -1099,12 +1098,6 @@ local function public_services(cur)
         if d ~= "" then
             ddns_by_domain[d] = ddns_by_domain[d] or {}
             ddns_by_domain[d][#ddns_by_domain[d] + 1] = s[".name"]
-        end
-        local account_id = safe_id(s.account)
-        local zone = trim(s.zone):lower():gsub("%.$", "")
-        if account_id ~= "" and zone ~= "" then
-            local key = account_id .. "|" .. zone
-            ddns_group_counts[key] = (ddns_group_counts[key] or 0) + 1
         end
     end)
     cur:foreach("homegate", "certificate", function(s)
@@ -1142,26 +1135,21 @@ local function public_services(cur)
                 cert_managed = true
             end
         end
-        local delete_confirm = false
-        if cert and (cert_use[cert.id] or 0) <= 1 then delete_confirm = true end
-        if ddns then
-            local group_key = safe_id(ddns.account) .. "|" .. trim(ddns.zone):lower():gsub("%.$", "")
-            if (ddns_group_counts[group_key] or 0) <= 1 then delete_confirm = true end
-        end
         rows[#rows + 1] = {
             id = web and web.id or (ddns and ddns.id or ""),
             web_id = web and web.id or "",
             ddns_id = ddns and ddns.id or "",
+            external_dns = ddns and ddns.external_dns == "1" or false,
             account_id = ddns and safe_id(ddns.account) or "",
             cert_id = cert and cert.id or "",
             cert_mode = cert_mode,
             cert_source = cert_source,
             cert_ca = cert and certificate_ca(cert) or DEFAULT_CA,
+            cert_ca_lock = web and trim(web.certificate_ca_lock) or "",
             cert_environment = cert and certificate_environment(cert) or CERT_ENV_PRODUCTION,
             cert_managed = cert_managed,
             cert_renew_days = cert and tostring(tonumber(cert.renew_days or "") or default_renew) or tostring(default_renew),
             cert_shared = cert and (cert_use[cert.id] or 0) > 1 or false,
-            delete_confirm = delete_confirm,
             enabled = web and (bool_value(web.enabled) and port_model.custom_public_port(web.external_port) and "1" or "0") or (ddns and (bool_value(ddns.enabled) and "1" or "0") or "0"),
             domain = domain,
             target = web and trim(web.target) or "",
@@ -1181,22 +1169,23 @@ local function public_services(cur)
     end
 
     cur:foreach("homegate", "web_rule", function(s)
+        if (s.retained == "1") ~= (history == true) then return end
         local web = {}
         for k, v in pairs(s) do web[k] = v end
         web.id = s[".name"]
         local domain = trim(web.domain):lower():gsub("%.$", "")
         make_row(domain, web, first_ddns(domain))
     end)
-    cur:foreach("homegate", "ddns_rule", function(s)
+    if not history then cur:foreach("homegate", "ddns_rule", function(s)
         local id = s[".name"]
-        if not ddns_used[id] then
+        if s.retained ~= "1" and not ddns_used[id] then
             local ddns = get_section(cur, id, "ddns_rule")
             local domain = trim(ddns.name)
             if domain == "" then domain = full_domain(ddns.zone, ddns.host) end
             make_row(domain:lower():gsub("%.$", ""), nil, ddns)
             ddns_used[id] = true
         end
-    end)
+    end) end
     table.sort(rows, function(a,b)
         if a.domain~=b.domain then return a.domain<b.domain end
         return (tonumber(a.effective_port) or 0)<(tonumber(b.effective_port) or 0)
@@ -1385,6 +1374,7 @@ function action_public()
     render("public", {
         main = main,
         services = public_services(cur),
+        public_history = public_services(cur, true),
         dns_accounts = dns_account_choices(cur, provider_catalog),
         certificates = certificate_choices(cur, provider_catalog),
         dns_provider_catalog = provider_catalog,
@@ -1552,9 +1542,16 @@ function action_public_certificate_apply()
     return finish_save(cur, "public", "apply")
 end
 
-local cleanup_certificate_files
-local ddns_group_count
-local delete_orphan_zone_certificates
+local function retain_public_rule(cur, id)
+    cur:set("homegate", id, "enabled", "0")
+    cur:set("homegate", id, "retained", "1")
+end
+
+local function retain_unused_certificate(cur, id)
+    if id ~= "" and certificate_use_count(cur, id) == 0 and get_section(cur, id, "certificate") then
+        cur:set("homegate", id, "retained", "1")
+    end
+end
 
 function action_public_apply()
     local cur = uci_cursor()
@@ -1610,12 +1607,23 @@ function action_public_apply()
     local original_web, original_ddns = {}, {}
     local original_web_rows, original_ddns_rows, original_ddns_by_domain, domain_certificates = {}, {}, {}, {}
     local original_web_cert, original_web_cert_managed = {}, {}
-    local original_local_certs = {}
+    local retained_web, domain_ca_locks = {}, {}
+    local bound_browser = h.formvalue("configuration_revision") ~= nil
     cur:foreach("homegate", "web_rule", function(s)
         local id = s[".name"]
+        if s.retained == "1" then
+            retained_web[trim(s.domain) .. "\0" .. trim(s.external_port)] = id
+            return
+        end
         original_web[id] = true
         original_web_rows[id] = { id = id, certificate = safe_id(s.certificate), domain = trim(s.domain), external_port=s.external_port, target=trim(s.target), https=s.https }
         original_web_cert[id] = safe_id(s.certificate)
+        local locked = trim(s.certificate_ca_lock)
+        if locked == "" and bound_browser and original_web_cert[id] ~= "" then
+            local original = get_section(cur, original_web_cert[id], "certificate")
+            if original and certificate_source(original) == "acme" then locked = certificate_ca(original) end
+        end
+        if locked ~= "" then domain_ca_locks[trim(s.domain):lower():gsub("%.$", "")] = locked end
         if s.https=="1" and original_web_cert[id]~="" then
             local domain=trim(s.domain)
             domain_certificates[domain]=domain_certificates[domain] or original_web_cert[id]
@@ -1630,55 +1638,27 @@ function action_public_apply()
     end)
     cur:foreach("homegate", "ddns_rule", function(s)
         local id = s[".name"]
-        original_ddns[id] = true
+        if s.retained ~= "1" then original_ddns[id] = true end
         local domain=full_domain(s.zone,s.host)
-        original_ddns_rows[id] = { id = id, account = safe_id(s.account), zone = trim(s.zone):lower():gsub("%.$", ""), domain=domain }
+        original_ddns_rows[id] = { id = id, account = safe_id(s.account), zone = trim(s.zone):lower():gsub("%.$", ""), domain=domain, external_dns=s.external_dns=="1" }
         original_ddns_by_domain[domain]=original_ddns_by_domain[domain] or id
     end)
-    cur:foreach("homegate", "certificate", function(s)
-        if certificate_source(s) == "local" then original_local_certs[s[".name"]] = true end
-    end)
-
-    local kept_web, kept_ddns, seen_addresses, shared_dns, posted_ddns, protocols = {}, {}, {}, {}, {}, {}
+    local kept_web, kept_ddns, seen_addresses, shared_dns, protocols = {}, {}, {}, {}, {}
     local main = cur:get_all("homegate", "main") or {}
     local port_model=require("luci.model.homegate.backup")
     local submitted_management=h.formvalue("management_domain")
+    local prior_management=main.management_wan=="1" and trim(main.management_domain) or ""
+    local management_domain=prior_management
     if submitted_management~=nil then
-        local management_domain=port_model.management_domain(trim(submitted_management))
-        local management_wan=h.formvalue("management_wan")=="1" and "1" or "0"
+        management_domain=port_model.management_domain(trim(submitted_management))
         if not management_domain then return fail("Invalid management domain") end
-        if management_domain=="" and management_wan=="1" then return fail("Management domain required for WAN access") end
-        local certificate=""
-        if management_domain~="" then
-            if management_domain~=trim(main.management_domain) or (management_wan=="1" and main.management_wan~="1") then
-                if main.auto_firewall=="0" then return fail("Automatic firewall is required for management domain") end
-                local native,management=pcall(require,"luci.model.homegate.management")
-                if native then
-                    certificate=management.certificate(management_domain)
-                else
-                    local found=find_certificate_for_domain(cur,management_domain,nil,nil,nil,true)
-                    certificate=found and found.id
-                end
-                if not certificate then return fail("Management domain requires a matching production certificate") end
-            else
-                certificate=trim(main.management_certificate)
-            end
-        end
-        -- Reserve the selected certificate before processing ordinary rows:
-        -- one operation may select a domain and remove the row sharing its pair.
-        cur:set("homegate","main","management_domain",management_domain)
-        cur:set("homegate","main","management_wan",management_wan)
-        cur:set("homegate","main","management_certificate",certificate)
+        if h.formvalue("management_wan")~="1" then management_domain="" end
     end
     local default_renew = tonumber(main.renew_days or "5") or 5
     local provider_catalog = dns_provider_catalog()
     local ca_catalog = acme_ca_catalog()
     local pending_local = {}
-    for i=1,count do
-        local id=safe_id(h.formvalue("public_service_"..i.."_ddns_id"))
-        posted_ddns[id]=(posted_ddns[id] or 0)+1
-    end
-
+    local management_row
     for i = 1, count do
         local prefix = "public_service_" .. i .. "_"
         local web_id = safe_id(h.formvalue(prefix .. "web_id"))
@@ -1727,6 +1707,22 @@ function action_public_apply()
             domain = full_domain(zone, host)
         end
         if domain == "" or domain:find("[%s/]") then return fail("Valid public service domain is required") end
+        if https and cert_mode == "auto" then
+            local locked = domain_ca_locks[domain]
+            if locked and locked ~= cert_ca then return fail("Certificate authority is already fixed for this domain") end
+            if bound_browser or locked then domain_ca_locks[domain] = cert_ca end
+        end
+        local original_row=original_web_rows[web_id]
+        local existing_rule=original_row and original_ddns_by_domain[original_row.domain] or ddns_id
+        local existing_dns=original_ddns_rows[existing_rule]
+        local bound_dns=original_ddns_rows[original_ddns_by_domain[domain]]
+        if existing_dns and account_id~="" and account_id~=existing_dns.account then
+            return fail("The DNS account of an existing public service is locked")
+        end
+        if bound_dns and account_id~="" and account_id~=bound_dns.account then
+            return fail("Services for one domain must share DNS settings")
+        end
+        if existing_dns or bound_dns then account_id=(existing_dns or bound_dns).account end
         local route={domain=domain,https=https and "1" or "0",external_port=external_port~="" and external_port or nil}
         if target~="" and not port_model.custom_public_port(external_port) then
             local previous=original_web_rows[web_id]
@@ -1797,9 +1793,9 @@ function action_public_apply()
                 end
                 if enabled then cur:set("homegate",shared.id,"enabled","1") end
             else
-                if ddns_id~="" and not original_ddns[ddns_id] then return fail("DDNS rule not found") end
+                if ddns_id~="" and not original_ddns_rows[ddns_id] then return fail("DDNS rule not found") end
                 local previous=original_ddns_rows[ddns_id]
-                if previous and previous.domain~=domain and posted_ddns[ddns_id]>1 then ddns_id="" end
+                if previous and previous.domain~=domain then ddns_id="" end
                 if ddns_id=="" then ddns_id=original_ddns_by_domain[domain] or random_id(cur,"ddns") end
                 if kept_ddns[ddns_id] then return fail("Services for one domain must share DNS settings") end
                 ok, err = upsert_section(cur, "ddns_rule", ddns_id, {
@@ -1807,6 +1803,12 @@ function action_public_apply()
                     zone = zone, host = (host == "" and "@" or host), type = "AAAA", source = "auto", ttl = tostring(ttl)
                 })
                 if not ok then return fail(err) end
+                cur:delete("homegate", ddns_id, "retained")
+                if bound_dns and bound_dns.external_dns or not bound_dns and h.formvalue(prefix .. "external_dns")=="1" then
+                    cur:set("homegate", ddns_id, "external_dns", "1")
+                else
+                    cur:delete("homegate", ddns_id, "external_dns")
+                end
                 kept_ddns[ddns_id] = true
                 shared_dns[domain]={id=ddns_id,account=account_id,zone=zone,ttl=ttl}
             end
@@ -1816,8 +1818,8 @@ function action_public_apply()
 
         if target ~= "" then
             if not target:match("^https?://[^%s]+$") then return fail("Target must start with http:// or https://") end
-            if web_id ~= "" and not get_section(cur, web_id, "web_rule") then return fail("Web rule not found") end
-            if web_id == "" then web_id = random_id(cur, "web") end
+            if web_id ~= "" and not original_web[web_id] then return fail("Web rule not found") end
+            if web_id == "" then web_id = retained_web[domain .. "\0" .. external_port] or random_id(cur, "web") end
             if kept_web[web_id] then return fail("Duplicate public service row") end
 
             local selected_cert = nil
@@ -1933,6 +1935,7 @@ function action_public_apply()
                         end
                     end
                 end
+                cur:delete("homegate", cert_id, "retained")
                 domain_certificates[domain]=cert_id
             else
                 cert_id = ""
@@ -1943,14 +1946,46 @@ function action_public_apply()
             local ok, err = upsert_section(cur, "web_rule", web_id, {
                 enabled = enabled and "1" or "0", domain = domain, target = target, https = https and "1" or "0",
                 certificate = cert_id, certificate_mode = cert_mode, certificate_managed = certificate_managed and "1" or "0",
-                external_port = route.external_port
+                external_port = route.external_port, certificate_ca_lock = domain_ca_locks[domain]
             })
             if not ok then return fail(err) end
             if not route.external_port and (original_web_rows[web_id] or {}).external_port then cur:delete("homegate",web_id,"external_port") end
+            cur:delete("homegate", web_id, "retained")
             kept_web[web_id] = true
+            if domain==management_domain then management_row=true end
         elseif web_id ~= "" then
             return fail("LAN target is required for an existing Web service")
         end
+    end
+
+    cur:foreach("homegate", "web_rule", function(row)
+        if kept_web[row[".name"]] then
+            local locked = domain_ca_locks[trim(row.domain):lower():gsub("%.$", "")]
+            if locked then cur:set("homegate", row[".name"], "certificate_ca_lock", locked)
+            elseif row.certificate_ca_lock then cur:delete("homegate", row[".name"], "certificate_ca_lock") end
+        end
+    end)
+    if management_domain~="" and not management_row then
+        if submitted_management~=nil then return fail("Router management requires a public service for this domain") end
+        management_domain=""
+    end
+    if submitted_management~=nil or main.management_domain or main.management_wan then
+        local certificate=""
+        if management_domain~="" then
+            if main.auto_firewall=="0" then return fail("Automatic firewall is required for management domain") end
+            local native,management=pcall(require,"luci.model.homegate.management")
+            if native then certificate=management.certificate(management_domain) or "" end
+            if certificate=="" then
+                if submitted_management~=nil then return fail("Management domain requires a matching production certificate") end
+                management_domain=""
+            elseif shared_dns[management_domain] then
+                cur:set("homegate",shared_dns[management_domain].id,"enabled","1")
+            end
+        end
+        if certificate~="" then cur:delete("homegate", certificate, "retained") end
+        cur:set("homegate","main","management_domain",management_domain)
+        cur:set("homegate","main","management_wan",management_domain~="" and "1" or "0")
+        cur:set("homegate","main","management_certificate",certificate)
     end
 
     local removed_web, removed_ddns = {}, {}
@@ -1959,68 +1994,15 @@ function action_public_apply()
     table.sort(removed_web)
     table.sort(removed_ddns)
 
-    -- Public-service deletion is an ordinary configuration change. The UI stages
-    -- it and the externally visible provider cleanup is executed only by
-    -- Save & Apply. Plain Save is intentionally rejected for a destructive staged
-    -- deletion so a remote DNS record can never be orphaned from its local rule.
     if (#removed_web > 0 or #removed_ddns > 0) and mode ~= "apply" then
         return fail("Public service deletion requires Save & Apply")
     end
     if mode == "apply" and access_enabled and access_region ~= "" and not action_core("access-update " .. access_region) then
         return fail("Unable to update access region data")
     end
-    for _, id in ipairs(removed_ddns) do
-        if not action_core("ddns-delete " .. id) then return fail("Unable to delete public DNS record") end
-    end
-
-    local deleted_cert_ids, deleted_cert_seen, candidate_accounts, candidate_zones = {}, {}, {}, {}
-    local function remember_cert(id)
-        id = safe_id(id)
-        if id ~= "" and not deleted_cert_seen[id] then
-            deleted_cert_seen[id] = true
-            deleted_cert_ids[#deleted_cert_ids + 1] = id
-        end
-    end
-    for _, id in ipairs(removed_web) do cur:delete("homegate", id) end
-    for _, id in ipairs(removed_ddns) do
-        local row = original_ddns_rows[id] or {}
-        if row.account and row.account ~= "" then
-            candidate_accounts[row.account] = true
-            if row.zone and row.zone ~= "" then candidate_zones[row.account .. "\0" .. row.zone] = {account = row.account, zone = row.zone} end
-        end
-        cur:delete("homegate", id)
-    end
-
-    -- A certificate disappears only after its final Web reference disappears.
-    -- When the last service in an account+zone group is gone, clean any older
-    -- orphan certificate from that same group as well. DNS accounts are removed
-    -- only after no HomeGate resource references them anymore.
-    for _, id in ipairs(removed_web) do
-        local cert_id = safe_id((original_web_rows[id] or {}).certificate)
-        if cert_id ~= "" and certificate_use_count(cur, cert_id) == 0 and get_section(cur, cert_id, "certificate") then
-            cur:delete("homegate", cert_id)
-            remember_cert(cert_id)
-        end
-    end
-    for _, pair in pairs(candidate_zones) do
-        if ddns_group_count(cur, pair.account, pair.zone, "") == 0 then
-            local before = #deleted_cert_ids
-            delete_orphan_zone_certificates(cur, pair.account, pair.zone, deleted_cert_ids)
-            for i = before + 1, #deleted_cert_ids do deleted_cert_seen[deleted_cert_ids[i]] = true end
-        end
-    end
-    for account_id in pairs(candidate_accounts) do
-        if account_use_count(cur, account_id) == 0 then cur:delete("homegate", account_id) end
-    end
-
-    -- Local uploads have no standalone management table. Editing a service away
-    -- from an old local certificate also removes that now-unreferenced pair.
-    for id in pairs(original_local_certs) do
-        if certificate_use_count(cur, id) == 0 and get_section(cur, id, "certificate") then
-            cur:delete("homegate", id)
-            remember_cert(id)
-        end
-    end
+    for _, id in ipairs(removed_web) do retain_public_rule(cur, id) end
+    for _, id in ipairs(removed_ddns) do retain_public_rule(cur, id) end
+    for _, id in pairs(original_web_cert) do retain_unused_certificate(cur, id) end
 
     if main.block_standard_public_ports then cur:delete("homegate","main","block_standard_public_ports") end
     cur:set("homegate", "main", "access_enabled", access_enabled and "1" or "0")
@@ -2040,7 +2022,6 @@ function action_public_apply()
 
     local committed, commit_err = commit(cur)
     if not committed then return fail(commit_err) end
-    for _, id in ipairs(deleted_cert_ids) do cleanup_certificate_files(id) end
 
     if mode == "apply" then
         local applied, apply_err = apply_homegate()
@@ -2050,120 +2031,10 @@ function action_public_apply()
     return redirect_page("public", "Saved")
 end
 
-cleanup_certificate_files = function(id)
-    id = safe_id(id)
-    if id == "" then return end
-    sys().call("rm -rf /etc/homegate/certs/" .. id .. " >/dev/null 2>&1")
-    sys().call("rm -f /var/run/homegate/acme-renew/" .. id .. ".json >/dev/null 2>&1")
-end
-
-ddns_group_count = function(cur, account_id, zone, exclude_id)
-    account_id, zone, exclude_id = safe_id(account_id), trim(zone):lower():gsub("%.$", ""), safe_id(exclude_id)
-    local count = 0
-    cur:foreach("homegate", "ddns_rule", function(s)
-        if s[".name"] ~= exclude_id and safe_id(s.account) == account_id and trim(s.zone):lower():gsub("%.$", "") == zone then
-            count = count + 1
-        end
-    end)
-    return count
-end
-
-local function service_delete_needs_confirmation(cur, web, ddns)
-    local cert_id = web and safe_id(web.certificate) or ""
-    if cert_id ~= "" and certificate_use_count(cur, cert_id) <= 1 then return true end
-    if ddns then
-        local account_id, zone = safe_id(ddns.account), trim(ddns.zone):lower():gsub("%.$", "")
-        if account_id ~= "" and zone ~= "" and ddns_group_count(cur, account_id, zone, ddns[".name"]) == 0 then return true end
-    end
-    return false
-end
-
-delete_orphan_zone_certificates = function(cur, account_id, zone, deleted_ids)
-    account_id, zone = safe_id(account_id), trim(zone):lower():gsub("%.$", "")
-    if account_id == "" or zone == "" then return end
-    local ids = {}
-    cur:foreach("homegate", "certificate", function(s)
-        if safe_id(s.account) == account_id and trim(s.zone):lower():gsub("%.$", "") == zone and certificate_use_count(cur, s[".name"]) == 0 then
-            ids[#ids + 1] = s[".name"]
-        end
-    end)
-    for _, id in ipairs(ids) do
-        cur:delete("homegate", id)
-        deleted_ids[#deleted_ids + 1] = id
-    end
-end
-
 function action_public_action()
     local op = trim(http().formvalue("op"))
     if op == "service_delete" then
-        local cur = uci_cursor()
-        local web_id = safe_id(http().formvalue("web_id"))
-        local ddns_id = safe_id(http().formvalue("ddns_id"))
-        local web = web_id ~= "" and get_section(cur, web_id, "web_rule") or nil
-        local ddns = ddns_id ~= "" and get_section(cur, ddns_id, "ddns_rule") or nil
-        if not web and not ddns then return redirect_page("public", nil, "Public service not found") end
-        if web_id ~= "" and not web then return redirect_page("public", nil, "Web rule not found") end
-        if ddns_id ~= "" and not ddns then return redirect_page("public", nil, "DDNS rule not found") end
-        if ddns then
-            local domain=full_domain(ddns.zone,ddns.host)
-            if web and trim(web.domain)~=domain then return redirect_page("public",nil,"DDNS rule does not belong to this service") end
-            local shared=false
-            cur:foreach("homegate","web_rule",function(row)
-                if row[".name"]~=web_id and trim(row.domain)==domain then shared=true end
-            end)
-            if shared then ddns=nil;ddns_id="" end
-        end
-
-        local needs_confirm = service_delete_needs_confirmation(cur, web, ddns)
-        if needs_confirm and trim(http().formvalue("confirmed")) ~= "1" then
-            return redirect_page("public", nil, "Public service deletion requires confirmation")
-        end
-
-        -- Remove the externally managed DNS record before dropping its local
-        -- rule. Provider deletion is exact to this hostname and record type.
-        if ddns and not action_core("ddns-delete " .. ddns_id) then
-            return redirect_page("public", nil, "Unable to delete public DNS record")
-        end
-
-        local account_id = ddns and safe_id(ddns.account) or ""
-        local zone = ddns and trim(ddns.zone):lower():gsub("%.$", "") or ""
-        local cert_id = web and safe_id(web.certificate) or ""
-        if account_id == "" and cert_id ~= "" then
-            local cert = get_section(cur, cert_id, "certificate")
-            if cert then
-                account_id = safe_id(cert.account)
-                zone = trim(cert.zone):lower():gsub("%.$", "")
-            end
-        end
-
-        if web then cur:delete("homegate", web_id) end
-        if ddns then cur:delete("homegate", ddns_id) end
-
-        local deleted_cert_ids = {}
-        if cert_id ~= "" and certificate_use_count(cur, cert_id) == 0 then
-            cur:delete("homegate", cert_id)
-            deleted_cert_ids[#deleted_cert_ids + 1] = cert_id
-        end
-
-        -- Once the final service in one account+zone group disappears, clean
-        -- old orphan certificates from that same group as well. This replaces
-        -- the standalone certificate-delete UI without touching other zones.
-        if account_id ~= "" and zone ~= "" and ddns_group_count(cur, account_id, zone, "") == 0 then
-            delete_orphan_zone_certificates(cur, account_id, zone, deleted_cert_ids)
-        end
-        if account_id ~= "" and account_use_count(cur, account_id) == 0 then
-            cur:delete("homegate", account_id)
-        end
-
-        local ok, err = commit(cur)
-        if not ok then return redirect_page("public", nil, err or "Unable to delete public service") end
-        local cleaned = {}
-        for _, cid in ipairs(deleted_cert_ids) do
-            if not cleaned[cid] then cleanup_certificate_files(cid); cleaned[cid] = true end
-        end
-        local applied, apply_err = apply_homegate()
-        if not applied then return redirect_page("public", nil, apply_err) end
-        return redirect_page("public", "Public service deleted")
+        return redirect_page("public", nil, "Public service deletion requires Save & Apply")
     end
 
     local id = safe_id(http().formvalue("id"))
@@ -2171,7 +2042,7 @@ function action_public_action()
     if op == "ddns_sync" then
         local rule = get_section(uci_cursor(), id, "ddns_rule")
         if not rule then return redirect_page("public", nil, "DDNS rule not found") end
-        if trim(rule.enabled) ~= "1" then return redirect_page("public", nil, "Public service is disabled; DDNS sync was not performed") end
+        if trim(rule.enabled) ~= "1" or rule.external_dns=="1" then return redirect_page("public", nil, "Public service is disabled; DDNS sync was not performed") end
         if action_core("ddns-sync " .. id) then return redirect_page("public", "DDNS sync completed") end
         return redirect_page("public", nil, "DDNS sync failed; check HomeGate logs")
     elseif op == "cert_renew" then
@@ -2285,9 +2156,6 @@ function action_wol_action()
     if op == "wake" then
         local host = get_section(cur, id, "wol_host")
         if not host then return redirect_page("wol", nil, "WOL host not found") end
-        cur:set("homegate", "main", "last_wol_host", id)
-        local ok, err = commit(cur)
-        if not ok then return redirect_page("wol", nil, err) end
         if action_core("wol " .. id) then return redirect_page("wol", "Wake packet sent") end
         return redirect_page("wol", nil, "Wake-on-LAN failed; check HomeGate logs")
     elseif op == "delete" then
@@ -2647,12 +2515,21 @@ function api_network() run_core_json("network-resolve") end
 function api_ddns() run_core_json("ddns-status") end
 function api_dns_zones()
     local id = safe_id(http().formvalue("account"))
+    local zone = trim(http().formvalue("zone"))
     if id == "" then
         http().prepare_content("application/json")
         http().write('{"api_version":1,"ok":false,"phase":"dns-provider","zones":[],"error":"DNS account is required"}\n')
         return
     end
-    run_core_json("dns-zones " .. id)
+    if zone ~= "" then
+        zone = require("luci.model.homegate.backup").management_domain(zone)
+        if not zone or zone == "" then
+            http().prepare_content("application/json")
+            http().write('{"ok":false,"error_kind":"invalid_zone"}')
+            return
+        end
+    end
+    run_core_json("dns-zones " .. id .. (zone ~= "" and " " .. zone or ""))
 end
 function api_certs() run_core_json("cert-status") end
 function api_proxy() run_core_json("proxy-status") end

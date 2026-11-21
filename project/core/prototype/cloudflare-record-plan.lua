@@ -44,6 +44,7 @@ function M.bind(snapshot,account,revision,q)
     local zone=name(found.zone);if not zone then return nil,'invalid_zone','invalid_zone' end
     local c={schema='HGCFRECORD1',account=account,revision=tonumber(revision),operation=q.operation,kind=q.kind,resource=q.resource,zone=zone,value=q.value,attempted=false,affected=0}
     if q.kind=='ddns' then
+        if found.external_dns=='1' then return bad() end
         if found.type~='AAAA' then return nil,'unsupported','record_type' end
         local host=found.host;local fqdn=host=='@' and zone or (in_zone(host,zone) and host or host..'.'..zone)
         c.fqdn=name(fqdn);if not c.fqdn then return bad('invalid_name') end;c.type='AAAA';c.ttl=tonumber(found.ttl)

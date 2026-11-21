@@ -102,7 +102,13 @@ if [ "${1:-}" = --ddns-sync-internal ]; then
         *) fail 2;;
     esac
 fi
-if [ "${1:-}" = --runtime-check-internal ] || [ "${1:-}" = --runtime-zones-internal ]; then
+host_mode=
+if [ "${1:-}" = --runtime-hosts-internal ]; then
+    [ "$dns_status_read_enabled" = true ] && [ "$aliyun_read_enabled" = true ] && [ "$#" -eq 4 ] && [ "$2" = aliyun ] || fail 2
+    case "$4" in ''|*[!a-z0-9.-]*) fail 2;; esac
+    [ "${#4}" -le 253 ] || fail 2
+    runtime_check=true;provider=aliyun;host_mode="hosts:$4";set -- "$3"
+elif [ "${1:-}" = --runtime-check-internal ] || [ "${1:-}" = --runtime-zones-internal ]; then
     [ "$dns_status_read_enabled" = true ] && [ "$#" -eq 3 ] || fail 2
     case "$2" in
         cloudflare) ;;
@@ -125,7 +131,7 @@ elif [ "${1:-}" = --dnspod-internal ]; then
 fi
 [ "$#" -eq 1 ] || { [ "$#" -eq 2 ] && { [ "$2" = --zones ] || [ "$2" = --records ] || [ "$2" = --migrated ]; }; } || { [ "$#" -eq 4 ] && { [ "$2" = --reconcile ] || [ "$2" = --reconcile-receipt ] || [ "$2" = --collect-receipt ] || [ "$2" = --retire-archive ] || [ "$2" = --repair-terminal ] || [ "$2" = --repair-checkpoint ] || [ "$2" = --collect-orphan ]; } && [ "$4" = --confirm ]; } || fail 2
 account=$1
-mode=check; codec=cloudflare-codec.lua
+mode=${host_mode:-check}; codec=cloudflare-codec.lua
 migrated_read=false
 if [ "$#" -eq 2 ]; then
     case "$2" in --zones) mode=zones; codec=cloudflare-zones.lua;;
@@ -201,7 +207,7 @@ if [ "$#" -eq 4 ]; then
 fi
 watchdog_mode=--cloudflare-check
 if [ "$provider" = aliyun ]; then
-    case "$mode" in check|zones) ;; collect|retire|repair|orphan|checkpoint) [ "$aliyun_settlement_enabled" = true ] && [ "$aliyun_receipt_enabled" = true ] && [ "$dns_receipt_enabled" = false ] || fail 2;; reconcile) [ "$aliyun_reconcile_enabled" = true ] && [ "$dns_receipt_enabled" = false ] || fail 2;; records) [ "$aliyun_records_enabled" = true ] && [ "$dns_receipt_enabled" = false ] || fail 2;; *) fail 2;; esac
+    case "$mode" in check|zones|hosts:*) ;; collect|retire|repair|orphan|checkpoint) [ "$aliyun_settlement_enabled" = true ] && [ "$aliyun_receipt_enabled" = true ] && [ "$dns_receipt_enabled" = false ] || fail 2;; reconcile) [ "$aliyun_reconcile_enabled" = true ] && [ "$dns_receipt_enabled" = false ] || fail 2;; records) [ "$aliyun_records_enabled" = true ] && [ "$dns_receipt_enabled" = false ] || fail 2;; *) fail 2;; esac
     if [ "$runtime_check" != true ]; then [ "$dns_migrated_read_enabled" = true ] || fail 2;migrated_read=true;fi
     codec=aliyun-reader.lua;watchdog_mode=--aliyun-check
 elif [ "$provider" = dnspod ]; then

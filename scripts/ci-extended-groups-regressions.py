@@ -19,7 +19,7 @@ dispatch=importlib.util.module_from_spec(spec);spec.loader.exec_module(dispatch)
 ORIGINAL_GROUPS={'Aliyun': ['Aliyun只读回归.py', 'Aliyun记录回归.py', 'Aliyun恢复回归.py', 'Aliyun终态回归.py', 'Aliyun维护回归.py', 'Aliyun检查点回归.py'], 'DNSPod': ['DNSPod只读回归.py', 'DNSPod记录回归.py', 'DNSPod恢复回归.py', 'DNSPod终态回归.py', 'DNSPod维护回归.py', 'DNSPod检查点回归.py'], 'Huawei': ['华为云只读回归.py', '华为云记录回归.py', '华为云恢复回归.py', '华为云终态回归.py', '华为云维护回归.py', '华为云检查点回归.py'], 'DDNS执行': ['DDNS计划回归.py', 'DDNS执行回归.py', 'DDNS外层恢复回归.py'], 'DDNS授权状态': ['DDNS运行授权回归.py', 'DDNS普通运行回归.py', 'DDNS状态退避回归.py'], 'DDNS授权收尾': ['DDNS普通收尾回归.py', 'DDNS多规则授权回归.py'], 'DDNS全批': ['DDNS全批协调回归.py'], 'DDNS批次收尾': ['DDNS批次收尾回归.py'], 'DDNS有界调度': ['DDNS有界调度回归.py'], 'DDNS生命周期CLI': ['DDNS生命周期CLI回归.py'], 'DDNS原生授权UI': ['DDNS原生授权UI回归.py'], 'DDNS异步任务': ['DDNS异步任务回归.py'], 'DDNS明确维护': ['DDNS明确维护回归.py']}
 PARTITIONS={
     'DDNS全批协调回归.py':(('--auto-only',),('--mixed-only',)),
-    'DDNS有界调度回归.py':(('--auto-only',),('--mixed-only',)),
+    'DDNS有界调度回归.py':(('--auto-providers-only',),('--auto-controls-only',),('--mixed-only',)),
     'DDNS生命周期CLI回归.py':tuple(('--partition',name) for name in
         ('lifecycle','dns','network-config','health-recovery','ddns-recovery')),
 }
@@ -71,7 +71,7 @@ class Dispatch(unittest.TestCase):
         body=(ROOT/'.github/workflows/编译发布.yml').read_text()
         extended=body.split('  extended:\n',1)[1].split('  native:\n',1)[0]
         matrix=re.search(r'group: \[([^\]]+)\]',extended).group(1).split(', ')
-        self.assertEqual(matrix,list(dispatch.GROUPS));self.assertEqual(len(matrix),20)
+        self.assertEqual(matrix,list(dispatch.GROUPS));self.assertEqual(len(matrix),21)
         self.assertEqual(len(matrix),len(set(matrix)))
         native=body.split('  native:\n',1)[1].split('  engineering:\n',1)[0]
         self.assertEqual(len(re.search(r'group: \[([^\]]+)\]',native).group(1).split(', ')),6)

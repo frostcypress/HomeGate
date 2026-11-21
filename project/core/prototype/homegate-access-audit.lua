@@ -77,10 +77,48 @@ if mode~='serve' or not property(root,'dir',700) or read(root..'/token',33)~=arg
 local secret=read(root..'/audit-token',33):match('^([0-9a-f]+)\n$');if not secret or #secret~=32 then fail()end
 local plan=json.parse(read(root..'/plan.json',131072));if type(plan)~='table' or type(plan.routes)~='table'then fail()end
 local function managed(host)
+ if plan.management and host==plan.management.domain then return true end
  for _,r in ipairs(plan.routes)do if host==r.domain or (r.domain:sub(1,2)=='*.' and host:match('^[^.]+%.(.+)$')==r.domain:sub(3))then return true end end;return false
 end
 local socket=assert(nx.socket('unix','dgram'));assert(socket:bind(sockpath));assert(fs.chmod(sockpath,'622'));assert(socket:setblocking(false))
 local rows=entries();local dirty=true;local last=0;local tag=' '..secret..': '
+local visits,recent={},{}
+local recent_count=0
+local visit_idle_seconds=30*60
+local function log_visits()
+ if #visits==0 then return end
+ local stream=io.popen('/bin/ash /usr/libexec/homegate/native-log.sh access-batch 2>/dev/null','w')
+ if stream then
+  for _,line in ipairs(visits)do stream:write(line,'\n')end
+  stream:close()
+ end
+ visits={}
+end
+local function remember_visit(e,d)
+ local scheme,port=d.scheme,d.port
+ if (scheme~='http' and scheme~='https') or type(port)~='number' or port%1~=0 or port<1 or port>65535 or e.host:find('*',1,true) then return end
+ local default=scheme=='http' and 80 or 443
+ local address=scheme..'://'..e.host..(port==default and '' or ':'..port)
+ local service_port=port
+ if plan.management and e.host==plan.management.domain and port==80 then service_port=443 end
+ local key=address_key(e.ip)..' '..e.host..':'..service_port
+ local now=os.time()
+ local previous=recent[key]
+ if previous and previous.allowed==e.allowed and now>=previous.at and now-previous.at<visit_idle_seconds then
+  previous.at=now
+  return
+ end
+ if #visits>=32 then return end
+ if not previous then
+  if recent_count>=256 then
+   local oldest,first
+   for name,visit in pairs(recent)do if not first or visit.at<first then oldest,first=name,visit.at end end
+   recent[oldest]=nil
+  else recent_count=recent_count+1 end
+ end
+ recent[key]={at=now,allowed=e.allowed}
+ visits[#visits+1]=e.ip..' '..address..' '..(e.allowed and 'allow' or 'deny')
+end
 local function flush()
  if not dirty then return end
  local body=codec.json({entries=rows})..'\n';if #body>65536 then fail()end
@@ -88,8 +126,9 @@ local function flush()
  write(path..'.next',body);assert(os.rename(path..'.next',path));dirty=false
 end
 write(root..'/audit-health','true\n')
+local last_log=0
 while true do
- if fs.lstat(root..'/stop')then flush();write(root..'/audit-health','false\n');socket:close();return end
+ if fs.lstat(root..'/stop')then flush();log_visits();write(root..'/audit-health','false\n');socket:close();return end
  if fs.lstat(root..'/audit-clear')then
   local clear=read(root..'/audit-clear',384);local ip,host=clear:match('^entry\t([^\t]+)\t([^\t\n]+)\n$')
   if clear~='all\n' and clear~='denied\n' and not(ip and address(ip)==ip and #host<=253 and not host:find('[^a-zA-Z0-9.*-]'))then fail()end
@@ -102,11 +141,13 @@ while true do
   if start and #raw<4096 then
    local d=json.parse(raw:sub(start+#tag));local e=event(d)
    if e and managed(e.host)then
+    remember_visit(e,d)
     local kept={};for _,old in ipairs(rows)do if old.ip==e.ip and old.host==e.host then e.count=math.min(2147483647,old.count+1)else kept[#kept+1]=old end end
     kept[#kept+1]=e;if #kept>64 then table.remove(kept,1)end;rows=kept;dirty=true
    end
   end
  end
  local sec,usec=nx.gettimeofday();local now=sec+usec/1000000;if dirty and now-last>=0.1 then flush();last=now end
+ if now-last_log>=2 then log_visits();last_log=now end
  nx.poll({{fd=socket,events=nx.poll_flags('in')}},100);nx.nanosleep(0,1000000)
 end

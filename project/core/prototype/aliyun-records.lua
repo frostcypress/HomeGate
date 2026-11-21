@@ -122,13 +122,13 @@ function M.run(snapshot,account,revision,api)
         local params={RR=c.rr,Type=c.type,Value=c.value,TTL=tostring(c.ttl),Line='default'}
         local result,action='created','AddDomainRecord'
         if #records>0 and c.type~='TXT' then
-            local first=detail(records[1]);params.RecordId=first.id;params.Line=first.line
+            local first=detail(records[1]);params.RecordId=first.id;params.Line=first.line;params.TTL=tostring(first.ttl)
             c.first_id=first.id
             result,action='updated','UpdateDomainRecord'
         else params.DomainName=c.zone end
         local target=mutate(action,params)
         local actual=checked(api.fetch({RecordId=target},'DescribeDomainRecordInfo'))
-        if actual.id~=target or actual.key~=(c.value_key or c.value) or actual.line~=params.Line or actual.ttl~=c.ttl or actual.locked or actual.status~='Enable' then invalid('invalid_receipt') end
+        if actual.id~=target or actual.key~=(c.value_key or c.value) or actual.line~=params.Line or actual.ttl~=tonumber(params.TTL) or actual.locked or actual.status~='Enable' then invalid('invalid_receipt') end
         api.state.affected=1;return finish(result)
     end
     for position,r in ipairs(records) do

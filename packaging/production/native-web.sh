@@ -131,8 +131,12 @@ case "$action" in
    file "$work/result.next" && fsync "$work/result.next" && mv "$work/result.next" "$work/result" && fsync "$work/result" "$work" || return 1
    log_args=$(lua "$codec" log-args "$value" 8>&- 9>&-) || log_args=
    if [ -n "$log_args" ];then
+    newline='
+'
+    subject=
+    case "$log_args" in *"$newline"*) subject=${log_args#*"$newline"};log_args=${log_args%%"$newline"*};;esac
     log_operation=${log_args%%:*};log_rest=${log_args#*:}
-    ash "$base/native-log.sh" web "$log_operation" "${log_rest%%:*}" "${log_rest#*:}" >/dev/null || :
+    ash "$base/native-log.sh" web "$log_operation" "${log_rest%%:*}" "${log_rest#*:}" "$subject" >/dev/null || :
    fi
    return 0
   }
@@ -210,6 +214,20 @@ case "$action" in
       runtime_call "$boot_deadline" /etc/init.d/homegate enabled >/dev/null && [ "$runtime_exit" = 0 ]; } || running=false
    fi
    printf '%s\n' "$status" | lua "$codec" runtime-result "$value" "$running" "$failure_stage" "$start_exit" "$receipt" || fail
+  fi
+  if [ -e /proc/self/fd/8 ];then
+   lua "$codec" release-pending-add "$value" >/dev/null || :
+  else
+   (
+    exec 8>>"$run/frontend-web.lock"
+    tries=0
+    until flock -n 8;do
+     tries=$((tries+1))
+     [ "$tries" -lt 3 ] || exit 1
+     sleep 1
+    done
+    lua "$codec" release-pending-add "$value" >/dev/null
+   ) || :
   fi
   publish_result || fail
   file "$work/deadline" && rm "$work/deadline" || fail

@@ -36,9 +36,11 @@ if arg[1]=='dns-provider-catalog' then
     }
 else
     report.phase='acme-ca'
-    report.cas={{name='letsencrypt',display_name="Let's Encrypt",directories={
-        production='https://acme-v02.api.letsencrypt.org/directory',
-        staging='https://acme-staging-v02.api.letsencrypt.org/directory'}}}
+    report.cas={
+        {name='letsencrypt',display_name="Let's Encrypt",directories={production=codec.acme_directory('letsencrypt','production'),
+            staging=codec.acme_directory('letsencrypt','staging')}},
+        {name='zerossl',display_name='ZeroSSL',directories={production=codec.acme_directory('zerossl','production')}}
+    }
 end
 local output=codec.json(report)..'\n'
 if #output>8192 then os.exit(1) end

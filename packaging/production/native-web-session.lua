@@ -82,7 +82,8 @@ else
    local provider,account,mode=arg[5],arg[6],arg[7]
    if not providers[provider] or not id(account) then refuse() end
    if action=='observe-dns' then
-    if mode~='check' and mode~='zones' then refuse() end
+    local zone=provider=='--aliyun-check' and mode:match('^hosts:([a-z0-9.%-]+)$')
+    if mode~='check' and mode~='zones' and (not zone or #zone>253) then refuse() end
    elseif mode~='records' and mode~='reconcile' then refuse() end
    args={provider,value,account,revision,job,mode}
   end

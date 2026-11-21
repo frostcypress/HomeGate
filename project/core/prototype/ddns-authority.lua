@@ -20,7 +20,7 @@ function M.intent(snapshot,rule,valid_id)
     local granted,provider={},nil
     for _,name in ipairs(names) do
         local selected=rules[name];local p=selected and accounts[selected.account]
-        if not selected or selected.type~='AAAA' or (selected.source~='auto' and selected.source~='interface') or not slots[p] then return nil end
+        if not selected or selected.external_dns=='1' or selected.type~='AAAA' or (selected.source~='auto' and selected.source~='interface') or not slots[p] then return nil end
         if selected.source=='interface' then
             local dev=selected.interface
             if type(dev)~='string' or #dev<1 or #dev>32 or not dev:match('^[a-zA-Z0-9_.:%-]+$') or dev:sub(-1)==':' then return nil end

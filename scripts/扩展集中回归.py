@@ -15,6 +15,7 @@ GROUPS={
  'DDNS混合全批':['DDNS全批协调回归.py'],
  'DDNS批次收尾':['DDNS批次收尾回归.py'],
  'DDNS有界调度':['DDNS有界调度回归.py'],
+ 'DDNS调度边界与持续':['DDNS有界调度回归.py'],
  'DDNS混合调度':['DDNS有界调度回归.py'],
  'DDNS生命周期CLI':['DDNS生命周期CLI回归.py'],
  '核心DNS只读CLI':['DDNS生命周期CLI回归.py'],
@@ -34,7 +35,8 @@ MODES={
  'DDNS恢复摘要CLI':(('--runtime','--partition','ddns-recovery'),),
  'DDNS全批':((),('--runtime','--auto-only')),
  'DDNS混合全批':(('--runtime','--mixed-only'),),
- 'DDNS有界调度':((),('--runtime','--auto-only')),
+ 'DDNS有界调度':((),('--runtime','--auto-providers-only')),
+ 'DDNS调度边界与持续':(('--runtime','--auto-controls-only'),),
  'DDNS混合调度':(('--runtime','--mixed-only'),),
 }
 

@@ -17,7 +17,7 @@ const tonumber = v => v == null || v === '' || !Number.isFinite(Number(v)) ? nul
 const b = v => ['1','true','yes','on'].includes(v);
 const credential = (p,name) => items(get(p,'credentials')).find(f=>f.name === name) || null;
 const ca_directory = (c,env) => orValue(get(get(c,'directories'),env),()=>(''));
-const {main={},packages={},status={},services=[],hosts=[],dns_accounts=[],certificates=[],dns_provider_catalog=[],acme_ca_catalog=[],access_regions=[],retired_access_region=false,wol_interfaces=[],wol_clients=[],wol_selected_interface=null,public_count=0,wol_count=0,notice='',error_message='',token='',default_renew_days=null,acme_directory=null,resume_public=null,resume_account=null} = data;
+const {main={},packages={},status={},services=[],public_history=[],hosts=[],dns_accounts=[],certificates=[],dns_provider_catalog=[],acme_ca_catalog=[],access_regions=[],retired_access_region=false,wol_interfaces=[],wol_clients=[],wol_selected_interface=null,public_count=0,wol_count=0,notice='',error_message='',token='',default_renew_days=null,acme_directory=null,resume_public=null,resume_account=null} = data;
 const plugin_update_url = data.plugin_update_url || '';
 let access_scope = get(main,'access_enabled') === '1' ? (get(main,'access_region') || '__manual__') : '';
 let html = '';

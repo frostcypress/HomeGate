@@ -43,7 +43,7 @@ elif op=='-A':
   assert ipaddress.IPv6Network(match[1]).prefixlen==128
   if tab=='filter':
    assert match[7] in ('80','443')
-   assert match[8:]==['-j','DROP'] or (match[3]=='pppoe-wan' and match[8:]==['-j','REJECT','--reject-with','tcp-reset'])
+   assert match[8:] in (['-j','DROP'],['-j','REJECT','--reject-with','tcp-reset'])
   match=match[2:]
  if match[0]=='!':
   assert tab=='filter' and match[1:3]==['-i','lo'] and match[-2:]==['-j','DROP']

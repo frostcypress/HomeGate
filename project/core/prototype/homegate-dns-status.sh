@@ -6,9 +6,13 @@ export LC_ALL=C
 dns_status_cli_enabled=false
 fail() { printf '{"api_version":1,"prototype":true,"ok":false,"phase":"dns-provider","effect":"none","write_ready":false,"error":"DNS status request refused"}\n';exit "${1:-7}"; }
 busy() { printf '{"api_version":1,"prototype":true,"ok":false,"phase":"dns-provider","effect":"none","write_ready":false,"error_kind":"busy","retryable":true}\n';exit 4; }
-[ "$#" -eq 1 ] || { [ "$#" -eq 2 ] && [ "$2" = --zones ]; } || fail 2
-zones=false;error_mode=error;result_mode=result
-if [ "$#" -eq 2 ]; then zones=true;error_mode=zones-error;result_mode=zones-result;fi
+[ "$#" -eq 1 ] || { [ "$#" -eq 2 ] && [ "$2" = --zones ]; } || { [ "$#" -eq 3 ] && [ "$2" = --hosts ]; } || fail 2
+zones=false;host_zone=${3:-};error_mode=error;result_mode=result
+if [ "$#" -ge 2 ]; then zones=true;error_mode=zones-error;result_mode=zones-result;fi
+if [ "$#" -eq 3 ]; then
+    case "$host_zone" in ''|*[!a-z0-9.-]*) fail 2;; esac
+    [ "${#host_zone}" -le 253 ] || fail 2
+fi
 account=$1
 case "$account" in ''|*[!a-zA-Z0-9_-]*) fail 2;; esac
 [ "${#account}" -le 64 ] || fail 2
@@ -48,7 +52,13 @@ case "$provider" in
 esac
 # Keep FD6/7 throughout selection, the supervised request and final source check.
 # The fixed coordinator validates its inherited locks and the same private source.
-if [ "$zones" = true ]; then
+if [ -n "$host_zone" ]; then
+    if [ "$provider" != aliyun ]; then
+        printf '{"ok":false,"phase":"dns-provider","error_kind":"unsupported","hosts":[]}\n'
+        exit 1
+    fi
+    raw=$(ash "$dir/homegate-cloudflare-read.sh" --runtime-hosts-internal "$provider" "$account" "$host_zone")
+elif [ "$zones" = true ]; then
     raw=$(ash "$dir/homegate-cloudflare-read.sh" --runtime-zones-internal "$provider" "$account")
 else
     raw=$(ash "$dir/homegate-cloudflare-read.sh" --runtime-check-internal "$provider" "$account")
@@ -56,6 +66,7 @@ fi
 state=$?;case "$state" in 0|1) ;; 4) fail 4;; *) fail;; esac
 locks_match || fail 4
 [ "$(select_provider)" = "$provider" ] || fail
+if [ -n "$host_zone" ]; then printf '%s\n' "$raw";exit "$state";fi
 report=$(printf '%s\n' "$raw" | lua "$dir/homegate-dns-status.lua" "$result_mode" "$revision" "$account" "$provider" "$state" 3>&- 4>&- 5>&- 6>&- 7>&- 8>&- 9>&-) || fail
 printf '%s\n' "$report"
 exit "$state"

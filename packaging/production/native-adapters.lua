@@ -78,12 +78,13 @@ elseif mode=='private-result'then
  if not d.ok then os.exit(1)end;return
 elseif mode=='ca-response'then
  local raw=input(65570);local body,code=raw:match('^(.*)\nHGCA:(%d+)\n$');local d=body and #body<=65536 and json.parse(body)
- local env=arg[2];local host=env=='staging' and 'acme-staging-v02.api.letsencrypt.org' or 'acme-v02.api.letsencrypt.org'
+ local ca,env=arg[2],arg[3];local directory=codec.acme_directory(ca,env);if not directory then fail()end
+ local origin=directory:match('^https://[^/]+/')
  local ok=code=='0' and type(d)=='table'
  for _,k in ipairs({'newNonce','newAccount','newOrder'})do
-  local u=ok and d[k];if type(u)~='string' or #u>2048 or u:sub(1,#host+9)~='https://'..host..'/' or u:find('[%s%z]')then ok=false end
+  local u=ok and d[k];if type(u)~='string' or #u>2048 or u:sub(1,#origin)~=origin or u:find('[%s%z]')then ok=false end
  end
- emit({api_version=1,ok=ok,phase='acme-ca',ca='letsencrypt',environment=env,directory='https://'..host..'/directory',direct=true,reachable=ok,error=not ok and 'CA directory unavailable' or nil,effect='none',write_ready=false})
+ emit({api_version=1,ok=ok,phase='acme-ca',ca=ca,environment=env,directory=directory,direct=true,reachable=ok,error=not ok and 'CA directory unavailable' or nil,effect='none',write_ready=false})
  if not ok then os.exit(1)end;return
 elseif mode=='renew-row'then
  local d=json.parse(input(16384));if type(d)~='table' or type(d.pending)~='boolean'then fail()end

@@ -37,6 +37,13 @@ local function domain(s)
 end
 if ...=='library' then return {escape=escape,canonical=canonical,base64=b64,pad=pad,domain=domain} end
 local account,revision,mode,job=arg[2],arg[3],arg[4],arg[5]
+local requested_mode=arg[1]=='run' and mode or job
+local host_zone=type(requested_mode)=='string' and requested_mode:match('^hosts:(.+)$')
+if host_zone and domain(host_zone)~=host_zone then os.exit(1) end
+local function host_name(name)
+    if name=='@' then return name end
+    return domain(name)
+end
 if type(account)~='string' or #account<1 or #account>64 or not account:match('^[a-zA-Z0-9_-]+$') or
     type(revision)~='string' or not revision:match('^[1-9]%d*$') or tonumber(revision)>999999999 then os.exit(1) end
 local records=assert(loadfile(dir..'/aliyun-records.lua'))()
@@ -53,18 +60,19 @@ local function report(kind,retry,code,names,scope)
         if operation_state.attempted then retry=false end
         return records.report(account,revision,kind,retry,code,'failed',operation_state.attempted and 'unknown' or 'none',operation_state.affected)
     end
-    scope=scope or (mode=='zones' and 'zone-list' or 'zone-read')
+    scope=scope or (host_zone and 'host-list' or mode=='zones' and 'zone-list' or 'zone-read')
     local body=string.format('{"api_version":1,"prototype":true,"ok":%s,"phase":"dns-provider","provider":"aliyun","account":"%s","configuration_revision":%s,',tostring(kind==''),account,revision)
     if scope=='zone-read' then body=body..'"credentials_valid":'..tostring(kind=='')..',' end
     body=body..string.format('"check_scope":"%s","error_kind":"%s","retryable":%s,"provider_code":"%s"',scope,kind,tostring(retry),code or '')
-    if scope=='zone-list' then
+    if scope=='zone-list' or scope=='host-list' then
         local list={};for _,name in ipairs(names or {}) do list[#list+1]='"'..name..'"' end
-        body=body..',"zones":['..table.concat(list,',')..']'
+        local field=scope=='host-list' and '"hosts"' or '"zones"'
+        body=body..','..field..':['..table.concat(list,',')..']'
     end
     return body..'}\n'
 end
 if arg[1]=='result' or arg[1]=='reconcile-result' then
-    if (mode~='0' and mode~='1') or (job~='check' and job~='zones' and job~='records' and job~='reconcile') or arg[6] then os.exit(1) end
+    if (mode~='0' and mode~='1') or (not host_zone and job~='check' and job~='zones' and job~='records' and job~='reconcile') or arg[6] then os.exit(1) end
     local raw=io.stdin:read(65537);local doc=shared.parse(raw)
     if job=='reconcile' then
         if arg[1]~='reconcile-result' then os.exit(1) end
@@ -80,16 +88,23 @@ if arg[1]=='result' or arg[1]=='reconcile-result' then
     end
     if not doc or #raw>65536 or type(doc.ok)~='boolean' or doc.ok~=(mode=='0') or not kinds[doc.error_kind] or
         type(doc.retryable)~='boolean' or type(doc.provider_code)~='string' or (doc.provider_code~='' and not codes[doc.provider_code]) then os.exit(1) end
-    if doc.check_scope~=(job=='zones' and 'zone-list' or 'zone-read') then os.exit(1) end
+    if doc.check_scope~=(host_zone and 'host-list' or job=='zones' and 'zone-list' or 'zone-read') then os.exit(1) end
     local names={}
     if doc.check_scope=='zone-list' then
         if type(doc.zones)~='table' or (#doc.zones>0 and doc.error_kind~='') then os.exit(1) end
         for i,name in ipairs(doc.zones) do if domain(name)~=name or (i>1 and name<=names[i-1]) then os.exit(1) end;names[i]=name end
     end
+    if host_zone then
+        if type(doc.hosts)~='table' or (#doc.hosts>0 and doc.error_kind~='') then os.exit(1) end
+        for i,name in ipairs(doc.hosts) do
+            if host_name(name)~=name or (i>1 and name<=names[i-1]) then os.exit(1) end
+            names[i]=name
+        end
+    end
     local expected=report(doc.error_kind,doc.retryable,doc.provider_code,names,doc.check_scope)
     if raw~=expected then os.exit(1) end;io.write(expected);return
 end
-if arg[1]~='run' or (mode~='check' and mode~='zones' and mode~='records' and mode~='reconcile' and mode~='records-durable') or type(job)~='string' or #job>9 or not job:match('^[1-9]%d*$') or tonumber(job)<2 or arg[6] then os.exit(1) end
+if arg[1]~='run' or (not host_zone and mode~='check' and mode~='zones' and mode~='records' and mode~='reconcile' and mode~='records-durable') or type(job)~='string' or #job>9 or not job:match('^[1-9]%d*$') or tonumber(job)<2 or arg[6] then os.exit(1) end
 local durable=mode=='records-durable';if durable then mode='records' end
 local function output(body)
     local f=io.open('/proc/self/fd/3','wb');if not f or not f:write(body) or not f:close() then os.exit(1) end
@@ -127,7 +142,9 @@ local work='/var/run/homegate/.dns-check-'..job
 local function fetch(params,action)
     action=action or 'DescribeDomains'
     local actions={DescribeDomains=true,DescribeSubDomainRecords=true,DescribeDomainRecordInfo=true,AddDomainRecord=true,UpdateDomainRecord=true,DeleteDomainRecord=true}
-    if not actions[action] or (mode~='records' and mode~='reconcile' and action~='DescribeDomains') or (mode=='reconcile' and action~='DescribeSubDomainRecords' and action~='DescribeDomainRecordInfo') then fail('invalid_request',false,'invalid_operation') end
+    if host_zone then
+        if action~='DescribeDomainRecords' then fail('invalid_request',false,'invalid_operation') end
+    elseif not actions[action] or (mode~='records' and mode~='reconcile' and action~='DescribeDomains') or (mode=='reconcile' and action~='DescribeSubDomainRecords' and action~='DescribeDomainRecordInfo') then fail('invalid_request',false,'invalid_operation') end
     local nonce=io.open('/proc/sys/kernel/random/uuid','rb');local raw=nonce and nonce:read(38)
     if not nonce or not nonce:close() or not raw or #raw~=37 or not raw:match('^[0-9a-f]+%-[0-9a-f]+%-[0-9a-f]+%-[0-9a-f]+%-[0-9a-f]+\n$') then fail('temporary',false,'signing_unavailable') end
     params.Action=action;params.Version='2015-01-09';params.Format='JSON';params.AccessKeyId=id
@@ -168,6 +185,37 @@ if mode=='records' or mode=='reconcile' then
     output(body);return
 end
 local function integer(n,low,high)return type(n)=='number' and n==math.floor(n) and n>=low and n<=high end
+if host_zone then
+    local total,names,seen,record_ids,bytes=nil,{},{},{},0
+    local per=100
+    for page=1,100 do
+        local doc,_,shape=fetch({DomainName=host_zone,Type='AAAA',PageNumber=tostring(page),PageSize=tostring(per)},'DescribeDomainRecords')
+        local item_shape=shape.children.DomainRecords
+        local array=item_shape and item_shape.children and item_shape.children.Record
+        if not array or array.kind~='array' or not integer(doc.TotalCount,0,10000) or doc.PageNumber~=page or doc.PageSize~=per then
+            fail('temporary',true,'invalid_response')
+        end
+        local start=(page-1)*per
+        if (total and total~=doc.TotalCount) or #doc.DomainRecords.Record~=math.min(per,doc.TotalCount-start) then
+            fail('temporary',true,'pagination_changed')
+        end
+        total=doc.TotalCount
+        for _,item in ipairs(doc.DomainRecords.Record) do
+            if type(item)~='table' or item.Type~='AAAA' or domain(item.DomainName)~=host_zone or type(item.RR)~='string'
+                or type(item.RecordId)~='string' or not item.RecordId:match('^%d+$') or record_ids[item.RecordId] then
+                fail('temporary',true,'invalid_response')
+            end
+            record_ids[item.RecordId]=true
+            local name=host_name(item.RR)
+            if name and not seen[name] then
+                names[#names+1]=name;seen[name]=true;bytes=bytes+#name+3
+                if bytes>60000 then fail('temporary',false,'pagination_limit') end
+            end
+        end
+        if start+per>=total then table.sort(names);output(report('',false,'',names));return end
+    end
+    fail('temporary',false,'pagination_limit')
+end
 local per=mode=='zones' and 100 or 1
 local total,rows,bytes,names,seen=nil,0,0,{},{}
 for page=1,1000 do

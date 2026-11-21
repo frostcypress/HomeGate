@@ -151,7 +151,7 @@ function hgMaintenanceAction(url,values,done){
 function hgMaintenanceSubmit(form,clear){
   if(form.getAttribute('data-busy')==='1')return false;
   var reset=/\/config_reset$/.test(form.action);
-  if(reset&&!confirm('<%:Restore HomeGate default configuration? Cloud AAAA records for configured DDNS hostnames, service settings, access rules, access history and region data will be removed.%>'))return false;
+  if(reset&&!confirm('<%:Restore HomeGate defaults? Managed cloud AAAA records, local settings, certificates and keys, access rules, access history and region data will be removed.%>'))return false;
   form.setAttribute('data-busy','1');var button=form.querySelector('button');if(button)button.disabled=true;
   hgMaintenanceMessage('<%:Processing...%>','pending');
   hgMaintenanceAction(form.action,{token:form.elements.token.value},function(result){
@@ -216,14 +216,16 @@ function hgMaintenanceRequestPreview(form,payload,done,mode,confirmation){
 }
 
 function hgMaintenanceLogLocalTime(line){
-  return line.replace(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}(?= \[[A-Z]+\] )/,function(stamp){
+  function localTime(stamp){
     // The native service and web workers write these timestamps in UTC.
     var iso=stamp.replace(' ','T')+'Z',time=new Date(iso);
     if(isNaN(time.getTime())||time.toISOString().slice(0,19)!==iso.slice(0,19))return stamp;
     function pad(value){return String(value).padStart(2,'0');}
     return [String(time.getFullYear()).padStart(4,'0'),pad(time.getMonth()+1),pad(time.getDate())].join('-')+' '+
       [pad(time.getHours()),pad(time.getMinutes()),pad(time.getSeconds())].join(':');
-  });
+  }
+  return line.replace(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}(?= \[[A-Z]+\] )/,localTime)
+    .replace(/(证书请求受限 \([\w-]+\)，)(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}) UTC(?= 后可重试)/,function(_,prefix,stamp){return prefix+localTime(stamp);});
 }
 function hgMaintenanceRefreshLog(button){
   var log=document.getElementById('hg-maintenance-log');

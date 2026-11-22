@@ -165,6 +165,37 @@ class Runtime(LifecycleRuntime):
         shutil.rmtree(self.store);self.source.write_bytes(body);self.migrated();self.before=self.contents()
     def test_real_ash_snapshot_network_binding_and_no_store_change(self):
         out=self.read('ddns_a');self.assertEqual(out['rules'][0]['status'],'ready');c=json.loads(self.capture.read_bytes());e=c['entries'][0];self.assertEqual(e['request'],{'operation':'upsert','kind':'ddns','resource':'ddns_a','value':'2001:db8::2'});self.assertEqual(e['device'],'pppoe-wan');self.assertEqual([x['kind'] for x in self.net_calls()],['addresses','routes'])
+    def fail_family_observations(self,count):
+        remaining=self.base/'family-probe-failures'
+        remaining.write_text(str(count))
+        process=self.engine.parent/'worker-process.lua'
+        process.write_text(f'''if arg[1]=='group' then
+    local path={json.dumps(str(remaining))}
+    local file=assert(io.open(path,'r'))
+    local left=assert(tonumber(file:read('*a')))
+    file:close()
+    if left>0 then
+        file=assert(io.open(path,'w'))
+        file:write(left-1)
+        file:close()
+        os.exit(1)
+    end
+end
+'''+process.read_text())
+        return remaining
+    def test_single_failed_family_observation_rechecks_without_resampling(self):
+        remaining=self.fail_family_observations(1)
+        self.assertEqual(self.read('ddns_a')['rules'][0]['status'],'ready')
+        self.assertEqual(remaining.read_text(),'0')
+        self.assertEqual([call['kind'] for call in self.net_calls()],['addresses','routes'])
+    def test_consecutive_failed_family_observations_do_not_publish_plan(self):
+        remaining=self.fail_family_observations(2)
+        self.assertEqual(self.read('ddns_a',expected=7)['error'],'DDNS operation is unavailable')
+        self.assertEqual(remaining.read_text(),'0')
+        work,=self.native.lockdir.glob('.ddns-plan-*')
+        self.assertTrue(json.loads((work/'result').read_bytes())['ok'])
+        self.assertEqual((work/'public').read_bytes(),b'')
+        self.assertEqual([call['kind'] for call in self.net_calls()],['addresses','routes'])
     def test_disabled_rule_skips_network(self):
         self.change(self.business.replace(b"config ddns_rule 'ddns_a'\n option enabled '1'",b"config ddns_rule 'ddns_a'\n option enabled '0'"));self.assertEqual(self.read()['rules'][0]['status'],'disabled');self.assertEqual(self.net_calls(),[])
     def test_unknown_rule_and_bad_argument_never_sample(self):

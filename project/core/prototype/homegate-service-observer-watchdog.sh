@@ -231,11 +231,23 @@ while :; do
 done
 [ "$stop_requested" = false ] || stop_family
 result=0; wait "$worker" || result=$?
-members=$(lua "$process" group "$$" "$$" 2>/dev/null) || stop_family
-[ "$members" = 0 ] || stop_family
-sleep_poll || stop_family
-members=$(lua "$process" group "$$" "$$" 2>/dev/null) || stop_family
-[ "$members" = 0 ] || stop_family
+confirm_family_quiet() {
+    members=$(lua "$process" group "$$" "$$" 2>/dev/null) || return 2
+    [ "$members" = 0 ] && sleep_poll || return 1
+    members=$(lua "$process" group "$$" "$$" 2>/dev/null) || return 2
+    [ "$members" = 0 ]
+}
+confirm_family_quiet || {
+    # A completed read-only DDNS plan can survive one unavailable process
+    # observation. Both fresh observations must still prove the family quiet.
+    [ "$?" -eq 2 ] && [ "$action" = ddns-plan ] && [ "$stop_requested" = false ] || stop_family
+    now=$(lua "$process" now 2>/dev/null) || stop_family
+    [ "$now" -lt "$deadline" ] || stop_family
+    confirm_family_quiet || stop_family
+    now=$(lua "$process" now 2>/dev/null) || stop_family
+    [ "$now" -lt "$deadline" ] || stop_family
+}
+[ "$action" != ddns-plan ] || [ "$stop_requested" = false ] || stop_family
 if [ "$action" = health-status ] && [ "$result" -ne 0 ]; then exit 125; fi
 # Distinguish an invalid or interrupted sampler from an unverified family.
 # Codes 0 and 1 still carry the normal successful/failed plan reports.

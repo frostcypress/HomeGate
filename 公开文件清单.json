@@ -414,6 +414,7 @@
     "scripts/access-diagnose.sh",
     "scripts/access-management-ui-smoke.sh",
     "scripts/acme-protocol-fixture.py",
+    "scripts/aliyun_test_state.py",
     "scripts/apk-lifecycle-regressions.py",
     "scripts/apk-manager-regressions.py",
     "scripts/arm64-apk-manager-regressions.py",

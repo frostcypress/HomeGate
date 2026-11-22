@@ -74,7 +74,7 @@ class NormalMixin:
     def test_ordinary_noop_does_not_create_checkpoint(self):
         self.grant();self.seed();out=self.sync_call();self.assertEqual(out['result'],'unchanged');self.assertEqual(self.mutations(),[]);self.assertFalse((self.store/'dns-operation').exists())
     def test_ordinary_update_retains_disabled_public_configuration(self):
-        self.grant();self.seed('2001:db8::1');out=self.sync_call();self.assertEqual(out['result'],'updated');self.assertEqual(len(self.mutations()),1);self.assertNotIn(b"option enabled '1'",self.source.read_bytes());self.assertTrue(all(x=='enabled' for x in self.initlog.read_text().splitlines()))
+        self.grant();self.seed('2001:db8::1',managed=True);out=self.sync_call();self.assertEqual(out['result'],'updated');self.assertEqual(len(self.mutations()),1);self.assertNotIn(b"option enabled '1'",self.source.read_bytes());self.assertTrue(all(x=='enabled' for x in self.initlog.read_text().splitlines()))
     def test_unknown_is_readonly_reconciled_without_new_authority(self):
         self.grant();SyncMixin.test_unknown_mutation_is_durable_and_not_retried(self);self.revoke_fixture();before=self.files(self.store/'dns-operation');out=self.recover_read();self.assertEqual(out['effect'],'unknown');self.assertEqual(out['observation'],'desired-present');self.assertEqual(before,self.files(self.store/'dns-operation'));self.cli('writer-check',expected=4)
     def test_ordinary_confirmed_outer_collection_uses_runtime_source(self):
@@ -143,7 +143,7 @@ class InterfaceMixin:
         before=self.files(journal);n=len(self.calls);self.sync_call(4);self.assertEqual(len(self.calls),n);self.assertEqual(before,self.files(journal))
     def test_interface_noop_then_update_stays_scoped(self):
         self.grant();self.seed('2001:db8:2::9');out=self.sync_call();self.assertEqual((out['result'],out['effect']),('unchanged','none'));self.assertFalse((self.store/'dns-operation').exists());self.assertEqual(self.mutations(),[])
-        self.db.clear();self.seed('2001:db8:2::1');out=self.sync_call();self.assertEqual((out['result'],out['effect']),('updated','confirmed'));self.assertEqual(len(self.mutations()),1)
+        self.db.clear();self.seed('2001:db8:2::1',managed=True);out=self.sync_call();self.assertEqual((out['result'],out['effect']),('updated','confirmed'));self.assertEqual(len(self.mutations()),1)
         self.assertEqual(self.netlog.read_text().splitlines(),['addresses','addresses'])
     def test_interface_unknown_attempt_is_durable_and_never_retried(self):
         self.grant();SyncMixin.test_unknown_mutation_is_durable_and_not_retried(self)

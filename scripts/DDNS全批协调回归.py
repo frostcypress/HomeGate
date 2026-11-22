@@ -163,11 +163,14 @@ class MixedMixin:
         preview=self.cli('preview',payload=body.encode());tx=self.cli('commit-apply-projection',preview['confirmation']);self.cli('projection-publish',tx['apply_handle'],'apply');self.cli('apply-finish-projection',tx['apply_handle'])
         preview=self.auth('preview-rules','ddns_a,ddns_b,ddns_c');self.auth('commit',preview['confirmation']);self.baseline_config=self.config_bytes()
         self.settings['addresses']+='14: odd-uplink inet6 2001:db8:2::9/64 scope global\n15: other-uplink inet6 2001:db8:3::8/64 scope global\n';self.control.write_text(json.dumps(self.settings))
-    def seed_mixed(self,name,value):
+    def seed_mixed(self,name,value,*,managed=False):
         from DDNS执行回归 import rec,ali_record,dnp_record,hw_record
+        from aliyun_test_state import seed_managed_aaaa
         number={'ddns_a':1,'ddns_b':2,'ddns_c':3}[name];host={'ddns_a':'www','ddns_b':'b','ddns_c':'c'}[name]
         record={'cloudflare':lambda:rec(number,name=host+'.example.test',value=value),'aliyun':lambda:ali_record(number,rr=host,value=value),'dnspod':lambda:dnp_record(number,rr=host,value=value),'huaweicloud':lambda:hw_record(number,name=host+'.example.test.',values=[value])}[self.provider]()
         self.add(record)
+        if managed and self.provider=='aliyun':
+            seed_managed_aaaa(self.store,'dns_a','OLD_ID',record)
     def test_mixed_noops_keep_distinct_device_addresses_and_one_sample(self):
         for name,value in [('ddns_a','2001:db8::2'),('ddns_b','2001:db8:2::9'),('ddns_c','2001:db8:3::8')]:self.seed_mixed(name,value)
         out=self.batch_call();self.assertEqual([row['status'] for row in out['rules']],['unchanged']*3);self.assertEqual(self.mutations(),[]);self.assertEqual(self.netlog.read_text().splitlines(),['addresses','routes'])

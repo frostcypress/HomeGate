@@ -17,6 +17,7 @@ import threading
 import unittest
 from urllib.parse import parse_qs,quote,urlsplit
 from project import ROOT
+from aliyun_test_state import seed_managed_aaaa
 
 spec=importlib.util.spec_from_file_location('aliyun_task_provider',ROOT/'scripts/luci-ddns-provider-jobs-regressions.py')
 provider=importlib.util.module_from_spec(spec);spec.loader.exec_module(provider)
@@ -150,7 +151,10 @@ class AliyunJobs(provider.jobs.Jobs):
     def setUp(self):
         super().setUp();self.expected_configuration=self.configuration_snapshot()
 
-    configuration_snapshot=provider.ProviderJobs.configuration_snapshot
+    def configuration_snapshot(self):
+        snapshot=provider.ProviderJobs.configuration_snapshot(self)
+        return {key:value for key,value in snapshot.items()
+                if not Path(key).is_relative_to(STORE/'aliyun-managed')}
     tearDown=provider.ProviderJobs.tearDown
     settled=provider.ProviderJobs.settled
 
@@ -207,11 +211,13 @@ class AliyunJobs(provider.jobs.Jobs):
     def test_aliyun_03_update_preserves_line_and_unrelated_fields(self):
         self.db['1']=record(1,Line='cn_mobile',Remark='KEEP',Weight=8)
         self.db['2']=record(2,RR='other')
+        ownership=seed_managed_aaaa(STORE,self.ACCOUNT,'FIXTURE_ID',self.db['1'])
         with self.session() as session:
             row=self.run_job(session);self.assert_origin(row,'updated')
             self.assertEqual(self.mutations(),['UpdateDomainRecord'])
             row=self.db['1'];self.assertTrue(row['Value']=='2001:db8::2' and row['Line']=='cn_mobile' and row['Remark']=='KEEP' and row['Weight']==8)
             self.assertEqual(self.db['2']['Value'],'2001:db8::1')
+            self.assertEqual(ownership.read_text(),'1:2001:0db8:0000:0000:0000:0000:0000:0002\n')
 
     def test_aliyun_04_unknown_after_attempt_never_retries_or_invents_proof(self):
         type(self).fail_after_mutation=True

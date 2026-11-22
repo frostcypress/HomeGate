@@ -3,6 +3,7 @@
 import argparse,hashlib,json,os,re,shutil,subprocess,unittest
 from pathlib import Path
 from Aliyun恢复回归 import Static as RecoveryStatic,Runtime as RecoveryRuntime,PROTO,record
+from aliyun_test_state import seed_managed_aaaa
 
 class Static(RecoveryStatic):
     def public_receipt(self,**extra):
@@ -65,7 +66,10 @@ class Runtime(RecoveryRuntime):
         out=self.collect();self.assertTrue(out['write_ready']);self.assertFalse(self.journal.exists());self.assertEqual(self.archived_bytes(),before);self.assertEqual(self.ledger.read_text().splitlines()[0],'HGALICollection1');self.writer()
         self.collect();self.assertEqual(self.archived_bytes(),before);self.writer()
     def test_update_and_delete_terminal_results_match_checkpoints(self):
-        self.add(record(1),record(2,rr='other'));self.finish();self.assertEqual(self.terminal()['result'],'updated');self.collect();self.writer()
+        original=record(1)
+        self.add(original,record(2,rr='other'))
+        seed_managed_aaaa(self.store,'dns_a','OLD_ID',original)
+        self.finish();self.assertEqual(self.terminal()['result'],'updated');self.collect();self.writer()
     def test_multi_delete_terminal_has_full_confirmed_count(self):
         self.add(*(record(i,value='2001:db8::2') for i in [1,2,3]));self.finish(self.payload(operation='delete'));self.assertEqual(self.terminal()['affected'],3);self.collect();self.writer()
     def test_unknown_observation_cannot_authorize_archive(self):

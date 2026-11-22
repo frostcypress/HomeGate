@@ -340,8 +340,14 @@ with sync_playwright() as pw:
     assert chevron=='calc(50% - 2px), calc(50% + 2px)',chevron
     options.first.hover()
     active_color=options.first.evaluate('node=>getComputedStyle(node).backgroundColor')
-    red,green,blue=map(int,re.findall(r'\d+',active_color))
-    assert blue>red and blue>green,active_color
+    red,green,blue,alpha=page.evaluate('''color=>{
+        const canvas=document.createElement('canvas');
+        const context=canvas.getContext('2d');
+        context.fillStyle=color;
+        context.fillRect(0,0,1,1);
+        return Array.from(context.getImageData(0,0,1,1).data);
+    }''',active_color)
+    assert alpha>0 and blue>red and blue>green,active_color
     assert options.first.bounding_box()['width']>=menu_box['width']-3
     assert refresh_status.evaluate('node=>getComputedStyle(node).backgroundColor')!=active_color
     host_toggle.press('ArrowDown')

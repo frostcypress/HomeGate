@@ -26,7 +26,7 @@ with sync_playwright() as pw:
    route.fulfill(status=200,body=body,content_type='application/javascript')
   else:route.fulfill(status=200,body='<html lang="en"><body><div id="view"></div></body></html>',content_type='text/html')
  context.route('http://homegate.test/**',serve);page=context.new_page();page.goto('http://homegate.test/')
- errors=[];page.on('pageerror',lambda e:errors.append(str(e)))
+ errors=[];page.on('pageerror',lambda e:errors.append(e.stack or str(e)))
  page.add_script_tag(content=(fixtures/'cbi.js').read_text(encoding='utf-8'))
  page.add_script_tag(content=(fixtures/'luci.js').read_text(encoding='utf-8'))
  page.evaluate("LuCI.prototype.probeRPCBaseURL=()=>Promise.resolve('/ubus/');window.L=new LuCI({base_url:'/resources',resource_version:'test',scriptname:'/cgi-bin/luci',pathinfo:'',nodespec:{satisfied:true,readonly:false}});window._=v=>v;")

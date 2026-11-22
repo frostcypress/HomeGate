@@ -13,6 +13,7 @@ from 生命周期业务集成回归 import Runtime as LifecycleRuntime
 from 旧配置迁移回归 import LEGACY
 from Cloudflare记录回归 import rec
 from Aliyun记录回归 import record as ali_record
+from aliyun_test_state import seed_managed_aaaa
 from DNSPod记录回归 import record as dnp_record
 from 华为云记录回归 import record as hw_record
 PROTO=ROOT/'project/core/prototype'
@@ -111,21 +112,32 @@ class SyncMixin:
             s=s.replace('dns_migrated_read_enabled=false','dns_migrated_read_enabled=true').replace('PATH=/usr/sbin:/usr/bin:/sbin:/bin','PATH='+str(self.bin))
             p.write_text(fixture_uid(s))
         self.baseline_config=self.config_bytes()
-    def config_bytes(self):return {p.relative_to(self.store).as_posix():p.read_bytes() for p in self.store.rglob('*') if p.is_file() and not any(x.startswith('dns-') or x.startswith('.dns-') for x in p.relative_to(self.store).parts)}
+    def config_bytes(self):
+        result={}
+        for path in self.store.rglob('*'):
+            member=path.relative_to(self.store)
+            if not path.is_file() or any(part.startswith(('dns-','.dns-')) for part in member.parts):
+                continue
+            if self.provider=='aliyun' and member.parts[0]=='aliyun-managed':
+                continue
+            result[member.as_posix()]=path.read_bytes()
+        return result
     def sync_call(self,expected=0,args=None):
         p=subprocess.run([self.busybox,'ash',str(self.entry),*(args if args is not None else ['--sync','ddns_a','--confirm'])],env=self.env,capture_output=True,timeout=18)
         self.assertEqual((p.returncode,p.stderr),(expected,b''),(p.stdout,p.stderr));out=json.loads(p.stdout);self.assertEqual(out['ok'],expected==0)
         for secret in [b'SECRET_SENTINEL',b'PRIVATE_SENTINEL',b'OLD_ID',b'example.test',b'2001:db8',b'pppoe-wan']:self.assertNotIn(secret,p.stdout)
         self.assertEqual(self.config_bytes(),self.baseline_config);return out
-    def seed(self,value='2001:db8::2'):
+    def seed(self,value='2001:db8::2',*,managed=False):
         r={'cloudflare':lambda:rec(1,value=value),'aliyun':lambda:ali_record(1,value=value),'dnspod':lambda:dnp_record(1,value=value),'huaweicloud':lambda:hw_record(1,values=[value])}[self.provider]();self.add(r)
+        if managed and self.provider=='aliyun':
+            seed_managed_aaaa(self.store,'dns_a','OLD_ID',r)
     def test_actual_rule_create_persists_original_terminal_and_keeps_barrier(self):
         out=self.sync_call();self.assertEqual((out['provider'],out['result'],out['effect']),(self.provider,'created','confirmed'));j=self.store/'dns-operation';self.assertTrue((j/'terminal-meta').is_file());self.assertEqual(json.loads((j/'terminal').read_bytes())['result'],'created')
         slot=j/('slot-'+(j/'current').read_text().strip());q=json.loads((slot/'context').read_bytes());self.assertEqual(q['request'],{'operation':'upsert','kind':'ddns','resource':'ddns_a','value':'2001:db8::2'});self.assertEqual(self.netlog.read_text().splitlines(),['addresses','routes']);n=len(self.calls);self.sync_call(4);self.assertEqual(len(self.calls),n)
     def test_equal_address_does_not_mutate_or_create_checkpoint(self):
         self.seed();out=self.sync_call();self.assertEqual((out['result'],out['effect']),('unchanged','none'));self.assertFalse((self.store/'dns-operation').exists());self.assertEqual(self.mutations(),[]);self.assertFalse(list(self.native.lockdir.glob('.ddns-plan-*')))
     def test_changed_address_updates_selected_record(self):
-        self.seed('2001:db8::1');out=self.sync_call();self.assertEqual((out['result'],out['effect']),('updated','confirmed'));self.assertEqual(len(self.mutations()),1)
+        self.seed('2001:db8::1',managed=True);out=self.sync_call();self.assertEqual((out['result'],out['effect']),('updated','confirmed'));self.assertEqual(len(self.mutations()),1)
     def test_unknown_mutation_is_durable_and_not_retried(self):
         # Fail after the actual mutation request reaches the simulated cloud.
         def hook(*args):

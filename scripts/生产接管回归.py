@@ -9,6 +9,7 @@ from pathlib import Path
 from urllib.parse import urlencode
 from project import ROOT
 from production_runtime import payload,stage,stage_package,stage_installed
+from aliyun_test_state import seed_managed_aaaa
 spec=importlib.util.spec_from_file_location('production_web',ROOT/'scripts/工程网页回归.py')
 web=importlib.util.module_from_spec(spec);spec.loader.exec_module(web)
 rpc,luci,STATE=web.rpc,web.luci,web.STATE
@@ -118,14 +119,18 @@ if Path('/teststate/aliyun-delete-fixture').exists() and 'alidns.aliyuncs.com' i
  else: sys.exit(99)
  print(json.dumps(dict(out,RequestId='fixture')));print('HGHTTP:'+str(code));sys.exit(0)
 if Path('/teststate/aliyun-update-fixture').exists() and 'alidns.aliyuncs.com' in raw:
+ from urllib.parse import unquote
+ import re
  assert 'Signature' in raw
  with Path('/teststate/provider-calls').open('a') as log: log.write('aliyun\\n')
  update=Path('/teststate/aliyun-update-confirmed')
- rec={'RecordId':'123','DomainName':'example.test','RR':'www','Type':'AAAA','Value':'2001:db8::2' if update.exists() else '2001:db8::9','TTL':600,'Line':'default','Locked':False,'Status':'Enable'}
+ rec={'RecordId':'123','DomainName':'example.test','RR':'www','Type':'AAAA','Value':update.read_text() if update.exists() else '2001:db8::9','TTL':600,'Line':'default','Locked':False,'Status':'Enable'}
  if 'DescribeSubDomainRecords' in raw: out={'TotalCount':1,'PageNumber':1,'PageSize':100,'DomainRecords':{'Record':[rec]}}
  elif 'DescribeDomainRecordInfo' in raw: out=rec
  elif 'UpdateDomainRecord' in raw:
-  assert not update.exists();update.touch();out={'RecordId':rec['RecordId']}
+  value=unquote(re.search(r'[?&]Value=([^&"\\s]+)',raw)[1])
+  assert (rec['Value'],value) in [('2001:db8::9','2001:db8::2'),('2001:db8::2','2001:db8::3')]
+  update.write_text(value);out={'RecordId':rec['RecordId']}
  else: sys.exit(99)
  print(json.dumps(dict(out,RequestId='fixture')));print('HGHTTP:200');sys.exit(0)
 """
@@ -614,25 +619,29 @@ exec /usr/sbin/busybox fsync "$@"
         self.cfg('lifecycle_enable',s,consent='1')
         p=self.cli('grant-preview','ddns_a');self.cli('grant-commit',p['confirmation'])
         self.cli('service-plan-set','ddns_a','-','-','open','--confirm')
-        grant=Path('/etc/homegate/transactions/ddns-authority').read_bytes()
+        store=Path('/etc/homegate/transactions')
+        grant=(store/'ddns-authority').read_bytes()
+        seed_managed_aaaa(store,'ali_a','KEY_SENTINEL',
+                          {'DomainName':'example.test','RR':'www','RecordId':'123','Value':'2001:db8::9'})
         (STATE/'aliyun-update-fixture').touch()
         self.disable_fixture_setsid()
         self.start_owner();self.wait_service(lambda d:d['state']=='running',seconds=30)
-        store=Path('/etc/homegate/transactions');proof=store/'dns-batch-results'
+        proof=store/'dns-batch-results'
         deadline=time.monotonic()+45
         while time.monotonic()<deadline:
             report=self.cli('schedule-status')
             if report.get('status')=='waiting' and report.get('last_effect')=='confirmed':break
             self.assertIsNone(self.owner.poll(),report);time.sleep(.25)
         else:self.fail(report)
-        self.assertTrue((STATE/'aliyun-update-confirmed').exists());self.assertFalse((store/'dns-operation').exists());self.assertFalse((store/'dns-settled').exists())
+        self.assertEqual((STATE/'aliyun-update-confirmed').read_text(),'2001:db8::2');self.assertFalse((store/'dns-operation').exists());self.assertFalse((store/'dns-settled').exists())
         self.assertEqual(json.loads(proof.read_bytes().splitlines()[0])['rows'][0]['state'],'closed')
         self.assertEqual((store/'ddns-authority').read_bytes(),grant)
-        (STATE/'aliyun-update-confirmed').unlink()
+        ip=STATE/'tools/ip'
+        ip.write_text(ip.read_text().replace('2001:db8::2/64','2001:db8::3/64'))
         manual=self.web_request('public_action',{'op':'ddns_sync','id':'ddns_a'},True)
         synced=self.web_wait(manual['job'],seconds=40)
         self.assertTrue(synced['ok'],synced)
-        self.assertTrue((STATE/'aliyun-update-confirmed').exists())
+        self.assertEqual((STATE/'aliyun-update-confirmed').read_text(),'2001:db8::3')
         self.assertFalse((store/'dns-operation').exists());self.assertFalse((store/'dns-settled').exists())
         self.assertEqual(json.loads(proof.read_bytes().splitlines()[0])['rows'][0]['state'],'closed')
         lua=STATE/'tools/lua';normal=lua.read_text()

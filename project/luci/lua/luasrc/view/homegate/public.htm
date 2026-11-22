@@ -1303,14 +1303,20 @@ function hgPublicConsumeResumeQuery(){
   ['resume_public','resume_account','notice'].forEach(function(key){current.searchParams.delete(key);});
   window.history.replaceState(null,document.title,current.href);
 }
-var hgPublicHostRecord=document.getElementById('hg-public-host-record');
-hgPublicHostRecord.addEventListener('keydown',hgPublicHostKey);
-document.addEventListener('click',function(event){
-  if(!hgPublicHostRecord.contains(event.target))hgPublicSetHostsOpen(false);
-});
-hgPublicHostRecord.addEventListener('focusout',function(event){
-  if(event.relatedTarget&&!hgPublicHostRecord.contains(event.relatedTarget))hgPublicSetHostsOpen(false);
-});
+(function(){
+  var hostRecord=document.getElementById('hg-public-host-record');
+  hostRecord.addEventListener('keydown',hgPublicHostKey);
+  document.addEventListener('click',function closeHostsOutside(event){
+    if(!hostRecord.isConnected){
+      document.removeEventListener('click',closeHostsOutside);
+      return;
+    }
+    if(!hostRecord.contains(event.target))hgPublicSetHostsOpen(false);
+  });
+  hostRecord.addEventListener('focusout',function(event){
+    if(hostRecord.isConnected&&event.relatedTarget&&!hostRecord.contains(event.relatedTarget))hgPublicSetHostsOpen(false);
+  });
+})();
 (function(){hgPublicReadCertificateChoices();hgPublicLoadRows();hgPublicAccessRenderRegionData();hgPublicAccessRenderEmptyWarning();hgPublicUpdateCertificateUI();hgPublicRender();var resume=(document.getElementById('hg-public-resume-mode')||{}).value||'',resumeAccount=(document.getElementById('hg-public-resume-account')||{}).value||'';if(resume==='add'&&resumeAccount){hgPublicOpenAdd(resumeAccount);hgPublicDiscoverSavedAccount(resumeAccount);if('<%=pcdata(notice or '')%>')hgShowNotice(document.getElementById('hg-public-account-result'),'<%:DNS account saved%>','success');hgPublicConsumeResumeQuery();}
   hgGet('<%=url('admin/services/homegate/api/ddns')%>',function(d){var rs=(d&&d.results)||[];hgPublicDDNS={};for(var i=0;i<rs.length;i++)if(rs[i].rule)hgPublicDDNS[rs[i].rule]=rs[i];hgPublicRender();});
   hgPublicRefreshCertificates();

@@ -243,7 +243,10 @@ class MixedScheduleMixin(ScheduleMixin):
         self.stop_waiting(process);out=self.finish(process);self.assertEqual((out['ticks'],out['reason'],out['last_effect']),(3,'stopped','none'))
         self.assertEqual(self.netlog.read_text().splitlines(),['addresses','routes']*3);self.assertEqual(self.mutations(),[]);self.assertFalse(self.journal.exists());self.control_call('reap')
     def test_changed_interface_address_stops_with_original_confirmed_receipt(self):
-        self.seed_all_mixed();self.settings['addresses']=self.settings['addresses'].replace('2001:db8:2::9','2001:db8:2::7');self.control.write_text(json.dumps(self.settings))
+        self.seed_mixed('ddns_a','2001:db8::2')
+        self.seed_mixed('ddns_b','2001:db8:2::9',managed=True)
+        self.seed_mixed('ddns_c','2001:db8:3::8')
+        self.settings['addresses']=self.settings['addresses'].replace('2001:db8:2::9','2001:db8:2::7');self.control.write_text(json.dumps(self.settings))
         out=self.finish(self.start(),4);self.assertEqual((out['ticks'],out['reason'],out['last_effect']),(1,'blocked','confirmed'))
         batch=json.loads((self.schedule_dir/'batch').read_bytes());self.assertEqual([row['status'] for row in batch['rules']],['unchanged','updated','blocked'])
         slot=self.journal/('slot-'+(self.journal/'current').read_text().strip());self.assertEqual(json.loads((slot/'context').read_bytes())['request'],{'operation':'upsert','kind':'ddns','resource':'ddns_b','value':'2001:db8:2::7'})

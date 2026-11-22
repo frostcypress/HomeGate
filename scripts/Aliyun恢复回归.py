@@ -4,6 +4,7 @@ import argparse,hashlib,json,os,re,shutil,subprocess,unittest
 from pathlib import Path
 from project import ROOT
 from Aliyun记录回归 import Runtime as RecordRuntime,record,VALUE,PROTO
+from aliyun_test_state import seed_managed_aaaa
 from Cloudflare记录回归 import Static as PlanStatic
 
 class Static(PlanStatic):
@@ -72,11 +73,7 @@ class Runtime(RecordRuntime):
     def test_managed_aaaa_updates_original_id_and_refreshes_proof(self):
         original=record(9302)
         self.add(original)
-        self.owned.mkdir(mode=0o700)
-        key=hashlib.sha1(b'dns_a\0OLD_ID\0example.test\0www.example.test').hexdigest()
-        proof=self.owned/key
-        proof.write_text('9302:2001:0db8:0000:0000:0000:0000:0000:0001\n')
-        proof.chmod(0o600)
+        proof=seed_managed_aaaa(self.store,'dns_a','OLD_ID',original)
         result=self.records()
         self.assertEqual((result['result'],result['effect']),('updated','confirmed'))
         self.assertEqual(list(self.db),['9302'])

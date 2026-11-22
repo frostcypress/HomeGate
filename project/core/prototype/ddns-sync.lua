@@ -1,6 +1,6 @@
 -- Data-only single-rule dispatch binding and redacted provider receipt adapter.
 local M={}
-local kinds={['']=true,authentication=true,not_found=true,unsupported=true,invalid_request=true,invalid_zone=true,temporary=true,network_unavailable=true,timeout=true,rate_limit=true}
+local kinds={['']=true,authentication=true,not_found=true,unsupported=true,invalid_request=true,invalid_zone=true,record_conflict=true,temporary=true,network_unavailable=true,timeout=true,rate_limit=true}
 function M.bind(snapshot,intent,plan,selected,planner,network,records,json)
     if not planner.id(selected) or type(plan)~='table' or plan.schema~='HGDDNSPLAN1' or type(plan.entries)~='table' or #plan.entries~=1 then return nil end
     local e=plan.entries[1]

@@ -28,7 +28,18 @@ private_dir() { [ -d "$1" ] && [ ! -L "$1" ] && [ "$(stat -c '%u:%a' "$1")" = 0:
 private_file() { [ -f "$1" ] && [ ! -L "$1" ] && [ "$(stat -c '%u:%a:%h' "$1")" = 0:600:1 ]; }
 private_dir "$run" && private_dir "$store" && private_file "$run/frontend.lock" && private_file "$store/.supervisor.lock" || fail
 exec 6>>"$run/frontend.lock" 7>>"$store/.supervisor.lock" || fail
-flock -n 6 && flock -n 7 || busy
+# Wait briefly for an ordinary overlap while performing just one DNS read.
+# Never hold the frontend lock while waiting for the supervisor lock.
+attempt=0
+while :; do
+    if flock -n 6; then
+        if flock -n 7; then break; fi
+        flock -u 6 || fail
+    fi
+    [ "$zones" = true ] && [ "$attempt" -lt 2 ] || busy
+    attempt=$((attempt+1))
+    sleep 1 || fail
+done
 locks_match() {
     for fd in 6 7; do
         lock=$run/frontend.lock;[ "$fd" != 7 ] || lock=$store/.supervisor.lock

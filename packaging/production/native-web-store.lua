@@ -36,6 +36,43 @@ local function mark_pending_add(kind,value)
  assert(os.execute('fsync '..nextpath)==0 and fs.rename(nextpath,pending_add_path))
  assert(os.execute('fsync /etc/homegate')==0)
 end
+local public_view_path='/etc/homegate/public-applied.json'
+local function valid_public_view(view)
+ if type(view)~='table' or type(view.enabled)~='table' or #view.enabled>16 or
+    (view.scope~='' and view.scope~='CN' and view.scope~='__manual__') then return false end
+ for _,name in ipairs(view.enabled) do
+  if type(name)~='string' or #name>64 or not name:match('^[A-Za-z0-9_-]+$') then return false end
+ end
+ return true
+end
+local function public_view(document)
+ local view={enabled={},scope=''}
+ for _,row in ipairs(document) do
+  local v=row.values
+  if row.name=='main' and v.access_enabled=='1' then
+   view.scope=v.access_region=='CN' and 'CN' or '__manual__'
+  elseif row.kind=='web_rule' and v.retained~='1' and v.enabled=='1' then
+   view.enabled[#view.enabled+1]=row.name
+  end
+ end
+ return view
+end
+local function read_public_view()
+ if not fs.lstat(public_view_path) then return nil end
+ if not dir('/etc/homegate') then fail() end
+ local view=json.parse(read(public_view_path,4096))
+ if not valid_public_view(view) then fail() end
+ return view
+end
+local function write_public_view(view)
+ if not valid_public_view(view) or not dir('/etc/homegate') then fail() end
+ read_public_view()
+ local nextpath=public_view_path..'.next'
+ if fs.lstat(nextpath) then read(nextpath,4096);assert(fs.unlink(nextpath)) end
+ write(nextpath,codec.json(view)..'\n')
+ assert(os.execute('fsync '..nextpath)==0 and fs.rename(nextpath,public_view_path))
+ assert(os.execute('fsync /etc/homegate')==0)
+end
 local function validate(d,types,writeflag)
  if type(d)~='table' or type(d.route)~='string' or not routes[d.route] or type(d.form)~='table' or types.form~='object' or d.write~=nil and type(d.write)~='boolean'then return nil end
  for k in pairs(d)do if k~='route' and k~='form' and k~='write'then return nil end end
@@ -70,7 +107,7 @@ local function web_operation(d)
  return ({access_update=route,access_delete_rule=route,access_delete_entry=route,access_delete_all=route,
   wol_apply=route,update_url_save=route,config_reset=route,certificate_apply=route})[route]
 end
-if ...=='library'then return {read=read,write=write,dir=dir,id=id,request=request,validate=validate,routes=routes,strict=strict,encode=codec.json,root=root,fail=fail,web_operation=web_operation,pending_add=pending_add,mark_pending_add=mark_pending_add}end
+if ...=='library'then return {read=read,write=write,dir=dir,id=id,request=request,validate=validate,routes=routes,strict=strict,encode=codec.json,root=root,fail=fail,web_operation=web_operation,pending_add=pending_add,mark_pending_add=mark_pending_add,public_view=public_view,read_public_view=read_public_view,write_public_view=write_public_view}end
 local mode=arg[1]
 if mode=='validate-request'then request(arg[2],true);return
 elseif mode=='release-pending-add'then
@@ -79,6 +116,7 @@ elseif mode=='release-pending-add'then
  if result and result.ok and type(result.add_applied_revision)=='number' then
   local current=read('/etc/homegate/transactions/current',16)
   if tonumber(current)==result.add_applied_revision then
+   if result.public_applied then write_public_view(result.public_applied) end
    for kind,path in pairs(pending_paths)do
     if (result.add_applied_page=='all' or result.add_applied_page==kind) and pending_add(kind) then
      assert(fs.unlink(path));assert(os.execute('fsync /etc/homegate')==0)

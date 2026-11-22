@@ -55,16 +55,16 @@ def ar_members(blob):
     return result
 
 
-def tar_member(blob, name, presence_only=False):
+def tar_member(blob, name, presence_only=False, *, limit=LIMIT):
     found = []
     with tarfile.open(fileobj=io.BytesIO(blob), mode='r:*') as archive:
         for entry in archive:
             if entry.name.removeprefix('./') != name:
                 continue
-            if not entry.isfile() or entry.size > (32 * LIMIT if presence_only else LIMIT):
+            if not entry.isfile() or entry.size > (32 * LIMIT if presence_only else limit):
                 raise ValueError('Unsafe metadata member')
-            found.append(b'' if presence_only else archive.extractfile(entry).read(LIMIT + 1))
-    if len(found) != 1 or len(found[0]) > LIMIT:
+            found.append(b'' if presence_only else archive.extractfile(entry).read(limit + 1))
+    if len(found) != 1 or len(found[0]) > limit:
         raise ValueError('Missing/duplicate metadata member: ' + name)
     return found[0]
 

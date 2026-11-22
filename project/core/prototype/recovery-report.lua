@@ -2,7 +2,7 @@
 local M={}
 local modules={ddns=true,acme=true,firewall=true,proxy=true,access=true}
 local states={retrying=true,degraded=true,requires_user_action=true}
-local kinds={temporary=true,authentication=true,rate_limit=true,not_found=true,invalid_zone=true,
+local kinds={temporary=true,authentication=true,rate_limit=true,not_found=true,invalid_zone=true,record_conflict=true,
     propagation_pending=true,network_unavailable=true,timeout=true,context_canceled=true,
     unsupported=true,invalid_request=true,invalid_configuration=true,runtime_failure=true,reconciliation_required=true,state_unavailable=true}
 local function int(v) return type(v)=='number' and v==math.floor(v) and v>=0 and v<=999999999 end

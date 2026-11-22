@@ -9,7 +9,6 @@
   --hg-control-width: 280px;
   --hg-control-height: 28px;
   --hg-control-line-height: 26px;
-  --hg-host-border: #ccc;
   --hg-field-hint: #bfbfbf;
   --hg-label-width: 150px;
   --hg-field-width: 280px;
@@ -145,7 +144,7 @@ html.hg-theme-design .hg-plugin-header h2 { font-size: 1.85rem; }
 /* Textareas keep normal multi-line padding/line-height. */
 textarea.hg-control { padding: .45em .55em !important; line-height: 1.4 !important; }
 /* One select-chevron style across native selects and custom resource pickers. */
-select.hg-control {
+select.hg-control, .hg-host-toggle {
   -webkit-appearance: none; -moz-appearance: none; appearance: none;
   padding-right: 2em !important;
   background-color: var(--hg-surface);
@@ -256,26 +255,34 @@ textarea.hg-control { box-sizing: border-box; width: var(--hg-control-width); mi
 #hg-public-modal #hg-public-renew-days { background-color: var(--hg-surface) !important; }
 #hg-public-account-result, .hg-account-actions { grid-column: 2; }
 .hg-account-actions { gap: .35em; display: flex; flex-wrap: wrap; }
-.hg-host-input { display: flex; position: relative; }
-.hg-host-input input { padding-right: 2.25em !important; }
-.hg-host-toggle {
-  position: absolute; inset: 1px 1px 1px auto; width: 2.1em;
-  border: 0; border-left: 1px solid var(--hg-host-border); background: transparent; color: inherit; cursor: pointer;
+.hg-host-record { position: relative; min-width: 0; }
+.hg-host-input { display: flex; gap: .35em; }
+.hg-modal .hg-host-input .hg-host-toggle {
+  flex: 0 0 var(--hg-control-height);
+  padding-inline: 0 !important;
+  background-position: calc(50% - 2px) 50%, calc(50% + 2px) 50%;
+  border: 1px solid var(--border-color, #ccc);
+  border-radius: 3px;
+  cursor: pointer;
 }
-.hg-host-toggle span {
-  display: inline-block; border: .32em solid transparent; border-bottom: 0; border-top-color: currentColor; vertical-align: middle;
-}
-.hg-host-toggle:disabled { color: var(--hg-field-hint); cursor: default; }
+.hg-modal .hg-host-input .hg-host-toggle:disabled { opacity: .55; cursor: default; }
 .hg-host-options {
-  max-height: 12em; overflow: auto; margin-top: 3px; border: 1px solid var(--hg-host-border);
-  background: var(--hg-surface);
+  position: absolute; z-index: 2; inset-inline: 0; top: 100%;
+  max-height: 12em; overflow: auto; margin-top: 3px;
+  border: 1px solid var(--border-color, #ccc);
+  background-color: var(--hg-surface);
 }
+.hg-host-refresh-time, .hg-host-options button { padding: .4em .65em; }
+.hg-host-refresh-time, .hg-host-options button span { color: var(--hg-field-hint); }
 .hg-host-options button {
-  display: flex; justify-content: space-between; gap: 1em; width: 100%; text-align: left;
-  background: transparent; border: 0; padding: .4em .65em; color: inherit; cursor: pointer;
+  display: flex; justify-content: space-between; gap: 1em; width: 100%;
+  border: 0; background: transparent; color: inherit; text-align: left; cursor: pointer;
 }
-.hg-host-options button:hover, .hg-host-options button:focus-visible { outline: 1px solid currentColor; outline-offset: -1px; }
-.hg-host-options button span { color: var(--hg-field-hint); white-space: nowrap; }
+.hg-host-options button span { white-space: nowrap; }
+.hg-host-options button:hover, .hg-host-options button:focus-visible {
+  background-color: Highlight; color: HighlightText; outline: none;
+}
+.hg-host-options button:hover span, .hg-host-options button:focus-visible span { color: inherit; }
 .hg-modal-grid [hidden] { display: none; }
 #hg-public-management-url { margin-inline-start: .45em; overflow-wrap: anywhere; }
 .hg-web-enabled-check { float: none !important; margin: 0 !important; vertical-align: middle; }
@@ -371,7 +378,7 @@ html:lang(zh) .hg-log-actions .hg-btn-4, html:lang(zh) .hg-button-row .hg-btn-4 
 }
 .hg-public-address > span { display: block; }
 .hg-public-address .hg-public-url { font-size: 1.06em; }
-.hg-public-address .hg-public-hint { font-size: 1em; line-height: 1.25; }
+.hg-public-address .hg-public-hint { font-size: 1em; line-height: 1.25; color: var(--hg-field-hint); }
 .hg-public-table td.hg-public-target { font-size: 1.12em; }
 .hg-public-table td > .hg-web-enabled-check { margin-block: 0; vertical-align: middle; }
 .hg-public-table td[colspan] { grid-column: 1 / -1; }

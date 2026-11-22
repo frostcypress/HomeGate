@@ -1,18 +1,23 @@
 #!/usr/bin/env python3
 """Build the changed private transport for native verification; no installation."""
-import argparse,hashlib,json,os,subprocess
+import argparse,hashlib,json,os,re,subprocess
 from pathlib import Path
 ROOT=Path(__file__).resolve().parents[1]
+COMPONENT=ROOT/'packaging/components/homegate-wol'
+RECIPE=(COMPONENT/'Makefile').read_text()
+VERSION=re.search(r'^PKG_VERSION:=([0-9]+\.[0-9]+\.[0-9]+)$',RECIPE,re.M).group(1)
+RELEASE=re.search(r'^PKG_RELEASE:=([0-9]+)$',RECIPE,re.M).group(1)
+VERSION=f'{VERSION}-r{RELEASE}'
 def sha(p):return hashlib.sha256(p.read_bytes()).hexdigest()
 def validate(work):
- d=json.loads((work/'metadata.json').read_text());assert d['recipe']==1 and d['source_sha256']==sha(ROOT/'packaging/components/homegate-wol/src/send.c') and d['binary_sha256']==sha(work/'send');return d
+ d=json.loads((work/'metadata.json').read_text());assert d['recipe']==2 and d['version']==VERSION and d['source_sha256']==sha(COMPONENT/'src/send.c') and d['binary_sha256']==sha(work/'send');return d
 def prepare(work):
  if os.getuid()==0:raise ValueError('Build as existing non-root verification user')
  if (work/'metadata.json').exists():return validate(work)
- work.mkdir(parents=True);src=ROOT/'packaging/components/homegate-wol/src/send.c'
- command=['cc','-O2','-std=c11','-Wall','-Wextra','-Werror','-Wl,-z,relro,-z,now','-o',str(work/'send'),str(src)]
- subprocess.run(command,check=True);assert subprocess.run([str(work/'send'),'--version'],capture_output=True,check=True).stdout==b'homegate-wol 1\n'
- (work/'metadata.json').write_text(json.dumps({'recipe':1,'source_sha256':sha(src),'binary_sha256':sha(work/'send'),'command':command,'system_installed':False,'target_execution_verified':False},indent=2)+'\n');return validate(work)
+ work.mkdir(parents=True);src=COMPONENT/'src/send.c'
+ command=['cc','-O2',f'-DHOMEGATE_WOL_VERSION="{VERSION}"','-std=c11','-Wall','-Wextra','-Werror','-Wl,-z,relro,-z,now','-o',str(work/'send'),str(src)]
+ subprocess.run(command,check=True);assert subprocess.run([str(work/'send'),'--version'],capture_output=True,check=True).stdout==f'homegate-wol {VERSION}\n'.encode()
+ (work/'metadata.json').write_text(json.dumps({'recipe':2,'version':VERSION,'source_sha256':sha(src),'binary_sha256':sha(work/'send'),'command':command,'system_installed':False,'target_execution_verified':False},indent=2)+'\n');return validate(work)
 def fixture(work):
  if os.getuid()==0:raise ValueError('Build as existing non-root verification user')
  src=ROOT/'scripts/wol-syscall-fixture.c'

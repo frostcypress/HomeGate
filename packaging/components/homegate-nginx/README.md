@@ -1,10 +1,12 @@
 # HomeGate 私有代理组件
 
-当前配方 `1.30.6-r3` 使用所选 SDK 的 OpenSSL/PCRE2 静态归档，将它们链接进专用 NGINX；运行时保留 libc/libgcc 依赖，不安装共享 TLS/PCRE2 库、不覆盖路由器系统库。`PKG_BUILD_DEPENDS` 保留实际源码构建依赖，运行依赖不再声明系统 OpenSSL/PCRE2。缺少静态归档或首次配置探测失败时停止，不回退到系统动态库；编译后再检查 ELF，出现 TLS/PCRE 动态依赖则拒绝打包。SDK 中其余包（例如 curl）的 TLS 依赖仍独立存在，本修复不表示全项目依赖已与目标兼容。
+当前配方 `1.30.7-r1` 使用所选 SDK 的 OpenSSL/PCRE2 静态归档，将它们链接进专用 NGINX；运行时保留 libc/libgcc 依赖，不安装共享 TLS/PCRE2 库、不覆盖路由器系统库。`PKG_BUILD_DEPENDS` 保留实际源码构建依赖，运行依赖不再声明系统 OpenSSL/PCRE2。缺少静态归档或首次配置探测失败时停止，不回退到系统动态库；编译后再检查 ELF，出现 TLS/PCRE 动态依赖则拒绝打包。SDK 中其余包（例如 curl）的 TLS 依赖仍独立存在，本修复不表示全项目依赖已与目标兼容。
 
 专用 TLS 初始化关闭外部 OpenSSL 配置加载，避免加载系统旧 ABI 的配置/engine/provider。原有 IP SAN 补丁、证书链/有效期/DNS 与 IP 身份校验和 worker 默认身份不变。静态依赖的原始许可证随组件安装，源码及本地补丁摘要见 `sources.json`。更换 SDK 或归档需重新记录实际版本/哈希，静态组合更新后必须重新构建本组件。
 
 2026-10-31 用户提供库的离线证据显示 `.so.3` 实为 OpenSSL 1.1 SONAME，缺当前候选的五个 TLS 符号；PCRE2 固定路径亦未找到。新实际 AArch64 IPK 的 NEEDED 仅 libc/libgcc，静态符号覆盖不等于目标实际加载、TLS 功能或资源验收。`scripts/native-component-probe.sh` 供固定哈希的临时版本探测包使用，不是安装器；从r173起附带专用静态执行器，以每个10秒有界执行 `-V`/`--version`，不依赖目标timeout命令，不启动服务或发送WOL。见`docs/原生组件版本探测.md`。
+
+1.30.7 使用官方源码归档，校验 SHA-256，并用官方公布的 Sergey Kandaurov 公钥核对归档 PGP 签名。四个交叉编译补丁和两个 HomeGate 补丁均通过零模糊应用检查。 [官方变更记录](https://nginx.org/en/CHANGES-1.30) · [官方签名公钥](https://nginx.org/en/pgp_keys.html)
 
 以下为历史背景；原“目标动态 TLS/PCRE 待落实”由上述私有静态配方替代，实机验收仍待完成。
 

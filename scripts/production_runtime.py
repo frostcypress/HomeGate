@@ -9,6 +9,18 @@ import argparse
 from engineering_runtime import payload as business_payload, web_payload
 
 BASE = 'usr/libexec/homegate/'
+COMPONENT_PACKAGES = {
+    'homegate-nginx': {
+        'usr/libexec/homegate-nginx/nginx': (BASE+'components/nginx', 0o755),
+        'usr/share/licenses/homegate-nginx/LICENSE': ('usr/share/licenses/homegate-core/nginx/LICENSE', 0o644),
+        'usr/share/licenses/homegate-nginx/OpenSSL-Apache-2.0.txt': ('usr/share/licenses/homegate-core/nginx/OpenSSL-Apache-2.0.txt', 0o644),
+        'usr/share/licenses/homegate-nginx/PCRE2-LICENCE.txt': ('usr/share/licenses/homegate-core/nginx/PCRE2-LICENCE.txt', 0o644),
+    },
+    'homegate-wol': {
+        'usr/libexec/homegate-wol/send': (BASE+'components/wol-send', 0o755),
+        'usr/share/licenses/homegate-wol/LICENSE': ('usr/share/licenses/homegate-core/wol/LICENSE', 0o644),
+    },
+}
 
 def native(raw):
     text = raw.decode('utf-8').replace('homegate-engineering', 'homegate').replace('homegate_engineering', 'homegate')
@@ -18,7 +30,7 @@ def native(raw):
     text = text.replace('HG_ENG_NAT', 'HG_NATIVE_NAT').replace('HG_ENG_INPUT', 'HG_NATIVE_INPUT')
     return text.encode('utf-8')
 
-def payload(root):
+def payload(root, *, bundled=False):
     files={BASE+name:native(raw) for name,raw in business_payload(root).items()}
     readonly={
         'homegate-network-read.sh':['network_resolve_enabled'],
@@ -205,6 +217,14 @@ end""")
  service_plan_set) ddns=${payload%%:*};rest=${payload#*:};certs=${rest%%:*};rest=${rest#*:};web=${rest%%:*};policy=${rest#*:};raw=$(/usr/bin/homegate service-plan-set "$ddns" "$certs" "$web" "$policy" --confirm) || rc=$?;;
 ''')
     web_runtime(root,files)
+    if bundled:
+        binaries = {('/'+old).encode(): ('/'+new).encode()
+                    for members in COMPONENT_PACKAGES.values()
+                    for old, (new, mode) in members.items() if mode == 0o755}
+        for name, raw in files.items():
+            for old, new in binaries.items():
+                raw = raw.replace(old, new)
+            files[name] = raw
     return files
 
 def web_runtime(root,files):
@@ -423,23 +443,23 @@ fi
     end=files[controller].index(b'\nend\n',files[controller].index(marker))
     files[controller]=files[controller][:end]+('\n    '+'\n    '.join(entries)).encode()+files[controller][end:]+''.join(addition).encode()
 
-def stage_sdk(root, sdk):
+def stage_sdk(root, sdk, *, bundled=False):
     """Stage the native package and component recipes into an existing SDK."""
     import shutil
     package = sdk / 'package'
-    stage_package(root, package / 'homegate-native-candidate')
-    for component in ('homegate-nginx', 'homegate-wol'):
+    stage_package(root, package / 'homegate-native-candidate', bundled=bundled)
+    for component in COMPONENT_PACKAGES:
         shutil.copytree(root / 'packaging/components' / component, package / component)
     shutil.copyfile(root / 'homegate-version.mk', sdk / 'homegate-version.mk')
 
 
-def stage_package(root,destination):
+def stage_package(root,destination, *, bundled=False):
     """Source-only SDK feed input. Does not compile, install, enable or publish."""
     if destination.exists() and (destination.is_symlink() or any(destination.iterdir())):
         raise ValueError('Package staging destination must be empty')
     destination.mkdir(parents=True,exist_ok=True)
     import shutil
-    for name,raw in payload(root).items():
+    for name,raw in payload(root,bundled=bundled).items():
         kind='web' if name.startswith(('usr/lib/lua/luci/','www/')) else 'core'
         path=destination/'payload'/kind/name;path.parent.mkdir(parents=True,exist_ok=True);path.write_bytes(raw)
         path.chmod(0o755 if name in ['usr/bin/homegate','etc/init.d/homegate','etc/hotplug.d/iface/95-homegate'] or name.endswith('.sh') or name.endswith('service-disabled') else 0o644)
@@ -452,6 +472,23 @@ def stage_package(root,destination):
     preinst=hook+'\n'  # action is a literal SDK hook argument, not caller text.
     preinst=preinst.replace('action=${1:-};shift || exit 2','action=preinst')
     make=(root/'packaging/production/Makefile').read_text(encoding='utf-8').replace('@HOMEGATE_PREINST@',preinst.replace('$','$$').rstrip()).replace('@HOMEGATE_POSTRM@',(root/'packaging/production/postrm.sh').read_text(encoding='utf-8').replace('$','$$').rstrip())
+    install = []
+    if bundled:
+        for members in COMPONENT_PACKAGES.values():
+            for source, (target, mode) in members.items():
+                install.append('\t$(INSTALL_DIR) $(1)/'+str(Path(target).parent).replace('\\','/'))
+                tool = 'INSTALL_BIN' if mode == 0o755 else 'INSTALL_DATA'
+                install.append(f'\t$({tool}) $(STAGING_DIR)/{source} $(1)/{target}')
+        licenses = 'PKG_LICENSE+=BSD-2-Clause Apache-2.0 BSD-3-Clause'
+        dependencies = 'PKG_BUILD_DEPENDS:='+' '.join(COMPONENT_PACKAGES)
+        make = make.replace('@HOMEGATE_BUNDLE_BUILD@', licenses+'\n'+dependencies)
+        make = make.replace('@HOMEGATE_CORE_ARCH@', '')
+        make = make.replace('@HOMEGATE_COMPONENT_DEPENDS@', '+libpthread')
+    else:
+        make = make.replace('@HOMEGATE_BUNDLE_BUILD@', '')
+        make = make.replace('@HOMEGATE_CORE_ARCH@', '  PKGARCH:=all')
+        make = make.replace('@HOMEGATE_COMPONENT_DEPENDS@', ' '.join('+'+name for name in COMPONENT_PACKAGES))
+    make = make.replace('@HOMEGATE_BUNDLE_INSTALL@', '\n'.join(install))
     assert '@HOMEGATE_' not in make
     (destination/'Makefile').write_text(make,encoding='utf-8')
     (destination/'tools').mkdir();shutil.copyfile(root/'project/luci/common/tools/po2lmo.py',destination/'tools/po2lmo.py')
@@ -485,7 +522,11 @@ def stage_installed(root,installed,destination):
     root=Path(root);installed=Path(installed);destination=Path(destination)
     if installed.is_symlink() or not installed.is_dir() or destination.exists():raise ValueError('Require installed directory and new staging path')
     with tempfile.TemporaryDirectory() as work:
-        feed=Path(work)/'expected';stage_package(root,feed)
+        bundled_components=installed/BASE/'components'
+        if bundled_components.is_symlink():
+            raise ValueError('Installed component directory must not be a link')
+        bundled=bundled_components.is_dir()
+        feed=Path(work)/'expected';stage_package(root,feed,bundled=bundled)
         expected={}
         for part in ('core','web'):
             for path in (feed/'payload'/part).rglob('*'):
@@ -517,6 +558,8 @@ def stage_installed(root,installed,destination):
 if __name__=='__main__':
     parser=argparse.ArgumentParser(description=__doc__);group=parser.add_mutually_exclusive_group(required=True)
     group.add_argument('--output',type=Path);group.add_argument('--package-output',type=Path)
+    parser.add_argument('--bundled',action='store_true',help='Include the private target components in Core')
     args=parser.parse_args();root=Path(__file__).resolve().parents[1]
-    if args.package_output:stage_package(root,args.package_output)
+    if args.bundled and not args.package_output:parser.error('--bundled requires --package-output')
+    if args.package_output:stage_package(root,args.package_output,bundled=args.bundled)
     else:stage(root,args.output)

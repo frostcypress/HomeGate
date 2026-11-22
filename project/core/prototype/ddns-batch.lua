@@ -3,7 +3,7 @@ local M={}
 local providers={cloudflare=true,aliyun=true,dnspod=true,huaweicloud=true}
 local decisions={ready=true,stale=true,blocked=true,reconciliation_required=true,unauthorized=true,clock_invalid=true,paused=true,retry_wait=true,waiting=true}
 local outcomes={none=true,inflight=true,created=true,updated=true,unchanged=true,retry_wait=true,paused=true,unknown=true}
-local kinds={['']=true,authentication=true,not_found=true,unsupported=true,invalid_request=true,invalid_zone=true,temporary=true,network_unavailable=true,timeout=true,rate_limit=true,invalid_configuration=true}
+local kinds={['']=true,authentication=true,not_found=true,unsupported=true,invalid_request=true,invalid_zone=true,record_conflict=true,temporary=true,network_unavailable=true,timeout=true,rate_limit=true,invalid_configuration=true}
 local function integer(n,max)return type(n)=='number' and n==math.floor(n) and n>=0 and n<=max end
 function M.slice(snapshot,intent,plan,rule,planner,authority,network,records,json)
     if type(intent)~='table' or type(intent.switches)~='table' or type(plan)~='table' or type(plan.entries)~='table' or #plan.entries>32 then return nil end

@@ -19,6 +19,16 @@ ACTION_GROUPS=('cli_actions','web_access_actions','web_maintenance_actions','dae
 FIRMWARE_JOB_GROUPS=('migration','backup','rollback','recovery','cold_config_recovery','web_owner_refusal','cli_ddns','cli_ddns_unknown','cli_ddns_batch','daemon_ddns','daemon_proxy','daemon_maintenance','daemon_certificate_retry',
                      'cli_acme','cli_acme_unknown','daemon_acme','web_acme','web_unknown','web_certificate','web_certificate_environment')
 
+def bundled_install():
+    return INSTALLED is not None and (INSTALLED/'usr/libexec/homegate/components').is_dir()
+
+
+def fixture_component(state, name):
+    if bundled_install():
+        return state/'libexec/homegate/components'/('wol-send' if name=='send' else name)
+    return state/'libexec'/('homegate-wol' if name=='send' else 'homegate-nginx')/name
+
+
 def setup_state(s, *, bin_ubus=False, switchable_setsid=False, cold_config=False, management_dns=False):
     web.setup_state(s)
     if management_dns:
@@ -130,9 +140,6 @@ if Path('/teststate/aliyun-update-fixture').exists() and 'alidns.aliyuncs.com' i
         for name in ['br-lan','eth1','eth2']:(s/'wol-sys-net'/name).mkdir(parents=True)
         (s/'wol-sys-net/br-lan/brif').mkdir()
         for name in ['eth1','eth2']:(s/'wol-sys-net/br-lan/brif'/name).touch()
-        component=s/'libexec/homegate-wol';component.mkdir()
-        (component/'send').write_text('#!/usr/bin/python3\nimport os,sys\nfrom pathlib import Path\np=Path("/teststate/wol-mode")\nos.environ["HOMEGATE_WOL_FIXTURE_MODE"]=p.read_text() if p.exists() else "ok"\nos.environ["LD_PRELOAD"]='+repr(str(WOL_FIXTURE/'transport.so'))+'\nos.execv('+repr(str(WOL/'send'))+',["send",*sys.argv[1:]])\n')
-        (component/'send').chmod(0o755)
     tree=s/'native-installed'
     if INSTALLED:
         receipt=stage_installed(ROOT,INSTALLED,tree)
@@ -147,6 +154,10 @@ if Path('/teststate/aliyun-update-fixture').exists() and 'alidns.aliyuncs.com' i
     assert old.resolve().parent==(s/'libexec').resolve() and old.is_dir() and not old.is_symlink()
     shutil.rmtree(old)
     shutil.copytree(tree/'usr/libexec/homegate',s/'libexec/homegate')
+    if ACTIONS:
+        component=fixture_component(s,'send');component.parent.mkdir(parents=True,exist_ok=True)
+        component.write_text('#!/usr/bin/python3\nimport os,sys\nfrom pathlib import Path\np=Path("/teststate/wol-mode")\nos.environ["HOMEGATE_WOL_FIXTURE_MODE"]=p.read_text() if p.exists() else "ok"\nos.environ["LD_PRELOAD"]='+repr(str(WOL_FIXTURE/'transport.so'))+'\nos.execv('+repr(str(WOL/'send'))+',["send",*sys.argv[1:]])\n')
+        component.chmod(0o755)
     for part,origin in [('controllers','controller'),('models','model'),('view','view')]:
         shutil.copytree(tree/('usr/lib/lua/luci/'+origin),s/part,dirs_exist_ok=True)
     shutil.copytree(tree/'www',s/'www',dirs_exist_ok=True)
@@ -184,8 +195,8 @@ case "${1:-}" in start) start_service;;stop) stop_service;;reload) reload_servic
     if PROXY:
         (s/'etc/passwd').write_text((s/'etc/passwd').read_text()+'root:x:0:0:fixture:/tmp:/bin/false\n')
         (s/'etc/group').write_text((s/'etc/group').read_text()+'root:x:0:\n')
-        component=s/'libexec/homegate-nginx';component.mkdir()
-        (component/'nginx').write_text('#!/usr/bin/python3\nimport os,sys\na=sys.argv[1:]\nif "-g" in a:a[a.index("-g")+1]="daemon off; master_process on;"\nos.environ["LD_PRELOAD"]='+repr(str(FIXTURE/'same-credentials.so'))+'\nos.execv('+repr(str(NGINX/'nginx'))+',["nginx",*a])\n');(component/'nginx').chmod(0o755)
+        component=fixture_component(s,'nginx');component.parent.mkdir(parents=True,exist_ok=True)
+        component.write_text('#!/usr/bin/python3\nimport os,sys\na=sys.argv[1:]\nif "-g" in a:a[a.index("-g")+1]="daemon off; master_process on;"\nos.environ["LD_PRELOAD"]='+repr(str(FIXTURE/'same-credentials.so'))+'\nos.execv('+repr(str(NGINX/'nginx'))+',["nginx",*a])\n');component.chmod(0o755)
         (s/'tools/ip6tables').write_text((ROOT/'scripts/firewall-kernel-fixture.py').read_text().replace('HG_ENG_','HG_NATIVE_'));(s/'tools/ip6tables').chmod(0o755)
         (s/'fw-kernel.json').write_text(json.dumps({'nat':{'PREROUTING':[['-j','HOMEGATE_NAT']],'HOMEGATE_NAT':[['-j','RETURN']]},'filter':{'INPUT':[['-j','HOMEGATE_INPUT']],'HOMEGATE_INPUT':[['-j','RETURN']]}}))
 
@@ -232,7 +243,7 @@ class Native(web.Web):
         self.assertEqual(Path('/etc/config/homegate_engineering').read_bytes(),(STATE/'engineering-before').read_bytes())
         if not allow_provider_calls:self.assertFalse((STATE/'provider-calls').exists())
         self.assertEqual(list(Path('/tmp').glob('homegate-web-*')),[])
-        for n,raw in payload(ROOT).items():
+        for n,raw in payload(ROOT,bundled=bundled_install()).items():
             if n.startswith('usr/libexec/homegate/'):
                 self.assertEqual(Path('/'+n).read_bytes(),raw,n)
         for key in ['CapEff','CapPrm','CapBnd']:
@@ -1051,7 +1062,7 @@ exec /usr/sbin/busybox flock "$@"
         self.owner=None
         enabled=self.web_wait(self.web_request('basic_apply',{'enabled':'1','auto_firewall':'1','mode':'save'},True)['job'])
         self.assertTrue(enabled['ok'],enabled)
-        nginx=STATE/'libexec/homegate-nginx/nginx'
+        nginx=fixture_component(STATE,'nginx')
         wrapper=nginx.read_text()
         nginx.write_text(wrapper.replace('a=sys.argv[1:]','''from pathlib import Path
 a=sys.argv[1:]
@@ -1320,7 +1331,7 @@ esac
 
         start()
         missing=save({'mode':'apply','public_service_count':'0',**manager})
-        self.assertIn('保留一条公网服务',missing['error'])
+        self.assertIn('开启 HTTPS',missing['error'])
         companion={k.replace('_1_','_2_'):v for k,v in kept.items() if k.startswith('public_service_1_')}
         companion.update(public_service_2_web_id='',public_service_2_external_port='56814',public_service_2_https='0',
                          public_service_2_target='http://192.168.2.3:'+local_port)
@@ -1330,11 +1341,14 @@ esac
         http_row=next(row for row in rows if row['external_port']=='56814')
         http_fields={key.replace('_2_','_1_'):value for key,value in companion.items()}
         http_fields.update(public_service_1_web_id=http_row['web_id'],public_service_1_cert_id='')
-        result=save({**http_fields,**manager,'mode':'apply','public_service_count':'1'});self.assertTrue(result['ok'],result)
+        result=save({**http_fields,**manager,'mode':'apply','public_service_count':'1'})
+        self.assertFalse(result['ok'],result)
+        self.assertIn('开启 HTTPS',result['error'])
+        result=save({**http_fields,'management_domain':'','management_wan':'0','mode':'apply','public_service_count':'1'})
+        self.assertTrue(result['ok'],result)
         public=self.web_request('public')['data']
         self.assertEqual([row['https'] for row in public['services']],['0'])
-        self.assertEqual(public['main']['management_domain'],domain)
-        self.assertEqual(public['main']['management_certificate'],certificate)
+        self.assertEqual(public['main']['management_domain'],'')
         result=save({'mode':'apply','public_service_count':'0','management_domain':'','management_wan':'0'})
         self.assertTrue(result['ok'],result)
         self.assertEqual(self.web_request('public')['data']['main']['management_domain'],'')
@@ -1362,8 +1376,8 @@ esac
                'public_service_1_enabled':'0','public_service_1_https':'0',
                'public_service_1_target':'http://192.168.2.2:'+local_port}
         before=self.cli('config-status')['revision']
-        missing_cert=save(plain);self.assertFalse(missing_cert['ok'],missing_cert)
-        self.assertIn('暂时没有可用的正式证书',missing_cert['error'])
+        missing_https=save(plain);self.assertFalse(missing_https['ok'],missing_https)
+        self.assertIn('开启 HTTPS',missing_https['error'])
         self.assertEqual(self.cli('config-status')['revision'],before)
         self.assertEqual([row['id'] for row in self.web_request('public')['data']['certificates']],[certificate])
         pending={**plain,'public_service_1_https':'1'}
@@ -2397,7 +2411,7 @@ else:
         self.assertEqual(denied['failure_stage'],'wol-pending-add')
         self.assertEqual(len(self.web_request('wol')['data']['hosts']),1)
         logger=['ash','/usr/libexec/homegate/native-log.sh','package-upgrade']
-        for phase,stage in [('begin','none'),('verified','none'),('failed','install')]:
+        for phase,stage in [('begin','none'),('verified','none'),('verified','none'),('failed','install')]:
             subprocess.run([*logger,phase,'1.3.0-r242','1.3.0-r243',stage],check=True,timeout=5)
         bad=subprocess.run([*logger,'verified','1.3.0-r242','invalid-target','none'],timeout=5)
         self.assertEqual(bad.returncode,2)
@@ -2405,7 +2419,7 @@ else:
         self.assertIn('保存网络唤醒设置，操作失败，MAC 地址不能重复。',log)
         self.assertIn('保存网络唤醒设置，操作失败，已有主机的 MAC 地址不能修改。',log)
         self.assertIn('HomeGate 版本升级 1.3.0-r242 → 1.3.0-r243，开始',log)
-        self.assertIn('HomeGate 版本升级 1.3.0-r242 → 1.3.0-r243，成功',log)
+        self.assertEqual(log.count('HomeGate 版本升级 1.3.0-r242 → 1.3.0-r243，成功'),1)
         self.assertIn('[ERROR] HomeGate 版本升级 1.3.0-r242 → 1.3.0-r243，失败，软件包安装未完成',log)
         before=Path('/etc/config/homegate').read_bytes()
         d=self.web_request('basic_apply',{'https_port':'99999'},True);result=self.web_wait(d['job']);self.assertFalse(result['ok']);self.assertEqual(Path('/etc/config/homegate').read_bytes(),before)
@@ -2584,7 +2598,9 @@ exec /usr/sbin/busybox fsync "$@"
         encoded=json.dumps(rendered);self.assertNotIn('WEB_PRIVATE_SECRET',encoded);self.assertNotIn('WEB_ACCOUNT_ID',encoded)
         form={'mode':'save','public_service_count':'1','public_service_1_domain':'files.example.test','public_service_1_target':'http://192.168.1.2:8080','public_service_1_provider':'cloudflare','public_service_1_enabled':'1','public_service_1_https':'0','public_service_1_external_port':'18080'}
         d=self.web_request('public_apply',form,True);result=self.web_wait(d['job']);self.assertTrue(result['ok'],result)
-        rows=self.web_request('public')['data']['services'];self.assertEqual(len(rows),1);self.assertEqual(rows[0]['domain'],'files.example.test')
+        saved_view=self.web_request('public')['data']
+        rows=saved_view['services'];self.assertEqual(len(rows),1);self.assertEqual(rows[0]['domain'],'files.example.test')
+        self.assertEqual(saved_view['public_applied_enabled'],'')
         source=Path('/etc/config/homegate').read_text();self.assertIn('files.example.test',source);self.assertNotIn('192.168.1.2',source)
         current=Path('/etc/homegate/transactions/current').read_text().strip();credentials=Path('/etc/homegate/transactions')/('gen-'+current)/'credentials'
         self.assertEqual((credentials/('web.'+rows[0]['web_id']+'.target')).read_text(),'http://192.168.1.2:8080')
@@ -2601,9 +2617,9 @@ exec /usr/sbin/busybox fsync "$@"
             return self.web_wait(self.web_request('public_apply',fields,True)['job'],seconds=30)
         saved=save_ports([standard,custom]);self.assertTrue(saved['ok'],saved)
         rows=self.web_request('public')['data']['services'];self.assertEqual(len(rows),2)
-        self.assertEqual([row['external_port'] for row in rows],['8443','18080'])
+        self.assertEqual([row['external_port'] for row in rows],['18080','8443'])
         self.assertTrue(rows[0]['ddns_id']);self.assertEqual(rows[0]['ddns_id'],rows[1]['ddns_id'])
-        self.assertEqual(rows[0]['port_suffix'],':8443')
+        self.assertEqual(rows[1]['port_suffix'],':8443')
         before=Path('/etc/config/homegate').read_bytes()
         other={**custom,'host':'other','domain':'other.example.test'}
         duplicate_port=save_ports([standard,{**other,'external_port':'18080','https':'1'}])
@@ -2625,8 +2641,10 @@ exec /usr/sbin/busybox fsync "$@"
         self.assertEqual(Path('/etc/config/homegate').read_bytes(),before)
         kept={**standard,'ddns_id':rows[0]['ddns_id']}
         result=save_ports([kept],'apply');self.assertTrue(result['ok'],result)
-        retained=self.web_request('public')['data']['services'];self.assertEqual(len(retained),1)
+        applied_view=self.web_request('public')['data']
+        retained=applied_view['services'];self.assertEqual(len(retained),1)
         self.assertEqual(retained[0]['ddns_id'],kept['ddns_id'])
+        self.assertEqual(applied_view['public_applied_enabled'],kept['web_id'])
         result=save_ports([{**kept,'external_port':'80'}],block='1');self.assertFalse(result['ok'],result)
         self.assertNotIn('block_standard_public_ports',self.web_request('public')['data']['main'])
         revision=self.web_request('public')['data']['configuration_revision']
@@ -3306,6 +3324,24 @@ esac
                 finally:
                     conn.close()
 
+        # A request recorded under an earlier policy keeps its audit outcome.
+        audit=Path('/var/run/homegate/access.json')
+        old={'host':'www.example.test','allowed':True,'reason':'disabled','region':'',
+             'time':'2026-10-30T00:00:00Z','count':1}
+        foreign_ip,domestic_ip='2001:db9::3','2001:db8::3'
+        snapshot=audit.with_name('access-test.next')
+        snapshot.write_text(json.dumps({'entries':[{**old,'ip':ip} for ip in (foreign_ip,domestic_ip)]}))
+        snapshot.chmod(0o600);snapshot.replace(audit)
+        def observed():
+            result=self.web_request('api/access_recent')
+            self.assertTrue(result['ok'],result)
+            return {row['ip']:row for row in json.loads(result['body'])['entries']}
+        restricted=observed()
+        self.assertEqual((restricted[foreign_ip]['current_region'],restricted[foreign_ip]['current_reason'],
+                          restricted[foreign_ip]['current_allowed']),('foreign','denied',False))
+        self.assertEqual((restricted[domestic_ip]['current_region'],restricted[domestic_ip]['current_reason'],
+                          restricted[domestic_ip]['current_allowed']),('CN','region',True))
+        self.assertEqual(restricted[foreign_ip]['reason'],'disabled')
         job=self.web_request('public_apply',{**form,'mode':'apply','access_scope':''},True)['job']
         time.sleep(21)
         state=self.cli('web-job-status',job)
@@ -3314,9 +3350,20 @@ esac
         self.assertTrue(schedule['running'] and schedule['ticks']>=1,schedule)
         self.assertEqual(json.loads(owner.read_text())['pid'],pid)
         probe(403)
+        deadline=time.monotonic()+4
+        while True:
+            denied=[entry for entry in observed().values() if entry['reason']=='denied']
+            if denied: break
+            self.assertLess(time.monotonic(),deadline,'Region denial was not recorded')
+            time.sleep(.1)
+        previous=denied[0]
         unrestricted=self.web_wait(job,seconds=105)
         release_delay()
         self.assertTrue(unrestricted['ok'] and unrestricted['runtime_applied'],unrestricted)
+        reopened=observed()[previous['ip']]
+        self.assertEqual((reopened['current_region'],reopened['current_reason'],
+                          reopened['current_allowed']),('','disabled',True))
+        self.assertEqual((reopened['reason'],reopened['time']),(previous['reason'],previous['time']))
         probe(200)
         deadline=time.monotonic()+35
         while self.cli('schedule-status')['status']=='running' and time.monotonic()<deadline:

@@ -89,7 +89,7 @@ function M.active_management_domain(sections)
     end
     if selected and selected~="" then
         for _, section in ipairs(sections) do
-            if section.kind=="web_rule" and section.values.retained~="1" and section.values.domain==selected then return selected end
+            if section.kind=="web_rule" and section.values.retained~="1" and section.values.https=="1" and section.values.domain==selected then return selected end
         end
     end
 end

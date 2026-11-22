@@ -2,11 +2,11 @@
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=homegate-nginx
-PKG_VERSION:=1.30.6
-PKG_RELEASE:=3
+PKG_VERSION:=1.30.7
+PKG_RELEASE:=1
 PKG_SOURCE:=nginx-$(PKG_VERSION).tar.gz
 PKG_SOURCE_URL:=https://nginx.org/download/
-PKG_HASH:=3cf46f5ed7504d460125866b7bea99fb357f31d887e2e63b35503310e9b8b6c8
+PKG_HASH:=2565b5c837050e958f70fb0f73c48e2bca4542ad349fd356f46fb0c72610bc6e
 PKG_BUILD_DIR:=$(BUILD_DIR)/nginx-$(PKG_VERSION)
 PKG_LICENSE:=BSD-2-Clause Apache-2.0 BSD-3-Clause
 PKG_LICENSE_FILES:=LICENSE
@@ -65,6 +65,10 @@ define Package/homegate-nginx/install
 	$(INSTALL_DIR) $(1)/usr/share/licenses/homegate-nginx
 	$(INSTALL_DATA) $(PKG_BUILD_DIR)/LICENSE $(1)/usr/share/licenses/homegate-nginx/LICENSE
 	$(INSTALL_DATA) ./licenses/* $(1)/usr/share/licenses/homegate-nginx/
+endef
+
+define Build/InstallDev
+	$(call Package/homegate-nginx/install,$(1))
 endef
 
 $(eval $(call BuildPackage,homegate-nginx))

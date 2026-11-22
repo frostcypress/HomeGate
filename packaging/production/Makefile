@@ -4,15 +4,15 @@ PKG_NAME:=homegate-native-candidate
 PKG_VERSION:=$(HOMEGATE_VERSION)
 PKG_RELEASE:=$(HOMEGATE_RELEASE)
 PKG_LICENSE:=MIT GPL-3.0
-PKGARCH:=all
+@HOMEGATE_BUNDLE_BUILD@
 PKG_BUILD_DIR:=$(BUILD_DIR)/$(PKG_NAME)-$(PKG_VERSION)
 include $(INCLUDE_DIR)/package.mk
 
 define Package/homegate-core
   SECTION:=net
   CATEGORY:=Network
-  TITLE:=HomeGate native candidate core
-  DEPENDS:=+lua +luci-lib-jsonc +luci-lib-nixio +curl +ca-bundle +openssl-util +coreutils-stat +ip-full +ubus +homegate-nginx +homegate-wol
+  TITLE:=HomeGate native core
+  DEPENDS:=+lua +luci-lib-jsonc +luci-lib-nixio +curl +ca-bundle +openssl-util +coreutils-stat +ip-full +ubus @HOMEGATE_COMPONENT_DEPENDS@
   # Runtime virtual providers are resolved by opkg. Auto-selecting either here
   # makes this SDK generate a self-referential provider comparison in Kconfig.
   # flock is an executable capability checked before writes by native preinst;
@@ -20,7 +20,7 @@ define Package/homegate-core
   # Every runtime lock acquisition remains mandatory and fail-closed.
   EXTRA_DEPENDS:=busybox, ip6tables
   CONFLICTS:=homegate homegate-engineering-core
-  PKGARCH:=all
+@HOMEGATE_CORE_ARCH@
 endef
 define Package/homegate-core/conffiles
 /etc/config/homegate
@@ -50,6 +50,7 @@ define Build/Compile
 endef
 define Package/homegate-core/install
 	$(CP) $(PKG_BUILD_DIR)/core/. $(1)/
+@HOMEGATE_BUNDLE_INSTALL@
 endef
 define Package/luci-app-homegate/install
 	$(CP) $(PKG_BUILD_DIR)/web/. $(1)/

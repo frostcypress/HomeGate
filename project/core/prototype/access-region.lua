@@ -1,6 +1,7 @@
 -- Pure bounded APNIC statistics/cache codec. Registration economy, not geo-IP.
 local M={limit=24*1024*1024,max_prefixes=262144}
-local ip=assert(loadfile(arg[0]:match('^(.*)/[^/]+$')..'/cloudflare-record-plan.lua'))()
+local directory=... or arg[0]:match('^(.*)/[^/]+$')
+local ip=assert(loadfile(directory..'/cloudflare-record-plan.lua'))()
 local function bad()error('Invalid bounded CN allocation data',0)end
 local function integer(v,lo,hi)if type(v)~='string' or not v:match('^%d+$') or #v>10 then bad()end;local n=tonumber(v);if n<lo or n>hi then bad()end;return n end
 local function v4(s)
@@ -81,5 +82,79 @@ function M.cache(stream,output,now,keep_members)
  if counts.ipv4~=a or counts.ipv6~=b then bad()end
  return {updated=stamp,ipv4=a,ipv6=b,prefixes=a+b,stale=now-stamp>604800,
   day=day,day_count=tonumber(count),members=keep_members and seen or nil}
+end
+-- Compile the same CIDRs used by the proxy for a read-only view of saved observations.
+local function rule_members(value)
+ local members={}
+ for token in (value or ''):gmatch('[^,;%s]+') do
+  if not token:find('/',1,true) then token=token..(token:find(':',1,true) and '/128' or '/32') end
+  if token=='::/0' then
+   members['0000:0000:0000:0000:0000:0000:0000:0000/0']=true
+  else
+   local ok,canonical=pcall(M.prefix,token)
+   if ok then members[canonical]=true end
+  end
+ end
+ return members
+end
+local function candidate_prefixes(address)
+ local n=v4(address)
+ local full=not n and ip.ipv6(address)
+ if full and full:sub(1,30)=='0000:0000:0000:0000:0000:ffff:' then
+  n=tonumber(full:sub(31,34),16)*65536+tonumber(full:sub(36,39),16)
+ end
+ local keys={}
+ if n then
+  for bits=0,32 do
+   local width=2^(32-bits)
+   keys[#keys+1]=addr(n-n%width)..'/'..bits
+  end
+  local first,second=math.floor(n/16777216),math.floor(n/65536)%256
+  local public=first>0 and first~=10 and first~=127 and first<224 and
+   not (first==100 and second>=64 and second<=127 or first==169 and second==254 or
+        first==172 and second>=16 and second<=31 or first==192 and second==168)
+  return keys,public
+ end
+ if not full then return keys,false end
+ local groups={}
+ for group in full:gmatch('[^:]+') do groups[#groups+1]=tonumber(group,16) end
+ for bits=0,128 do
+  local network={}
+  for index,value in ipairs(groups) do
+   local width=2^(16-math.max(0,math.min(16,bits-(index-1)*16)))
+   network[index]=string.format('%04x',value-value%width)
+  end
+  keys[#keys+1]=table.concat(network,':')..'/'..bits
+ end
+ return keys,groups[1]>=0x2000 and groups[1]<0x4000
+end
+function M.access_view(scope,allow,deny,cache_path)
+ local allowed,denied=rule_members(allow),rule_members(deny)
+ local members
+ if scope=='CN' then
+  local stream=io.open(cache_path or '/etc/homegate/access/CN.cidr','rb')
+  if stream then
+   local ok,cache=pcall(M.cache,stream,nil,os.time(),true)
+   stream:close()
+   if ok then members=cache.members end
+  end
+ end
+ return function(address)
+  if type(address)~='string' then return '','unknown' end
+  local keys,public=candidate_prefixes(address)
+  if #keys==0 then return '','unknown' end
+  local function matches(set)
+   for _,key in ipairs(keys) do if set[key] then return true end end
+   return false
+  end
+  local domestic=members and matches(members)
+  local region=domestic and 'CN' or members and public and 'foreign' or ''
+  if matches(denied) then return region,'manual-deny',false end
+  if matches(allowed) then return region,'manual-allow',true end
+  if scope=='' then return '','disabled',true end
+  if domestic then return region,'region',true end
+  if scope=='CN' and not members then return '','unknown' end
+  return region,'denied',false
+ end
 end
 return M

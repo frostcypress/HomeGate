@@ -13,6 +13,7 @@ import tempfile
 import urllib.request
 from project import ROOT, identity
 from production_runtime import stage_sdk
+from native_transition import build_offline_bundle
 
 
 def load_script(name):
@@ -52,7 +53,7 @@ def build(target_file, frontend, fmt):
         if len(roots) != 1:
             raise ValueError('SDK root is ambiguous')
         sdk = roots[0]
-        stage_sdk(ROOT, sdk)
+        stage_sdk(ROOT, sdk, bundled=True)
         names = (item['slug'] + '-core', 'luci-app-' + item['slug'], 'luci-i18n-' + item['slug'] + '-zh-cn')
         components = ('homegate-nginx', 'homegate-wol')
         with (sdk / '.config').open('a', encoding='utf-8') as config:
@@ -72,11 +73,16 @@ def build(target_file, frontend, fmt):
         staged.mkdir()
         for file in found:
             shutil.copy2(file, staged)
-        _, report = load_script('检查三包').inspect(staged, item['slug'], item['normalized'], actual,
-                                                  'all')
-        destination.mkdir(parents=True)
-        for file in staged.iterdir():
-            shutil.copy2(file, destination)
+        architecture=target['architecture']
+        _, report = load_script('检查三包').inspect(staged, item['slug'], item['normalized'], actual, architecture)
+        component_tree=work/'components'
+        component_tree.mkdir()
+        for name in components:
+            candidates=list((sdk/'bin').rglob(f'{name}_*_{architecture}.ipk'))
+            if len(candidates)!=1:
+                raise ValueError(f'Expected one built target component: {name}')
+            shutil.copy2(candidates[0],component_tree/candidates[0].name)
+        build_offline_bundle(ROOT,staged,destination,architecture,component_tree)
         evidence = {'target': target, 'identity': item, 'luci': frontend, 'format': actual,
                     'source_commit': os.environ.get('GITHUB_SHA'), 'run_id': os.environ.get('GITHUB_RUN_ID'),
                     'packages': report, 'status': 'compiled-metadata-verified-not-device-tested'}

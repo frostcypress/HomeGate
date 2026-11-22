@@ -200,6 +200,7 @@
     "packaging/production/native-web-store.lua",
     "packaging/production/native-web.lua",
     "packaging/production/native-web.sh",
+    "packaging/production/offline-install.sh",
     "packaging/production/postrm.sh",
     "packaging/production/service.htm",
     "packaging/production/service.js",

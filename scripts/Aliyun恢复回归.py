@@ -44,7 +44,7 @@ class Static(PlanStatic):
 
 class Runtime(RecordRuntime):
     def contents(self):
-        return {k:v for k,v in super().contents().items() if not k.startswith('dns-operation/') and k!='dns-operation'}
+        return {k:v for k,v in super().contents().items() if k.split('/',1)[0] not in {'dns-operation','aliyun-managed'}}
     def setUp(self):
         super().setUp();self.journal=self.store/'dns-operation';self.helper=self.engine.parent/'homegate-dns-receipt.sh'
         for name in ['homegate-aliyun-read.sh','homegate-aliyun-worker.sh','homegate-cloudflare-read.sh','homegate-service-observer-watchdog.sh','homegate-dns-receipt.sh']:
@@ -57,6 +57,32 @@ class Runtime(RecordRuntime):
             p.write_text(s)
         self.engine.write_text(self.engine.read_text().replace('dns_recovery_read_enabled=false','dns_recovery_read_enabled=true'))
         p=self.engine.parent/'aliyun-checkpoint.lua';p.write_text(p.read_text().replace("local json=require('luci.jsonc')","package.cpath="+json.dumps(str(ROOT/'build/service-observer/?.so')+';;')+"\nlocal json=require('luci.jsonc')"))
+        self.owned=self.store/'aliyun-managed'
+        p=self.engine.parent/'aliyun-reader.lua'
+        p.write_text(p.read_text().replace('= 0:700 ]','= '+str(os.getuid())+':700 ]')
+                      .replace("metadata~='0:600:1'",f"metadata~='{os.getuid()}:600:1'"))
+    def test_unowned_aaaa_is_untouched_and_reports_a_conflict(self):
+        self.add(record(9301))
+        result=self.records(expected=1)
+        self.assertEqual((result['error_kind'],result['effect'],result['retryable']),
+                         ('record_conflict','none',False))
+        self.assertFalse(self.mutations())
+        self.assertFalse(self.owned.exists())
+        self.assertEqual(self.db['9301']['Value'],'2001:db8::1')
+    def test_managed_aaaa_updates_original_id_and_refreshes_proof(self):
+        original=record(9302)
+        self.add(original)
+        self.owned.mkdir(mode=0o700)
+        key=hashlib.sha1(b'dns_a\0OLD_ID\0example.test\0www.example.test').hexdigest()
+        proof=self.owned/key
+        proof.write_text('9302:2001:0db8:0000:0000:0000:0000:0000:0001\n')
+        proof.chmod(0o600)
+        result=self.records()
+        self.assertEqual((result['result'],result['effect']),('updated','confirmed'))
+        self.assertEqual(list(self.db),['9302'])
+        self.assertEqual(self.db['9302']['Value'],'2001:db8::2')
+        self.assertEqual(proof.read_text(),'9302:2001:0db8:0000:0000:0000:0000:0000:0002\n')
+
     def active(self):
         current=(self.journal/'current').read_bytes();self.assertIn(current,[b'1\n',b'2\n']);slot=self.journal/('slot-'+current.decode().strip())
         raw=(slot/'context').read_bytes();meta=(slot/'manifest').read_bytes();lines=meta.splitlines();self.assertEqual(len(lines),10)

@@ -336,7 +336,7 @@ end
 if mode=='version'then
  local major,minor,patch=read(root..'/version',8192):match('^nginx version: nginx/(%d+)%.(%d+)%.(%d+) %(homegate%-ip%-san%-v1%)\n$')
  major,minor,patch=tonumber(major),tonumber(minor),tonumber(patch)
- if major~=1 or not minor or minor<30 or (minor==30 and patch<6)then fail()end;return
+ if major~=1 or not minor or minor<30 or (minor==30 and patch<7)then fail()end;return
 end
 if mode=='validity'then
  for _,d in ipairs(material('accepted').certificates)do if os.time()<d.not_before_epoch or os.time()>=d.expires_epoch then fail()end end;return

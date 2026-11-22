@@ -1186,10 +1186,12 @@ local function public_services(cur, history)
             ddns_used[id] = true
         end
     end) end
-    table.sort(rows, function(a,b)
-        if a.domain~=b.domain then return a.domain<b.domain end
-        return (tonumber(a.effective_port) or 0)<(tonumber(b.effective_port) or 0)
-    end)
+    if history then
+        table.sort(rows, function(a,b)
+            if a.domain~=b.domain then return a.domain<b.domain end
+            return (tonumber(a.effective_port) or 0)<(tonumber(b.effective_port) or 0)
+        end)
+    end
     return rows
 end
 
@@ -1952,7 +1954,7 @@ function action_public_apply()
             if not route.external_port and (original_web_rows[web_id] or {}).external_port then cur:delete("homegate",web_id,"external_port") end
             cur:delete("homegate", web_id, "retained")
             kept_web[web_id] = true
-            if domain==management_domain then management_row=true end
+            if domain==management_domain and https then management_row=true end
         elseif web_id ~= "" then
             return fail("LAN target is required for an existing Web service")
         end
@@ -1966,7 +1968,7 @@ function action_public_apply()
         end
     end)
     if management_domain~="" and not management_row then
-        if submitted_management~=nil then return fail("Router management requires a public service for this domain") end
+        if submitted_management~=nil then return fail("Router management requires an HTTPS service for this domain") end
         management_domain=""
     end
     if submitted_management~=nil or main.management_domain or main.management_wan then

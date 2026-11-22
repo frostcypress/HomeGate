@@ -162,10 +162,10 @@ with sync_playwright() as pw:
     public_html=legacy('public',public_fixture,installed_views)
     (OUT/'public-zones.html').write_text(public_html,encoding='utf-8')
     page.set_content('''<script>
-    window.zones=[];
+    window.zones=[];window.hostQueries=[];
     window.XHR={get:(u,f,cb)=>{
       if(u.endsWith('/dns_zones')){
-        if(f.zone){cb({status:200},{ok:true,hosts:['cloud','files']});return;}
+        if(f.zone){hostQueries.push({account:f.account,zone:f.zone,reply:cb});return;}
         zones.push({account:f.account,reply:cb});return;
       }
       const d=u.endsWith('/certs')?{ok:true,certificates:[{id:'cert_a',exists:true,identity_valid:true,valid:true,days:42}]}:
@@ -179,6 +179,7 @@ with sync_playwright() as pw:
     assert address.inner_text()=='https://files.example.test'
     assert 'Staging Environment' in hint.inner_text() and 'Certificate 42 days' in hint.inner_text()
     assert hint.bounding_box()['y']>address.bounding_box()['y']
+    assert hint.evaluate('node=>getComputedStyle(node).color')=='rgb(191, 191, 191)'
     sizes=page.evaluate("""['.hg-public-hint','.hg-public-url','.hg-public-target']
       .map(s=>parseFloat(getComputedStyle(document.querySelector(s)).fontSize))""")
     assert sizes[0]<sizes[1]<sizes[2],sizes
@@ -313,52 +314,134 @@ with sync_playwright() as pw:
     assert page.locator('#hg-public-domain-preview').inner_text()=='-'
     assert page.evaluate("hgPublicHostPrefix('example.test','EXAMPLE.TEST.')")=='@'
     assert page.evaluate("hgPublicHostPrefix('example.test','deep.files.example.test')")=='deep.files'
+    account_notice=page.locator('#hg-public-account-result')
+    host_toggle=page.get_by_role('button',name='Show host records')
+    host_input=page.locator('#hg-public-host')
+    port=page.locator('#hg-public-external-port')
+    menu=page.locator('#hg-public-host-options')
+    refresh_status=menu.locator('.hg-host-refresh-time')
+    options=menu.get_by_role('button')
+    port_top=port.bounding_box()['y']
+    host_toggle.click()
+    assert refresh_status.inner_text()=='Not yet refreshed'
+    assert refresh_status.get_attribute('aria-disabled')=='true'
+    assert refresh_status.evaluate('node=>getComputedStyle(node).color')=='rgb(191, 191, 191)'
+    assert port.bounding_box()['y']==port_top,'Dropdown displaced the next field'
+    host_box=host_input.bounding_box()
+    picker_box=host_toggle.bounding_box()
+    menu_box=menu.bounding_box()
+    assert picker_box['x']>host_box['x']+host_box['width'],'Controls still joined'
+    assert abs(picker_box['width']-picker_box['height'])<1,picker_box
+    assert abs(picker_box['height']-host_box['height'])<1,(picker_box,host_box)
+    assert abs(menu_box['x']-host_box['x'])<1,(menu_box,host_box)
+    assert abs(menu_box['x']+menu_box['width']-picker_box['x']-picker_box['width'])<1,(menu_box,picker_box)
+    assert abs(menu_box['y']-host_box['y']-host_box['height']-3)<1,(menu_box,host_box)
+    chevron=host_toggle.evaluate('node=>getComputedStyle(node).backgroundPositionX')
+    assert chevron=='calc(50% - 2px), calc(50% + 2px)',chevron
+    options.first.hover()
+    active_color=options.first.evaluate('node=>getComputedStyle(node).backgroundColor')
+    red,green,blue=map(int,re.findall(r'\d+',active_color))
+    assert blue>red and blue>green,active_color
+    assert options.first.bounding_box()['width']>=menu_box['width']-3
+    assert refresh_status.evaluate('node=>getComputedStyle(node).backgroundColor')!=active_color
+    host_toggle.press('ArrowDown')
+    assert options.first.evaluate('node=>node===document.activeElement')
+    options.first.press('ArrowDown')
+    assert options.nth(1).evaluate('node=>node===document.activeElement')
+    assert options.nth(1).evaluate('node=>getComputedStyle(node).backgroundColor')==active_color
+    options.nth(1).press('Escape')
+    assert menu.is_hidden() and host_toggle.evaluate('node=>node===document.activeElement')
+    assert page.evaluate('[zones.length,hostQueries.length]')==[0,0]
+    assert account_notice.is_hidden()
+
     page.evaluate("hgPublicClose(); hgPublicOpenAdd()")
     assert page.locator('#hg-public-zone').input_value()=='example.test'
-    assert page.evaluate('zones.length')==1,'Same account launched a duplicate fetch'
-    page.wait_for_timeout(2900)
+    assert page.evaluate('[zones.length,hostQueries.length]')==[0,0]
     refresh_account=page.get_by_role('button',name='Refresh Account',exact=True)
-    account_notice=page.locator('#hg-public-account-result')
     assert refresh_account.is_enabled()
     assert page.get_by_role('button',name='Save Account',exact=True).is_disabled()
-    assert page.locator('#hg-public-zone').input_value()=='example.test'
+    host_input.fill('typed')
+    port.fill('18084')
+    page.locator('#hg-public-target').fill('http://192.168.1.5')
+    page.evaluate('hgPublicConfirm()')
+    assert 'before confirming' in account_notice.inner_text()
+    refresh_account.click()
+    assert 'hg-notice-pending' in account_notice.get_attribute('class')
+    assert refresh_account.is_disabled()
+    page.wait_for_timeout(3150)
+    assert account_notice.is_visible() and account_notice.inner_text()=='Refreshing DNS account...'
     page.evaluate("zones[0].reply({status:200},{ok:true,zones:['aaa.test','example.test']})")
     assert page.locator('#hg-public-zone').input_value()=='example.test'
     assert page.locator('#hg-public-zone option').all_text_contents()==['aaa.test','example.test']
-    page.get_by_role('button',name='Show host records').click()
-    assert page.locator('#hg-public-host-options button span').all_text_contents()==['Cloud and local','Cloud only','Local only']
-    page.locator('#hg-public-host-options button').filter(has_text='archived').click()
-    page.locator('#hg-public-history-choice').select_option('0')
-    assert page.locator('#hg-public-external-port').input_value()=='18083'
+    assert page.evaluate('hostQueries.length')==1
+    assert 'hg-notice-pending' in account_notice.get_attribute('class')
+    page.evaluate("hostQueries[0].reply({status:200},{ok:true,hosts:['cloud','files']})")
+    assert account_notice.inner_text()=='DNS account refreshed.'
+    assert host_input.input_value()=='typed'
+    host_toggle.click()
+    timestamp=refresh_status.inner_text()
+    assert re.fullmatch(r'Last refreshed \d{2}/\d{2} \d{2}:\d{2}',timestamp)
+    assert options.locator('span').all_text_contents()==['Cloud and local','Cloud only','Local only']
+    assert page.evaluate('[zones.length,hostQueries.length]')==[1,1]
+    host_toggle.press('End')
+    archived=options.filter(has_text='archived')
+    assert archived.evaluate('node=>node===document.activeElement')
+    archived.press('Enter')
+    assert host_input.input_value()=='archived' and menu.is_hidden()
+    history_choice = page.locator('#hg-public-history-choice')
+    assert history_choice.locator('option').all_text_contents() == ['Select previous settings', '18083 ｜ http://192.168.1.3']
+    history_choice.select_option('0')
+    assert port.input_value()=='18083'
     assert page.locator('#hg-public-target').input_value()=='http://192.168.1.3'
     assert not page.locator('#hg-public-https').is_checked()
-    page.locator('#hg-public-host').fill('typed')
-    assert page.locator('#hg-public-host').input_value()=='typed'
+    account_notice.wait_for(state='hidden',timeout=5000)
+    host_input.fill('typed')
     assert page.locator('#hg-public-history-choice').is_hidden()
+
+    refresh_account.click()
+    page.evaluate("zones[1].reply({status:200},{ok:true,zones:['example.test']})")
+    page.evaluate("hostQueries[1].reply({status:200},{ok:false,error_kind:'busy'})")
+    assert 'hg-notice-pending' in account_notice.get_attribute('class')
+    page.wait_for_function('hostQueries.length===3')
+    page.evaluate("hostQueries[2].reply({status:200},{ok:true,hosts:['cloud','files']})")
+    assert account_notice.inner_text()=='DNS account refreshed.'
+    assert host_input.input_value()=='typed'
+    host_toggle.click()
+    timestamp=refresh_status.inner_text()
+
+    refresh_account.click()
+    page.evaluate("zones[2].reply({status:200},{ok:true,zones:['example.test']})")
+    page.evaluate("hostQueries[3].reply({status:200},{ok:false,error_kind:'busy'})")
+    page.wait_for_function('hostQueries.length===5')
+    page.evaluate("hostQueries[4].reply({status:200},{ok:false,error_kind:'busy'})")
+    assert 'DNS account is busy' in account_notice.inner_text()
+    assert host_input.input_value()=='typed'
+    host_toggle.click()
+    assert refresh_status.inner_text()==timestamp
+    assert options.locator('span').all_text_contents()==['Cloud and local','Cloud only','Local only']
+    page.wait_for_timeout(3150)
+    assert account_notice.is_visible() and 'hg-notice-error' in account_notice.get_attribute('class')
+    assert page.evaluate('[zones.length,hostQueries.length]')==[3,5]
+
+    page.evaluate("hgPublicClose(); hgPublicOpenIndex(0)")
+    assert account_notice.is_hidden()
+    assert page.locator('#hg-public-zone').input_value()=='example.test'
+    host_toggle.click()
+    assert refresh_status.inner_text()==timestamp
+    assert page.evaluate('[zones.length,hostQueries.length]')==[3,5]
+    page.evaluate("hgPublicClose(); hgPublicOpenAdd();")
     page.locator('#hg-public-account').select_option('dns_b')
     assert page.locator('#hg-public-zone').input_value()==''
-    page.evaluate("zones[1].reply({status:200},{ok:false,error_kind:'busy'})")
-    page.wait_for_function('zones.length===3')
-    assert account_notice.is_hidden()
-    page.evaluate("zones[2].reply({status:503,responseText:''},null)")
-    page.wait_for_function('zones.length===4')
-    assert account_notice.is_hidden()
-    page.evaluate("zones[3].reply({status:200},{ok:false,error_kind:'rate_limit',retryable:true})")
-    assert account_notice.is_visible() and 'limited requests' in account_notice.inner_text()
+    assert page.evaluate('zones.length')==3
     refresh_account.click()
-    assert page.evaluate('zones.length')==5,'Refresh did not send a new request'
+    page.evaluate("zones[3].reply({status:429,responseText:''},null)")
+    assert account_notice.is_visible() and 'limited requests' in account_notice.inner_text()
+    page.wait_for_timeout(1800)
+    assert page.evaluate('zones.length')==4
+    refresh_account.click()
     page.evaluate("zones[4].reply({status:200},{ok:true,zones:{}})")
     assert account_notice.inner_text()=='DNS account refreshed.'
     assert 'No managed primary domains' in page.locator('#hg-public-zone').inner_text()
-    page.evaluate("hgPublicClose(); hgPublicZoneCache.dns_a.expires=0; hgPublicOpenIndex(0)")
-    assert page.locator('#hg-public-zone').input_value()=='example.test'
-    page.evaluate("zones[5].reply({status:200},{ok:false,error:'DNS status request refused'})")
-    page.wait_for_function('zones.length===7')
-    assert account_notice.is_hidden()
-    assert page.locator('#hg-public-domain-preview').inner_text()=='-'
-    page.evaluate("zones[6].reply({status:200},{ok:true,zones:['example.test','other.test']})")
-    assert page.locator('#hg-public-zone option').all_text_contents()==['example.test','other.test']
-    assert page.locator('#hg-public-zone').input_value()=='example.test'
     assert not errors,errors
     print('SAVED_PRIMARY_DOMAIN_MS='+str(round(timing[0],2)),flush=True)
     # Actual native transport, RPC responses mocked only at the ubus boundary.
@@ -503,7 +586,11 @@ with sync_playwright() as pw:
     assert account_save.is_disabled()
     page.wait_for_timeout(400)
     assert page.locator('#hg-operation-status').is_hidden()
-    assert page.locator('#hg-public-account-result').is_hidden() and len(account_requests)==1
+    assert page.locator('#hg-public-account-result').inner_text()=='Saving DNS account...'
+    assert 'hg-notice-pending' in page.locator('#hg-public-account-result').get_attribute('class')
+    assert len(account_requests)==1
+    page.wait_for_timeout(3150)
+    assert page.locator('#hg-public-account-result').is_visible()
     account_result={'ok':False,'error':'Account save failed in fixture'}
     page.locator('#hg-public-account-result').filter(has_text=account_result['error']).wait_for()
     assert account_save.is_enabled() and page.locator('#hg-operation-status').is_hidden()
@@ -515,6 +602,7 @@ with sync_playwright() as pw:
     assert page.locator('#hg-public-account-result').inner_text()=='DNS account saved'
     assert page.locator('#hg-operation-status').is_hidden() and 'notice=' not in page.url
     assert len(account_requests)==2 and all('token=rpc' in body for body in account_requests)
+    page.locator('#hg-public-account-result').wait_for(state='hidden',timeout=5000)
     context.unroute('http://homegate.test/**',account_response)
     # WAN information must arrive independently of runtime status retries.
     status_calls=[]
@@ -614,10 +702,11 @@ with sync_playwright() as pw:
         'acme_ca_catalog':[{'name':'letsencrypt','display_name':"Let's Encrypt",'directories':{'production':'https://acme.test/'}}]}
 
     ready={'id':'ready','enabled':True,'valid':True,'identity_valid':True,'environment':'production','domains':['*.example.test']}
-    def management_page(saved='',wan='0',certificates=(ready,)):
+    def management_page(saved='',wan='0',certificates=(ready,),services=None):
         response=json.dumps({'ok':True,'certificates':certificates})
         routes=f'<script>window.fixtureCerts={response};</script>'+stub.replace(':{})',':u.endsWith("/certs")?window.fixtureCerts:{})')
-        page.set_content(routes+legacy('public',{**router_services,'main':{**router_services['main'],'management_domain':saved,'management_wan':wan}}))
+        page.set_content(routes+legacy('public',{**router_services,'services':services or router_services['services'],
+                                                'main':{**router_services['main'],'management_domain':saved,'management_wan':wan}}))
 
     management=page.get_by_label('Router Management Page')
     account=page.locator('#hg-public-account')
@@ -645,12 +734,34 @@ with sync_playwright() as pw:
     confirm.click()
     assert selected.input_value()=='router.example.test'
     page.evaluate('hgPublicOpenIndex(1)')
-    assert management.is_checked() and not page.locator('#hg-public-https').is_checked()
+    assert management.is_checked() and management.is_disabled() and not page.locator('#hg-public-https').is_checked()
+    assert page.locator('#hg-public-management-url').is_visible()
+    cancel.click()
+
+    sibling={**companion,'domain':'sibling.example.test','host':'sibling'}
+    management_page('router.example.test','0',services=[router,sibling,other])
+    page.evaluate('hgPublicOpenIndex(1)')
+    assert management.is_disabled() and not management.is_checked()
+    cancel.click()
+
+    management_page('router.example.test','1',services=[router,sibling,other])
+    management_url=page.locator('#hg-public-management-url')
+    https_toggle=page.locator('#hg-public-https')
+    page.evaluate('hgPublicOpenIndex(1)')
+    assert management.is_checked() and management.is_disabled() and not https_toggle.is_checked()
+    assert management_url.is_visible() and management_url.text_content()=='https://router.example.test'
+    https_toggle.check()
+    assert management.is_enabled() and management.is_checked()
+    assert management_url.text_content()=='https://router.example.test'
+    confirm.click()
+    assert selected.input_value()=='router.example.test'
+    page.evaluate('hgPublicOpenIndex(1)')
     management.uncheck();confirm.click()
     assert selected.input_value()==''
-    page.evaluate('hgPublicOpenIndex(0)')
-    assert not management.is_checked()
-    cancel.click()
+    for index in (0,1,2):
+        page.evaluate('(i)=>hgPublicOpenIndex(i)',index)
+        assert management.is_enabled() and not management.is_checked() and not management_url.is_visible()
+        cancel.click()
 
     management_page(certificates=({**ready,'domains':['other.example.test']},))
     page.evaluate('hgPublicOpenIndex(0)')
@@ -660,17 +771,22 @@ with sync_playwright() as pw:
     assert management.is_enabled() and not management.is_checked()
     cancel.click()
 
+    management_page('router.example.test','1',certificates=({**ready,'domains':['router.example.test']},))
+    page.evaluate('hgPublicOpenIndex(2)')
+    assert management.is_disabled() and management.is_checked()
+    assert page.locator('#hg-public-management-label').evaluate('e=>getComputedStyle(e).color')==disabled_color
+    cancel.click()
+
     management_page('router.example.test','1')
     page.evaluate('hgPublicOpenIndex(2)')
-    assert management.is_disabled() and not management.is_checked()
-    assert page.locator('#hg-public-management-label').evaluate('e=>getComputedStyle(e).color')==disabled_color
+    assert management.is_enabled() and management.is_checked()
     cancel.click()
     page.evaluate('hgPublicOpenAdd("dns_b")')
     page.locator('#hg-public-host').fill('router')
     assert management.is_checked() and account.is_disabled() and account.input_value()=='dns_a'
     cancel.click()
     page.evaluate('hgPublicDelete(0)')
-    assert selected.input_value()=='router.example.test'
+    assert selected.input_value()==''
     page.evaluate('hgPublicDelete(0);hgPublicOpenIndex(0)')
     assert selected.input_value()=='' and management.is_enabled() and not management.is_checked()
     management.check();confirm.click()
@@ -791,6 +907,32 @@ with sync_playwright() as pw:
     assert page.locator('.hg-public-hint').first.inner_text()=='HomeGate is disabled'
     assert page.locator('.hg-public-sync').first.is_disabled()
     assert page.get_by_role('button',name='Add',exact=True).is_disabled()
+    urls=page.locator('.hg-public-url')
+    before=urls.all_text_contents()
+    check=page.locator('#hg-public-services input[type=checkbox]')
+    check.nth(0).uncheck()
+    check.nth(1).check()
+    assert urls.all_text_contents()==before
+    saved_only={**grouped,'public_applied_enabled':'','public_pending_add':''}
+    page.set_content(stub+legacy('public',saved_only))
+    assert urls.all_text_contents()==[
+        'https://other.example.test:8445','https://router.example.test:8443','http://router.example.test:8444']
+    applied={**grouped,'public_applied_enabled':router['web_id'],'public_pending_add':''}
+    page.set_content(stub+legacy('public',applied))
+    assert urls.all_text_contents()==[
+        'https://router.example.test:8443','http://router.example.test:8444','https://other.example.test:8445']
+    page.evaluate("document.getElementById('hg-public-access-allow-source').value=''")
+    page.evaluate("document.getElementById('hg-public-access-deny-source').value=''")
+    page.evaluate("window.hgPublicRecentRows=[{ip:'192.0.2.2',host:'other.example.test',allowed:true,reason:'disabled',current_region:'foreign',current_allowed:false,current_reason:'denied'}];hgPublicAccessRenderRecent()")
+    page.evaluate("hgSetModalOpen('hg-public-access-modal',true)")
+    access_row=page.locator('#hg-public-access-body tr').first
+    assert access_row.locator('td').first.inner_text()=='Foreign · 192.0.2.2'
+    assert access_row.locator('.hg-access-state').inner_text()=='Denied (Access Policy)'
+    assert access_row.get_by_role('button',name='Allow Access',exact=True).count()==1
+    page.evaluate("Object.assign(hgPublicRecentRows[0],{current_region:'',current_allowed:true,current_reason:'disabled'});hgPublicAccessRenderRecent()")
+    assert access_row.locator('td').first.inner_text()=='192.0.2.2'
+    assert access_row.locator('.hg-access-state').inner_text()=='Allowed (No Restriction)'
+    assert access_row.get_by_role('button',name='Deny Access',exact=True).count()==1
     assert not errors,errors
     full_hosts=[{'id':f'wol_{i}','name':f'Host {i}','mac':f'02:11:22:33:44:{i:02X}'} for i in range(16)]
     full_services=[{**router,'web_id':f'web_{i}','external_port':str(48000+i)} for i in range(16)]

@@ -274,7 +274,7 @@ class Proxy(web.Web):
         work=Path('/var/run/homegate-engineering/proxy');work.mkdir();version=work/'version'
         p=subprocess.run([str(NGINX/'nginx'),'-v'],capture_output=True,timeout=3);self.assertEqual(p.returncode,0);actual=p.stderr
         command=['/usr/sbin/lua','/usr/libexec/homegate-engineering/project/core/prototype/homegate-proxy.lua','version']
-        for raw,accepted in [(actual,True),(b'nginx version: nginx/1.30.6\n',False),(b'nginx version: nginx/1.30.5 (homegate-ip-san-v1)\n',False),(actual.replace(b'ip-san-v1',b'other-v1'),False),(actual+b'extra\n',False)]:
+        for raw,accepted in [(actual,True),(b'nginx version: nginx/1.30.7\n',False),(b'nginx version: nginx/1.30.6 (homegate-ip-san-v1)\n',False),(actual.replace(b'ip-san-v1',b'other-v1'),False),(actual+b'extra\n',False)]:
             version.write_bytes(raw);self.assertEqual(subprocess.run(command,capture_output=True,timeout=3).returncode==0,accepted,raw)
         version.unlink();work.rmdir();self.verify_unchanged()
     def test_acl(self):

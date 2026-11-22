@@ -66,7 +66,7 @@ done:close(fd);return result;
 }
 static int compare(const void *a,const void *b){return strcmp(*(char *const*)a,*(char *const*)b);}
 int main(int argc,char **argv) {
- if(argc==2&&!strcmp(argv[1],"--version")){puts("homegate-wol 1");return 0;}
+ if(argc==2&&!strcmp(argv[1],"--version")){puts("homegate-wol " HOMEGATE_WOL_VERSION);return 0;}
  if(geteuid()!=0||argc<3||argc>MAX_IF+2||!valid_if(argv[1]))return 2;
  alarm(5);
  unsigned char target[6];if(!mac(argv[2],target))return 2;

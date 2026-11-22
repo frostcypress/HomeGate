@@ -176,6 +176,26 @@ class Boundaries(CF):
         self.assertEqual(self.calls, [])
         self.unchanged_status()
 
+    def test_brief_lock_contention_finishes_one_read_after_release(self):
+        import fcntl
+        from threading import Timer
+
+        self.configure(total=1)
+        for lock in (self.native.lock, self.store / '.supervisor.lock'):
+            with lock.open('rb') as held:
+                fcntl.flock(held, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                release = Timer(0.5, fcntl.flock, args=(held, fcntl.LOCK_UN))
+                release.start()
+                try:
+                    before = len(self.calls)
+                    report = self.zones()
+                    self.assertEqual(len(report['zones']), 1)
+                    self.assertEqual(len(self.calls) - before, 1)
+                finally:
+                    release.cancel()
+                    release.join()
+        self.unchanged_status()
+
     def test_changed_source_before_or_during_pagination_never_publishes_a_list(self):
         self.source.write_bytes(self.source_before + b'\n')
         self.zones(expected=7)

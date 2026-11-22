@@ -2,7 +2,7 @@
 local M={budget=900,limit=8}
 local providers={cloudflare=true,aliyun=true,dnspod=true,huaweicloud=true}
 local statuses={ready=true,stale=true,waiting=true,retry_wait=true,paused=true,blocked=true,reconciliation_required=true,unauthorized=true,clock_invalid=true,created=true,updated=true,unchanged=true,failed=true,disabled=true,unsupported=true,invalid_rule=true,network_unavailable=true}
-local kinds={['']=true,authentication=true,not_found=true,unsupported=true,invalid_request=true,invalid_zone=true,temporary=true,network_unavailable=true,timeout=true,rate_limit=true,invalid_configuration=true}
+local kinds={['']=true,authentication=true,not_found=true,unsupported=true,invalid_request=true,invalid_zone=true,record_conflict=true,temporary=true,network_unavailable=true,timeout=true,rate_limit=true,invalid_configuration=true}
 local reasons={['']=true,stopped=true,budget=true,ticks=true,idle=true,changed=true,blocked=true,reconciliation_required=true,failed=true,clock_invalid=true,interrupted=true}
 local function integer(n,a,b)return type(n)=='number' and n==math.floor(n) and n>=a and n<=b end
 local function hex(s,n)return type(s)=='string' and #s==n and s:match('^[0-9a-f]+$') end

@@ -3,6 +3,7 @@ local M={}
 M.codes={invalid_operation=true,generation_mismatch=true,resource_missing=true,account_mismatch=true,invalid_zone=true,
     record_type=true,invalid_name=true,explicit_all_required=true,invalid_address=true,invalid_challenge=true,
     domain_mismatch=true,invalid_ttl=true,invalid_record=true,record_changed=true,record_unavailable=true,
+    record_conflict=true,ownership_unavailable=true,
     state_limit=true,invalid_receipt=true}
 M.codes.invalid_context=true
 local function integer(n,a,b)return type(n)=='number' and n==math.floor(n) and n>=a and n<=b end
@@ -113,6 +114,8 @@ function M.run(snapshot,account,revision,api)
     if api.reconciling then return api.reconcile.report(account,revision,'','',api.reconcile.observe(c,records)) end
     c.records=records;save('planned')
     if c.operation=='upsert' then
+        local owners=c.type=='AAAA' and api.ownership or nil
+        if owners and #records>1 then api.fail('record_conflict',false,'record_conflict') end
         for _,r in ipairs(records) do
             if r.match then
                 if r.locked or r.status~='Enable' then api.fail('unsupported',false,'record_unavailable') end
@@ -122,14 +125,19 @@ function M.run(snapshot,account,revision,api)
         local params={RR=c.rr,Type=c.type,Value=c.value,TTL=tostring(c.ttl),Line='default'}
         local result,action='created','AddDomainRecord'
         if #records>0 and c.type~='TXT' then
-            local first=detail(records[1]);params.RecordId=first.id;params.Line=first.line;params.TTL=tostring(first.ttl)
+            local first=records[1]
+            if owners and not owners.matches(c,first) then api.fail('record_conflict',false,'record_conflict') end
+            first=detail(first)
+            params.RecordId=first.id;params.Line=first.line;params.TTL=tostring(first.ttl)
             c.first_id=first.id
             result,action='updated','UpdateDomainRecord'
         else params.DomainName=c.zone end
         local target=mutate(action,params)
         local actual=checked(api.fetch({RecordId=target},'DescribeDomainRecordInfo'))
         if actual.id~=target or actual.key~=(c.value_key or c.value) or actual.line~=params.Line or actual.ttl~=tonumber(params.TTL) or actual.locked or actual.status~='Enable' then invalid('invalid_receipt') end
-        api.state.affected=1;return finish(result)
+        api.state.affected=1
+        if owners then owners.remember(c,actual) end
+        return finish(result)
     end
     for position,r in ipairs(records) do
         if r.match then

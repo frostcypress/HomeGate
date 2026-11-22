@@ -1288,6 +1288,9 @@ msgstr "移出允许名单"
 msgid "Domestic"
 msgstr "国内"
 
+msgid "Foreign"
+msgstr "国外"
+
 msgid "Abroad"
 msgstr "国外"
 
@@ -1953,3 +1956,27 @@ msgstr "DNS 账户已刷新。"
 
 msgid "Reading DNS account..."
 msgstr "正在读取 DNS 账户…"
+
+msgid "Refresh the DNS account to load primary domains."
+msgstr "请先刷新账户以读取主域名。"
+
+msgid "Refreshing DNS account..."
+msgstr "正在刷新账户…"
+
+msgid "Not yet refreshed"
+msgstr "尚未刷新"
+
+msgid "Last refreshed"
+msgstr "上次刷新"
+
+msgid "Saving DNS account..."
+msgstr "正在保存账户…"
+
+msgid "Refresh the DNS account before confirming a new host record."
+msgstr "请先刷新账户，再确认主机记录。"
+
+msgid "Cloud DNS record conflict"
+msgstr "云端解析冲突"
+
+msgid "Router management requires an HTTPS service for this domain"
+msgstr "请先为该域名的公网服务开启 HTTPS。"

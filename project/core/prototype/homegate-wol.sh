@@ -11,6 +11,21 @@ HG_DIR=$(CDPATH= cd "$(dirname "$0")" && pwd) || fail
 HG_JOB=;. "$HG_DIR/homegate-acme-common.sh"
 W=$HG_RUN/wol;LOCK=$HG_RUN/wol.lock;process=$HG_DIR/worker-process.lua
 action=${1:-};shift || fail 2
+wol_version_supported() {
+ case "$1" in
+  'homegate-wol 1') return 0;;
+  'homegate-wol 1.'*)
+   tail="${1#homegate-wol 1.}"
+   numbers="${tail%-r*}"
+   [ "$numbers" != "$tail" ] || return 1
+   case "${tail##*-r}" in ''|*[!0-9]*) return 1;; esac
+   case "$numbers" in
+    .*|*.|*.*.*|*[!0-9.]*) return 1;;
+    *.*) return 0;;
+   esac;;
+ esac
+ return 1
+}
 if [ "$action" = send-internal ];then
  [ "$#" = 0 ] && hg_dir "$W" && hg_bound 8 "$LOCK" && flock -n 8 || fail 4
  info=$(lua "$process" info "$$" none) || fail
@@ -30,7 +45,7 @@ if [ "$action" = send-internal ];then
  fi
  interrupted=false;trap 'interrupted=true' TERM INT
  stop_family() { kill -TERM -- "-$$" 2>/dev/null || :;sleep .2 2>/dev/null || sleep 1;kill -KILL -- "-$$" 2>/dev/null;exit 7; }
- (version=$(/usr/libexec/homegate-wol/send --version) && [ "$version" = 'homegate-wol 1' ] && exec /usr/libexec/homegate-wol/send "$@") > "$W/result" 2>/dev/null &
+ (version=$(/usr/libexec/homegate-wol/send --version) && wol_version_supported "$version" && exec /usr/libexec/homegate-wol/send "$@") > "$W/result" 2>/dev/null &
  child=$!;now=$(lua "$process" now) || stop_family;deadline=$((now+6))
  while kill -0 "$child" 2>/dev/null;do
   [ "$interrupted" = false ] || stop_family;now=$(lua "$process" now) || stop_family;[ "$now" -lt "$deadline" ] || stop_family

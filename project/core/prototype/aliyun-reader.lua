@@ -53,7 +53,7 @@ local codes={credentials_missing=true,invalid_credentials=true,invalid_response=
     provider_rejected=true,signing_unavailable=true,InvalidAccessKeyId=true,['InvalidAccessKeyId.NotFound']=true,SignatureDoesNotMatch=true,
     InvalidAccessKeySecret=true,Forbidden=true,['Forbidden.RAM']=true,Throttling=true,['Throttling.User']=true,InternalError=true,ServiceUnavailable=true}
 for code in pairs(records.codes) do codes[code]=true end
-local kinds={['']=true,invalid_zone=true,authentication=true,not_found=true,unsupported=true,invalid_request=true,temporary=true,network_unavailable=true,timeout=true,rate_limit=true}
+local kinds={['']=true,invalid_zone=true,authentication=true,not_found=true,unsupported=true,invalid_request=true,temporary=true,network_unavailable=true,timeout=true,rate_limit=true,record_conflict=true}
 local function report(kind,retry,code,names,scope)
     if mode=='reconcile' then return reconcile.report(account,revision,kind,code,'incomplete') end
     if mode=='records' then
@@ -181,7 +181,62 @@ if mode=='records' or mode=='reconcile' then
             if rc~=0 then fail('temporary',false,'invalid_receipt') end
         end
     end
-    local body=records.run(snapshot,account,revision,{parse=shared.parse,context_parse=require('luci.jsonc').parse,encode=backup.json,plan=plan,reconcile=reconcile,reconciling=mode=='reconcile',work=work,read=read,write=write,fetch=fetch,fail=fail,state=operation_state,checkpoint=checkpoint})
+    local ownership
+    if durable then
+        local parent='/etc/homegate/transactions/aliyun-managed'
+        local function store_path(c)
+            local digest=sha1(account..'\0'..id..'\0'..c.zone..'\0'..c.fqdn)
+            local name=digest:gsub('.',function(byte)return string.format('%02x',byte:byte()) end)
+            return parent..'/'..name
+        end
+        local function quote(path) return "'"..path:gsub("'","'\\''").."'" end
+        local function read_stat(path)
+            local pipe=io.popen("stat -c '%u:%a:%h' "..quote(path)..' 2>/dev/null','r')
+            if not pipe then return nil end
+            local result=pipe:read('*l');pipe:close();return result
+        end
+        local function run(command) return os.execute('('..command..') >/dev/null 2>&1')==0 end
+        local function safe_directory()
+            local path=quote(parent)
+            return run('[ -d '..path..' ] && [ ! -L '..path.." ] && [ \"$(stat -c '%u:%a' "..path..')\" = 0:700 ]')
+        end
+        local function unavailable() fail('temporary',false,'ownership_unavailable') end
+        local function fingerprint(record) return record.id..':'..record.key..'\n' end
+        ownership={}
+        function ownership.matches(c,record)
+            if not read_stat(parent) then return false end
+            if not safe_directory() then unavailable() end
+            local path=store_path(c)
+            local metadata=read_stat(path)
+            if not metadata then return false end
+            local member=quote(path)
+            if metadata~='0:600:1' or not run('[ -f '..member..' ] && [ ! -L '..member..' ]') then unavailable() end
+            local file=io.open(path,'rb')
+            if not file then unavailable() end
+            local proof=file:read(129)
+            if not file:close() then unavailable() end
+            return proof==fingerprint(record)
+        end
+        function ownership.remember(c,record)
+            if not safe_directory() then
+                run('mkdir '..quote(parent))
+                if not safe_directory() then unavailable() end
+            end
+            local path=store_path(c)
+            local next_path=path..'.'..job
+            local temporary=quote(next_path)
+            if not run('set -C; : > '..temporary) then unavailable() end
+            local file=io.open(next_path,'wb')
+            local wrote=file and file:write(fingerprint(record))
+            local closed=file and file:close()
+            if not wrote or not closed or not run('fsync '..temporary..' && mv '..temporary..' '..quote(path)) then
+                os.remove(next_path)
+                unavailable()
+            end
+            if not run('fsync '..quote(parent)..' '..quote('/etc/homegate/transactions')) then unavailable() end
+        end
+    end
+    local body=records.run(snapshot,account,revision,{ownership=ownership,parse=shared.parse,context_parse=require('luci.jsonc').parse,encode=backup.json,plan=plan,reconcile=reconcile,reconciling=mode=='reconcile',work=work,read=read,write=write,fetch=fetch,fail=fail,state=operation_state,checkpoint=checkpoint})
     output(body);return
 end
 local function integer(n,low,high)return type(n)=='number' and n==math.floor(n) and n>=low and n<=high end

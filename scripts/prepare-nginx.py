@@ -2,11 +2,13 @@
 """Pinned native nginx for private protocol tests; never installs system files."""
 import argparse,hashlib,json,os,shutil,subprocess,sys,tarfile,urllib.request
 from pathlib import Path
-VERSION='1.30.6'
-BUILD='homegate-ip-san-v1'
-PATCH=Path(__file__).resolve().parents[1]/'packaging/components/homegate-nginx/patches/105-ip-san.patch'
+COMPONENT=Path(__file__).resolve().parents[1]/'packaging/components/homegate-nginx'
+MANIFEST=json.loads((COMPONENT/'sources.json').read_text(encoding='utf-8'))
+VERSION=MANIFEST['version']
+BUILD=MANIFEST['private_build']
+PATCH=COMPONENT/'patches/105-ip-san.patch'
 SOURCES={
- 'nginx.tar.gz':('https://nginx.org/download/nginx-1.30.6.tar.gz','3cf46f5ed7504d460125866b7bea99fb357f31d887e2e63b35503310e9b8b6c8'),
+ 'nginx.tar.gz':(MANIFEST['source_url'],MANIFEST['source_sha256']),
  'pcre2.tar.bz2':('https://github.com/PCRE2Project/pcre2/releases/download/pcre2-10.47/pcre2-10.47.tar.bz2','47fe8c99461250d42f89e6e8fdaeba9da057855d06eb7fc08d9ca03fd08d7bc7')}
 def sha(p):return hashlib.sha256(p.read_bytes()).hexdigest()
 def validate_runtime(work):

@@ -1,7 +1,7 @@
 -- Data-only bounded status and scheduling policy. Never grants write authority.
 local M={}
 local providers={cloudflare=true,aliyun=true,dnspod=true,huaweicloud=true}
-local kinds={['']=true,authentication=true,not_found=true,unsupported=true,invalid_request=true,invalid_zone=true,temporary=true,network_unavailable=true,timeout=true,rate_limit=true,invalid_configuration=true}
+local kinds={['']=true,authentication=true,not_found=true,unsupported=true,invalid_request=true,invalid_zone=true,record_conflict=true,temporary=true,network_unavailable=true,timeout=true,rate_limit=true,invalid_configuration=true}
 local outcomes={inflight=true,created=true,updated=true,unchanged=true,retry_wait=true,paused=true,unknown=true}
 local function integer(v,a,b)return type(v)=='number' and v==math.floor(v) and v>=a and v<=b end
 local function id(s)return type(s)=='string' and #s>0 and #s<=64 and s:match('^[a-zA-Z0-9_-]+$') end

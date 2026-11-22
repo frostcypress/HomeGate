@@ -1,9 +1,15 @@
 {
   "schema": 1,
   "component": "homegate-nginx",
-  "version": "1.30.6",
-  "source_url": "https://nginx.org/download/nginx-1.30.6.tar.gz",
-  "source_sha256": "3cf46f5ed7504d460125866b7bea99fb357f31d887e2e63b35503310e9b8b6c8",
+  "version": "1.30.7",
+  "source_url": "https://nginx.org/download/nginx-1.30.7.tar.gz",
+  "source_sha256": "2565b5c837050e958f70fb0f73c48e2bca4542ad349fd356f46fb0c72610bc6e",
+  "source_pgp": {
+    "signature_url": "https://nginx.org/download/nginx-1.30.7.tar.gz.asc",
+    "signature_sha256": "444f746ca0b38553b154d8f4b8b02a2272ba60c1541d5d8d5d9cab61efb1e99d",
+    "key_url": "https://nginx.org/keys/pluknet.key",
+    "signer_fingerprint": "D6786CE303D9A9022998DC6CC8464D549AF75C0A"
+  },
   "patch_source_repository": "https://github.com/immortalwrt/packages",
   "patch_source_commit": "fce1553dac2d00c0b0f66647d8a9bd102b73e49c",
   "patch_source_directory": "net/nginx/patches/nginx",
@@ -46,7 +52,7 @@
     }
   },
   "private_build": "homegate-ip-san-v1",
-  "package_release": 3,
+  "package_release": 1,
   "static_linked_dependencies": {
     "OpenSSL": {
       "version": "3.0.19",

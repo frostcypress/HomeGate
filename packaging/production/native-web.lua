@@ -123,6 +123,7 @@ local function read_configuration_source()
  local f=original_io.open('/etc/config/homegate','rb');local source=f and f:read(262145);if f then f:close()end
  return source
 end
+local public_before
 local function load_document(pkg)
  if documents[pkg]then return documents[pkg]end
  if fixture then documents[pkg]=copy(fixture.documents[pkg] or {});return documents[pkg]end
@@ -442,6 +443,7 @@ function cursor:commit(pkg)
   end
  end
  if wol_new then lib.mark_pending_add('wol',wol_new) end
+ if public_before and not lib.read_public_view() then lib.write_public_view(public_before) end
  local d,rc=decoded({'config-commit',preview.confirmation});if rc~=0 or not d or not d.ok then result.failure_stage='editor-publish';result.exit_code=rc;return false end
  result.configuration_saved=true
  if request.route=='config_reset' or request.route=='config_import' then
@@ -506,6 +508,7 @@ local stage_messages={
  ['ddns-delete-unknown']='远端 DNS 删除结果待核对，公网服务条目已保留。请先检查任务状态。',
  ['ddns-sync']='DDNS 同步未完成，请检查 DNS 账户和插件日志。',
  ['ddns-backoff']='DNS 服务暂时无法更新，请等待下一次自动同步。',
+ ['ddns-record-conflict']='云端解析冲突，DNS 更新已暂停。',
  ['ddns-unknown']='DDNS 更新结果待核对，请检查插件日志。',
  ['acme-admission']='续期未能启动，请检查插件日志和证书任务。',
  ['acme-failed']='证书续期失败，请检查插件日志。',
@@ -657,6 +660,7 @@ local function shell(command)
    if d and (d.effect=='unknown' or d.effect=='confirmed') then
     result.uncertain=true;return refused_stage('ddns-unknown',rc)
    end
+   if row and row.error_kind=='record_conflict' then return refused_stage('ddns-record-conflict',rc) end
    return refused_stage(rc==8 and 'dns-busy' or row and row.status=='retry_wait' and 'ddns-backoff' or 'ddns-sync',rc)
   end
   if action=='ddns-delete'then
@@ -893,7 +897,7 @@ modules['luci.http']={formvalue=function(k)if k then return request.form[k]end;r
      ['External%20port%20cannot%20serve%20both%20HTTP%20and%20HTTPS']='同一个公网端口不能同时用于 HTTP 和 HTTPS。',
      ['Public%20services%20require%20a%20custom%20port%20other%20than%2080%20or%20443']='请填写自定义公网端口。80 和 443 由本机管理页使用。',
      ['Invalid%20management%20domain']='请输入有效的管理域名。',
-     ['Router%20management%20requires%20a%20public%20service%20for%20this%20domain']='请为该域名保留一条公网服务，再开启路由管理页面。',
+     ['Router%20management%20requires%20an%20HTTPS%20service%20for%20this%20domain']='请先为该域名的公网服务开启 HTTPS。',
      ['The%20DNS%20account%20of%20an%20existing%20public%20service%20is%20locked']='已保存公网服务的 DNS 账号不可更换。',
      ['Management%20domain%20required%20for%20WAN%20access']='允许外网访问前，请填写管理域名。',
      ['Automatic%20firewall%20is%20required%20for%20management%20domain']='使用管理域名需要启用 HomeGate 自动防火墙。',
@@ -937,6 +941,8 @@ modules['luci.template']={render=function(name,data)
   load_document('homegate');result.data.configuration_revision=tostring(revision or 0)
  end
  if name=='homegate/public' and not fixture then
+  local view=lib.read_public_view()
+  if view then result.data.public_applied_enabled=table.concat(view.enabled,',') end
   local pending=lib.pending_add('public')
   local pending_row=pending and find('homegate',pending)
   if pending_row and pending_row.values.retained~='1' then result.data.public_pending_add=pending end
@@ -987,6 +993,23 @@ local ok,err=pcall(function()
   result.body=collect(core,call,load_document('homegate'),lib,work)
   result.headers['Content-Type']='text/plain; charset=UTF-8'
   result.headers['Content-Disposition']='attachment; filename="homegate-diagnostic.txt"'
+  result.ok=true
+  return
+ end
+ if request.route=='api/access_recent' and not fixture then
+  local data,code=decoded({'access-recent'})
+  if code==0 and type(data)=='table' and data.ok==true and type(data.entries)=='table' then
+   local document=load_document('homegate')
+   local view=lib.read_public_view() or lib.public_view(document)
+   local main=assert(find('homegate','main')).values
+   local regions=assert(loadfile(proto..'/access-region.lua'))(proto)
+   local classify=regions.access_view(view.scope,main.access_allow,main.access_deny)
+   for _,item in ipairs(data.entries) do
+    item.current_region,item.current_reason,item.current_allowed=classify(item.ip)
+   end
+  end
+  result.body=codec.json(data or {ok=false})
+  result.headers['Content-Type']='application/json'
   result.ok=true
   return
  end
@@ -1070,6 +1093,7 @@ local ok,err=pcall(function()
   end
  end
  if request.route=='public_apply' then
+  if not fixture and not lib.read_public_view() then public_before=lib.public_view(load_document('homegate')) end
   local count=tonumber(request.form.public_service_count)
   local needs_eab=false
   if count and count>=0 and count<=128 and count==math.floor(count) then
@@ -1197,12 +1221,18 @@ local ok,err=pcall(function()
  if not fixture and result.ok and request.form.mode=='apply' and apply_page then
   result.add_applied_revision=revision
   result.add_applied_page=apply_page
+  if apply_page=='public' or apply_page=='all' then result.public_applied=lib.public_view(load_document('homegate')) end
   local main=find('homegate','main')
   if request.route=='public_apply' and main and main.values.enabled~='1' and result.redirect then
    local notice=modules['luci.http'].urlencode('已保存并应用，HomeGate 未启用')
    result.redirect=result.redirect:gsub('([?&]notice=)[^&]*',function(prefix)return prefix..notice end)
    result.homegate_disabled=true
   end
+ end
+ if not fixture and result.ok and result.configuration_saved and
+    (request.route=='config_reset' or request.route=='config_import') then
+  result.add_applied_revision=revision
+  result.public_applied=lib.public_view(load_document('homegate'))
  end
  if access_rule_routes[request.route] then
   local main=find('homegate','main')

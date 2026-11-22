@@ -45,6 +45,7 @@ reason_text() {
   public-duplicate-port) printf '%s' '公网端口已被其他条目使用';;
   public-occupied-port) printf '%s' '公网端口已被路由器上的服务占用';;
   ddns-sync) printf '%s' 'DNS 同步未完成，请检查 DNS 账户及解析状态';;
+  ddns-record-conflict) printf '%s' '云端解析冲突，DNS 更新已暂停';;
   ddns-delete) printf '%s' '未能清理托管的云端解析，本地条目已保留';;
   editor-commit) printf '%s' '配置提交未完成';;
   access-region-transport) printf '%s' '无法下载地区数据';;
@@ -207,6 +208,7 @@ if [ ! -e "$log" ] && [ ! -L "$log" ]; then (set -C; : > "$log") || exit 7; fi
 file "$log" || exit 7
 if [ "$1" = clear ]; then : > "$log";exit 0;fi
 if [ "$1" = certificate-retry ] && grep -Fq "$message" "$log";then exit 0;fi
+if [ "$1" = package-upgrade ] && [ "$2" = verified ] && grep -Fq "] $message" "$log";then exit 0;fi
 
 if [ "$1" != package-upgrade ];then
  configured=$(uci -q get homegate.main.log_level 2>/dev/null) || configured=info

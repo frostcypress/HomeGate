@@ -14,8 +14,9 @@ from project import ROOT, identity, verify_generated
 DOCS = ('接续.md', '校验.md', '核实查漏修复.md')
 SOURCE_DIRS = ('.github', 'project', 'scripts', 'packaging', 'legal', 'targets', 'docs', 'third_party')
 SOURCE_FILES = ('PROJECT_ID', 'VERSION', 'RELEASE', 'project.json', 'homegate-version.mk',
-                'Makefile', 'README.md', 'LICENSE', 'THIRD_PARTY_NOTICES', '.gitattributes', '.gitignore',
+                'Makefile', 'LICENSE', 'THIRD_PARTY_NOTICES', '.gitattributes', '.gitignore',
                 '公开文件清单.json')
+OPTIONAL_SOURCE_FILES = ('README.md',)
 EXCLUDED = {'.git', '__pycache__', 'build', 'dist', 'node_modules', '.venv', '.aws', '.codex'}
 PUBLIC_MANIFEST = '公开文件清单.json'
 PRIVATE_PREFIXES = ('docs/验证/', 'targets/evidence/', '.github/reference/')
@@ -47,7 +48,7 @@ def public_files(root):
                 or relative.name in RETIRED_SOURCE_NAMES
                 or relative.suffix.lower() in RETIRED_SOURCE_SUFFIXES
                 or (relative.suffix.lower() in FORBIDDEN_SUFFIXES and name not in PUBLIC_GUIDE_IMAGES)
-                or (relative.parts[0] not in SOURCE_DIRS and name not in SOURCE_FILES)):
+                or (relative.parts[0] not in SOURCE_DIRS and name not in SOURCE_FILES + OPTIONAL_SOURCE_FILES)):
             raise ValueError('Forbidden public source: ' + name)
         file = root / name
         if any((root / Path(*relative.parts[:i])).is_symlink() for i in range(1, len(relative.parts) + 1)):
@@ -97,6 +98,10 @@ def source_files(root):
         if not item.is_file():
             raise ValueError('Missing required source: ' + name)
         yield item
+    for name in OPTIONAL_SOURCE_FILES:
+        item = root / name
+        if item.is_file():
+            yield item
     for name in SOURCE_DIRS:
         directory = root / name
         if not directory.is_dir():

@@ -8,7 +8,7 @@ local function number_arg(s,limit,minimum)
  return type(s)=='string' and #s<=limit and s:match('^[1-9][0-9]*$') and tonumber(s)>=minimum
 end
 local providers={['--cloudflare-check']=true,['--aliyun-check']=true,
- ['--dnspod-check']=true,['--huaweicloud-check']=true}
+ ['--dnspod-check']=true}
 local function id(s)
  return #s>0 and #s<=64 and not s:find('[^a-zA-Z0-9_%-]')
 end
@@ -19,7 +19,7 @@ local arity={['read-owner']=2,owner=2,['observe-config-service']=2,
  ['ddns-plan']=5,['ddns-work']=2,['ddns-schedule']=2,
  ['acme-work']=2,['acme-cleanup']=2,['acme-schedule']=3,
  ['certificate-validate']=3,['certificate-preview']=2,
- ['proxy-serve']=2,['proxy-validate']=3,['firewall-operate']=3,['wol-send']=2,['access-region']=2}
+ ['proxy-serve']=2,['proxy-validate']=3,['firewall-operate']=3,['wol-send']=2,['access-region']=2,['online-update']=2}
 if not action or #arg~=arity[action] or type(value)~='string' then refuse() end
 local program,args=watchdog,nil
 if action=='read-owner' then
@@ -38,7 +38,9 @@ elseif action=='firewall-operate' then
  program,args=core..'homegate-firewall.sh',{'operate-internal',value,token}
 else
  if #value~=32 or value:find('[^0-9a-f]') then refuse() end
- if action=='observe-config-service' then
+ if action=='online-update' then
+  program,args='/usr/libexec/homegate/native-online-update.lua',{'run',value}
+ elseif action=='observe-config-service' then
   args={value}
  elseif action=='ddns-work' then
   program,args=core..'homegate-ddns-job.sh',{'work',value}
@@ -99,7 +101,10 @@ local pid=nx.getpid()
 local made,sid=pcall(nx.setsid)
 if not made or type(pid)~='number' or sid~=pid then refuse() end
 -- exec keeps this PID, PGID and SID for the existing deadline/group checks.
-if args then
+if action=='online-update' then
+ if type(nx.execp)~='function' then refuse() end
+ nx.execp('lua',program,unpack(args))
+elseif args then
  nx.exec('/bin/ash',program,unpack(args))
 else
  nx.exec('/bin/ash','/usr/libexec/homegate/native-web.sh',action,value)

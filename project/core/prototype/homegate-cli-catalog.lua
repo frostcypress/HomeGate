@@ -17,6 +17,7 @@ local function capabilities()
     return {credentials_validation=true,ddns=true,dns01=true,zone_discovery=true}
 end
 local report={api_version=1,ok=true,version=version,prototype=true,write_ready=false,effect='none'}
+local huaweicloud_available=true
 if arg[1]=='dns-provider-catalog' then
     report.phase='dns-provider'
     report.providers={
@@ -27,13 +28,15 @@ if arg[1]=='dns-provider-catalog' then
             {name='secret',label='API Token',secret=true,required=true}}},
         {name='dnspod',display_name='Tencent DNSPod',aliases={'tencent','tencentcloud'},capabilities=capabilities(),credentials={
             {name='key_id',label='SecretId',secret=false,required=true},
-            {name='secret',label='SecretKey',secret=true,required=true}}},
-        {name='huaweicloud',display_name='Huawei Cloud DNS',aliases={'huawei','hwcloud'},capabilities=capabilities(),credentials={
+            {name='secret',label='SecretKey',secret=true,required=true}}}
+    }
+    if huaweicloud_available then
+        report.providers[#report.providers+1]={name='huaweicloud',display_name='Huawei Cloud DNS',aliases={'huawei','hwcloud'},capabilities=capabilities(),credentials={
             {name='key_id',label='Access Key ID',secret=false,required=true},
             {name='secret',label='Secret Access Key',secret=true,required=true},
             {name='account_id',label='Account ID',secret=false,required=true},
             {name='endpoint',label='DNS API Endpoint',secret=false,required=true,placeholder='https://dns.<region>.myhuaweicloud.com'}}}
-    }
+    end
 else
     report.phase='acme-ca'
     report.cas={

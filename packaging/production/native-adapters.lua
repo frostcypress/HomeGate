@@ -59,9 +59,9 @@ elseif mode=='private-provider' or mode=='private-frame'then
  if type(f)~='table'then fail()end
  local allowed={provider=true,key_id=true,secret=true,account_id=true,endpoint=true}
  for k,v in pairs(f)do if not allowed[k] or type(v)~='string' or #v>4096 or v:find('[%z\r\n]')then fail()end end
- local aliases={cf='cloudflare',alidns='aliyun',tencent='dnspod',tencentcloud='dnspod',huawei='huaweicloud',hwcloud='huaweicloud'}
+ local aliases={cf='cloudflare',alidns='aliyun',tencent='dnspod',tencentcloud='dnspod'}
  local provider=aliases[f.provider] or f.provider
- if not ({cloudflare=true,aliyun=true,dnspod=true,huaweicloud=true})[provider]then fail()end
+ if not ({cloudflare=true,aliyun=true,dnspod=true})[provider]then fail()end
  if mode=='private-provider'then io.write(provider,'\n');return end
  if provider~=arg[3]then fail()end
  local public=codec.canonical("# homegate-backup-format: 2\n# plugin: homegate\n# schema: public-uci-v1\n# secrets: omitted\nconfig homegate 'main'\nconfig dns_account 'offline_probe'\n option provider '"..provider.."'\n")

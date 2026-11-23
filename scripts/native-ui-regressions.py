@@ -49,7 +49,8 @@ data = dict(status={'service':{'running':True}},main={'enabled':'1','access_enab
 fixtures = [data, {**data,'status':{},'packages':{'core':'1.3.0-11','luci':'1.3.0-10','i18n':'1.3.0-11'},'default_renew_days':'45','notice':'<img onerror=alert(1)> & "\'','hosts':[{'id':'host_a','name':'','mac':'AA:BB:CC:DD:EE:FF'}],
                   'wol_clients':[{'mac':'AA:BB:CC:DD:EE:FF','name':'Saved host','label':'Saved host & TV'},
                                  {'mac':'02:11:22:33:44:55','name':'New host','label':'New host'}],
-                  'retired_access_region':True,'services':[{'web_id':'web_a','enabled':'1','https':'0','domain':'test.example','target':'http://192.168.1.2:80','cert_managed':False,'cert_shared':True}],
+                  'retired_access_region':True,'update_check_enabled':True,
+                  'services':[{'web_id':'web_a','enabled':'1','https':'0','domain':'test.example','target':'http://192.168.1.2:80','cert_managed':False,'cert_shared':True}],
                   'dns_provider_catalog':[{'name':'aliyun','display_name':'Aliyun DNS','credentials':[{'name':'key_id','label':'AccessKey ID','required':True},{'name':'secret','label':'AccessKey Secret','required':True}]}]}]
 
 node = r'''const fs=require('fs');const input=JSON.parse(fs.readFileSync(process.argv[2],'utf8'));const L={url:(...p)=>'/cgi-bin/luci/'+p.join('/')};const path=require('path');const baseclass={extend:p=>{function C(){};C.prototype=p;return C;}};const Shared=new Function('L','_','baseclass',fs.readFileSync(path.join(path.dirname(process.argv[3]),'common.js'),'utf8'))(L,v=>v,baseclass);const shared=new Shared();const Renderer=new Function('L','_','shared','baseclass',fs.readFileSync(process.argv[3],'utf8'))(L,v=>v,shared,baseclass);process.stdout.write(new Renderer().render(input));'''
@@ -95,10 +96,60 @@ with sync_playwright() as pw:
     installed=payload(ROOT)
     context.route('**/homegate/native-operations.js',lambda route:route.fulfill(
         status=200,content_type='application/javascript',body=installed['www/luci-static/resources/homegate/native-operations.js']))
+    update_views={f:installed['usr/lib/lua/luci/view/homegate_legacy/'+f+'.htm'].decode() for f in ('overview','common')}
+    assert b"legacy.dispatch('api/overview_update',false)" in installed['usr/lib/lua/luci/controller/homegate.lua']
+    update_html=legacy('overview',{**data,'update_check_enabled':True,'runtime_enabled':'1'},update_views)
+    bootstrap=(ROOT/'scripts/fixtures/legacy-bootstrap/cascade.css').read_text(encoding='utf-8')
+    def update_source(result):
+        return '<script>window.XHR={get:(u,f,cb)=>cb({status:200},u.endsWith("/overview_update")?' + json.dumps(result) + ':{})};</script>'
+    for state, label in (('latest','HomeGate is up to date.'),('unpublished','No stable release is available from this update source.'),
+                         ('error','The update source did not respond in time.')):
+        page.set_content(update_source({'ok':True,'state':state,'reason':'timeout'})+update_html)
+        dot=page.get_by_role('button',name=label)
+        assert dot.get_attribute('data-state')==state
+    unsafe_notes='<img src=x onerror="window.executedReleaseNotes=true">\nRelease note'
+    page.set_content(update_source({'ok':True,'state':'available','latest':'1.3.0-r274','notes':unsafe_notes})+update_html)
+    dot=page.get_by_role('button',name='A new HomeGate version is available.')
+    assert dot.get_attribute('data-state')=='available'
+    dot.click()
+    dialog=page.get_by_role('dialog',name='HomeGate update')
+    assert dialog.is_visible() and dialog.get_by_text('1.3.0-r274',exact=True).is_visible()
+    assert page.locator('#hg-update-notes').text_content()==unsafe_notes
+    assert dialog.locator('img').count()==0
+    assert not page.evaluate('window.executedReleaseNotes === true')
+    page.keyboard.press('Escape')
+    assert dialog.is_hidden() and dot.evaluate('node=>node===document.activeElement')
+    page.set_content('''<script>
+window.updateSubmissions=[];
+let install={state:'idle',ok:true};
+window.XHR={get:(u,f,cb)=>cb({status:200},u.endsWith('/update_result') ? install :
+  u.endsWith('/overview_update') ? {ok:true,state:'available',latest:'1.3.0-r277',notes:'Test release',offer:'fixture-offer'} : {})};
+window.homegateMaintenanceAction=(route,form)=>{
+  window.updateSubmissions.push({route,...form});
+  install={state:'success',ok:true,target:form.update_target};
+  return Promise.resolve({ok:true,update_queued:true});
+};
+</script>'''+update_html)
+    page.add_style_tag(content=bootstrap)
+    dot=page.get_by_role('button',name='A new HomeGate version is available.')
+    dot.click()
+    dialog=page.get_by_role('dialog',name='HomeGate update')
+    dialog.get_by_role('button',name='Close').click()
+    assert page.evaluate('window.updateSubmissions.length')==0
+    dot.click()
+    dialog.get_by_role('button',name='Confirm update').click()
+    assert dialog.get_by_text('Update installed and verified. 1.3.0-r277',exact=True).is_visible()
+    assert page.locator('#hg-installed-version').text_content()=='1.3.0-r277'
+    assert page.locator('#hg-update-indicator').get_attribute('data-state')=='latest'
+    assert dialog.get_by_text('HomeGate is up to date.',exact=True).is_visible()
+    assert page.locator('#hg-update-release').is_hidden()
+    assert page.locator('#hg-update-confirm').is_hidden()
+    assert page.locator('#hg-update-confirm').is_disabled()
+    assert page.evaluate('window.updateSubmissions')==[
+        {'route':'update_confirm','token':'rpc','update_target':'1.3.0-r277','update_offer':'fixture-offer'}]
     wol_views={f:installed['usr/lib/lua/luci/view/homegate_legacy/'+f+'.htm'].decode() for f in ('wol','common')}
     page.set_content('<script>window.confirmCalls=0;window.confirm=()=>{++confirmCalls;return false;};</script>'+
                      legacy('wol',fixtures[1],wol_views))
-    bootstrap=(ROOT/'scripts/fixtures/legacy-bootstrap/cascade.css').read_text(encoding='utf-8')
     page.add_style_tag(content=bootstrap)
     add_host=page.get_by_role('button',name='Add',exact=True)
     choice=page.locator('#hg-wol-mac-choice')
@@ -904,29 +955,33 @@ with sync_playwright() as pw:
     assert address.text_content()=='http://vault.example.test:18080'
     page.get_by_role('button',name='Cancel',exact=True).click()
     assert page.locator('#hg-public-block-standard-ports, input[name=block_standard_public_ports]').count()==0
-    active_companion={**companion,'enabled':'1','ddns_id':'ddns_a'}
-    grouped={**router_services,'services':[other,router,active_companion],'public_master_enabled':'0',
+    active_companion={**companion,'domain':'second.example.test','host':'second','enabled':'1','ddns_id':'ddns_a'}
+    separate_zone={**other,'domain':'other.separate.test','zone':'separate.test'}
+    grouped={**router_services,'services':[router,separate_zone,active_companion],'public_master_enabled':'0',
              'public_pending_add':active_companion['web_id']}
+    insertion_order=['https://router.example.test:8443','http://second.example.test:8444','https://other.separate.test:8445']
     page.set_content(stub+legacy('public',grouped))
-    assert page.locator('.hg-public-url').all_text_contents()==[
-        'http://router.example.test:8444','https://router.example.test:8443','https://other.example.test:8445']
-    assert page.locator('.hg-public-hint').first.inner_text()=='HomeGate is disabled'
-    assert page.locator('.hg-public-sync').first.is_disabled()
+    assert page.locator('.hg-public-url').all_text_contents()==insertion_order
+    assert page.locator('#hg-public-services tr').nth(1).locator('.hg-public-hint').inner_text()=='HomeGate is disabled'
+    assert page.locator('#hg-public-services tr').nth(1).locator('.hg-public-sync').is_disabled()
     assert page.get_by_role('button',name='Add',exact=True).is_disabled()
     urls=page.locator('.hg-public-url')
     before=urls.all_text_contents()
     check=page.locator('#hg-public-services input[type=checkbox]')
-    check.nth(0).uncheck()
-    check.nth(1).check()
+    check.nth(1).uncheck()
+    check.nth(0).check()
     assert urls.all_text_contents()==before
     saved_only={**grouped,'public_applied_enabled':'','public_pending_add':''}
     page.set_content(stub+legacy('public',saved_only))
-    assert urls.all_text_contents()==[
-        'https://other.example.test:8445','https://router.example.test:8443','http://router.example.test:8444']
+    assert urls.all_text_contents()==insertion_order
     applied={**grouped,'public_applied_enabled':router['web_id'],'public_pending_add':''}
     page.set_content(stub+legacy('public',applied))
-    assert urls.all_text_contents()==[
-        'https://router.example.test:8443','http://router.example.test:8444','https://other.example.test:8445']
+    assert urls.all_text_contents()==insertion_order
+    page.evaluate("window.hgGet=(url,callback)=>{ window.accessReply=callback; }; hgPublicAccessOpen()")
+    assert page.locator('#hg-public-access-modal').is_visible()
+    assert page.locator('#hg-public-access-body').inner_text()=='Loading...'
+    page.evaluate("window.accessReply({ok:true,entries:[]})")
+    assert page.locator('#hg-public-access-body').inner_text()=='No recent access.'
     page.evaluate("document.getElementById('hg-public-access-allow-source').value=''")
     page.evaluate("document.getElementById('hg-public-access-deny-source').value=''")
     page.evaluate("window.hgPublicRecentRows=[{ip:'192.0.2.2',host:'other.example.test',allowed:true,reason:'disabled',current_region:'foreign',current_allowed:false,current_reason:'denied'}];hgPublicAccessRenderRecent()")

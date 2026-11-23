@@ -27,6 +27,7 @@ reason_text() {
   certificate_retry) printf '%s' '证书任务将在稍后重试';;
   certificate_rate_limited) printf '%s' '证书机构限流，等待允许重试';;
   stop_unknown|runtime-quiescent) printf '%s' '未能确认代理、防火墙和后台任务均已收尾';;
+  acme-cleanup-pending) printf '%s' '证书任务待收尾，原有服务继续运行';;
   runtime-stop|runtime-disable|runtime-boot-disable) printf '%s' '停用步骤未完成';;
   runtime-admission|runtime-start) printf '%s' '未能验证服务启动';;
   boot-enable) printf '%s' '未能确认开机自启';;

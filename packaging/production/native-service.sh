@@ -13,7 +13,7 @@ codec=$base/native-service.lua;action=${1:-};stage=arguments
 trap 'code=$?; if [ "$action" = serve ] && [ "$code" != 0 ];then exit 1;fi' EXIT
 fail() { printf '{"api_version":1,"native":true,"ok":false,"phase":"native-service","effect":"none","write_ready":false,"failure_step":"%s","error":"Service unavailable; retained operations require attention"}\n' "$stage";exit "${1:-7}"; }
 [ "$(id -u)" = 0 ] || fail 7
-case "$action:$#" in serve:1|status:1|check:1|overview-status:1|owner-state:1|quiescent:1|admission:1|plan-certificates:1) ;;receipt:2|receipt:3) ;;stop:2|reap:2) [ "$2" = --confirm ] || fail 2;;plan-set:6) [ "$6" = --confirm ] || fail 2;;*) fail 2;;esac
+case "$action:$#" in serve:1|status:1|check:1|overview-status:1|owner-state:1|quiescent:1|admission:1|plan-certificates:1) ;;receipt:2|receipt:3) ;;stop:2|stop-for-apply:2|reap:2) [ "$2" = --confirm ] || fail 2;;plan-set:6) [ "$6" = --confirm ] || fail 2;;*) fail 2;;esac
 exists() { [ -e "$1" ] || [ -L "$1" ]; }
 private_dir() { [ -d "$1" ] && [ ! -L "$1" ] && [ "$(stat -c '%u:%a' "$1")" = 0:700 ]; }
 private_file() { [ -f "$1" ] && [ ! -L "$1" ] && [ "$(stat -c '%u:%a:%h' "$1")" = 0:600:1 ] && [ "$(stat -c %s "$1")" -le "${2:-16384}" ]; }
@@ -110,9 +110,18 @@ if [ "$action" = reap ];then
  rm -f "$run/native-service.json" "$run/native-service.json.next" "$run/native-service.stop" && fsync "$run" || fail
  printf '{"api_version":1,"native":true,"ok":true,"phase":"native-service","quiescent":true,"effect":"none","write_ready":false}\n';exit 0
 fi
-if [ "$action" = stop ];then
+if [ "$action" = stop ] || [ "$action" = stop-for-apply ];then
  private_dir "$run" || fail
  if [ "$live" = true ];then
+  if [ "$action" = stop-for-apply ];then
+   stage=configuration-lock
+   service_locks;lock_status=$?
+   case "$lock_status" in 0) ;;3) fail 8;;*) fail 4;;esac
+   # Refuse an apply before taking a working proxy offline if the
+   # certificate job would subsequently block the restart.
+   stage=certificate-cleanup
+   component homegate-acme-schedule.sh quiescent >/dev/null || fail 5
+  fi
   if ! exists "$run/native-service.stop";then (set -C; : > "$run/native-service.stop") && fsync "$run/native-service.stop" "$run" || fail;fi
   private_file "$run/native-service.stop" 0 || fail
  else
@@ -390,7 +399,7 @@ while :;do
     job=$(lua "$dir/cloudflare-codec.lua" nonce < /proc/sys/kernel/random/uuid 9>&-) || fail
     job_certificate=$certificate
     [ "$retry_certificate" != "$certificate" ] || retry_certificate=
-    entry acme-renew "$certificate" "$job" --confirm >/dev/null;code=$?
+    ash "$dir/homegate-acme-job.sh" renew-coordinated "$certificate" "$job" --confirm 8>&- 9>&- >/dev/null;code=$?
     if [ "$code" = 9 ];then
      job=;certificate_rate_limited=true;continue
     elif [ "$code" != 0 ];then

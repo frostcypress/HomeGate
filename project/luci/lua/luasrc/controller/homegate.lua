@@ -1080,6 +1080,7 @@ end
 
 local function public_services(cur, history)
     local ddns_by_domain, ddns_used, cert_by_id, rows = {}, {}, {}, {}
+    local position = {}
     local provider_catalog = dns_provider_catalog()
     local main = cur:get_all("homegate", "main") or {}
     local default_renew = tonumber(main.renew_days or "5") or 5
@@ -1135,7 +1136,7 @@ local function public_services(cur, history)
                 cert_managed = true
             end
         end
-        rows[#rows + 1] = {
+        local row = {
             id = web and web.id or (ddns and ddns.id or ""),
             web_id = web and web.id or "",
             ddns_id = ddns and ddns.id or "",
@@ -1166,6 +1167,8 @@ local function public_services(cur, history)
             host = host,
             ttl = ddns and trim(ddns.ttl) or "600"
         }
+        rows[#rows + 1] = row
+        position[row] = {order=web and tonumber(web.list_order) or 129, index=#rows}
     end
 
     cur:foreach("homegate", "web_rule", function(s)
@@ -1190,6 +1193,11 @@ local function public_services(cur, history)
         table.sort(rows, function(a,b)
             if a.domain~=b.domain then return a.domain<b.domain end
             return (tonumber(a.effective_port) or 0)<(tonumber(b.effective_port) or 0)
+        end)
+    else
+        table.sort(rows, function(a,b)
+            if position[a].order~=position[b].order then return position[a].order<position[b].order end
+            return position[a].index<position[b].index
         end)
     end
     return rows

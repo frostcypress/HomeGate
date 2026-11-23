@@ -15,7 +15,7 @@ if fixture then
  work='/offline-memory'
 else request=lib.request(arg[2],write);work=arg[2]:match('^(.*)/[^/]+$')end
 local result={api_version=1,ok=false,headers={}};local bytes=0;local private={};local documents={};local files={};local revision
-local needs_config_write=write and not ({config_export=true,diagnostic_download=true,log_clear=true,update_url_save=true})[request.route]
+local needs_config_write=write and not ({config_export=true,diagnostic_download=true,log_clear=true,update_url_save=true,update_confirm=true})[request.route]
 if request.route=='config_import' and request.form.mode~='restore'then needs_config_write=false end
 if request.route=='wol_action' and request.form.op=='wake' then needs_config_write=false end
 local effect_started=false
@@ -69,25 +69,14 @@ end
 local function decoded(args,input)
  local raw,code=core(args,input);return json.parse(raw),code
 end
-local update_url_path='/etc/homegate/plugin-update-url'
-local function read_update_url()
- local state=fs.lstat(update_url_path)
- if not state then return '' end
- if not lib.dir('/etc/homegate') or state.type~='reg' or state.uid~=0 or state.nlink~=1 or
-    state.modedec~=600 or state.size<1 or state.size>2049 then return nil end
- local raw=fs.readfile(update_url_path,2049)
- return raw and #raw==state.size and raw:match('^([^\r\n%z]*)\n$') or nil
-end
+local update=not fixture and assert(loadfile(base..'/native-update.lua'))('library')
 local function save_update_url(value)
  if type(value)~='string' or #value>2048 then return '请输入有效的 HTTP 或 HTTPS 更新地址。' end
- if value~='' then
-  local validation=assert(loadfile(proto..'/configuration-validation.lua'))()
-  local ip=assert(loadfile(proto..'/cloudflare-record-plan.lua'))()
-  if not validation.target(value,ip) then return '请输入有效的 HTTP 或 HTTPS 更新地址。' end
- end
- local current=read_update_url()
+ if value~='' and not update.valid_source(value) then return '请输入有效的 HTTP 或 HTTPS 更新地址。' end
+ local current=update.read_source()
  if current==nil or not lib.dir('/etc/homegate') then return '无法保存插件更新地址。' end
  if value~=current then
+  local update_url_path=update.source_path
   local job=work:match('/([0-9a-f]+)$')
   if not lib.id(job) then return '无法保存插件更新地址。' end
   local staged=update_url_path..'.'..job
@@ -124,6 +113,7 @@ local function read_configuration_source()
  return source
 end
 local public_before
+local public_order_before
 local function load_document(pkg)
  if documents[pkg]then return documents[pkg]end
  if fixture then documents[pkg]=copy(fixture.documents[pkg] or {});return documents[pkg]end
@@ -268,10 +258,21 @@ local function log_web_progress(outcome)
  local operation=not fixture and lib.web_operation(request)
  if operation then pcall(call,{'ash',base..'/native-log.sh','web',operation,outcome,'none'},nil,32) end
 end
-local function stop_and_wait()
- if not fixture and service_owner()==true then log_web_progress('stopping') end
- local _,rc=core({'service-stop','--confirm'})
+local function stop_and_wait(protect_proxy)
+ local was_running=not fixture and service_owner()==true
+ local _,rc
+ if protect_proxy and not fixture then
+  local started=uptime()
+  repeat
+   _,rc=call({'ash',base..'/native-service.sh','stop-for-apply','--confirm'})
+   local now=uptime()
+   if rc~=8 or not started or not now or now-started>=3 or not wait_ms(100) then break end
+  until false
+  if rc==8 then return rc,'editor-busy' end
+  if rc==5 then return rc,'acme-cleanup-pending' end
+ else _,rc=core({'service-stop','--confirm'}) end
  if rc~=0 then return rc,'runtime-stop' end
+ if was_running then log_web_progress('stopping') end
  local started=uptime()
  local short_retries=3
  repeat
@@ -297,7 +298,7 @@ local function stop_for_save()
  local owner=service_owner()
  if owner==nil then result.failure_stage='runtime-quiescent';return false end
  if owner then
-  local rc,stage=stop_and_wait()
+  local rc,stage=stop_and_wait(true)
   if rc~=0 then result.failure_stage=stage;result.exit_code=rc;return false end
   stopped_for_save=true;result.runtime_stopped_for_save=true
  end
@@ -375,12 +376,61 @@ local function restore_before_publish()
   result.runtime_start={revision=revision,restore=true}
  end
 end
+local function public_zone_keys(document)
+ local zones,certificates,keys={},{},{}
+ for _,row in ipairs(document) do
+  local v=row.values
+  if row.kind=='ddns_rule' then
+   local name=v.name
+   if not name or name=='' then
+    local zone,host=codec.public_zone(v.zone),codec.public_zone(v.host)
+    if not host then name=zone
+    elseif zone and codec.public_zone(host,zone)~=zone then name=host..'.'..zone
+    else name=host end
+   end
+   name=codec.public_zone(name)
+   if name then zones[name]=zones[name] or v.zone end
+  elseif row.kind=='certificate' then
+   certificates[row.name]=v.zone
+  end
+ end
+ for _,row in ipairs(document) do
+  if row.kind=='web_rule' and row.values.retained~='1' then
+   local v=row.values
+   local name=codec.public_zone(v.domain)
+   keys[row.name]=codec.public_zone(name,zones[name] or certificates[v.certificate])
+  end
+ end
+ return keys
+end
+local function preserve_public_order(document, previous)
+ local first, members = {}, {}
+ for i,row in ipairs(previous) do
+  first[row.zone]=first[row.zone] or i
+  members[row.name]={zone=row.zone,index=i}
+ end
+ local rows,keys={},public_zone_keys(document)
+ for i,row in ipairs(document) do
+  local zone=keys[row.name]
+  if zone then
+   first[zone]=first[zone] or #previous+i
+   local old=members[row.name]
+   rows[#rows+1]={row=row,group=first[zone],index=old and old.zone==zone and old.index or #previous+i}
+  end
+ end
+ table.sort(rows,function(a,b)
+  if a.group~=b.group then return a.group<b.group end
+  return a.index<b.index
+ end)
+ for i,entry in ipairs(rows) do entry.row.values.list_order=tostring(i) end
+end
 function cursor:commit(pkg)
  if not write or pkg~='homegate'then return false end
  if not changed then
   if not save_pending_eab() then return false end
   result.configuration_saved=true;return true
  end
+ if public_order_before then preserve_public_order(load_document(pkg),public_order_before) end
  if fixture then
   fixture.commits=fixture.commits+1
   if fixture.fail_commit then return false end
@@ -466,6 +516,7 @@ local stage_messages={
  ['reset-dns-cleanup']='云端解析清理未完成，本地设置和 DNS 凭据已保留。请核对 DNS 账户及任务状态后重试。',
  ['runtime-stop']='现有服务未能停止，请检查运行状态。',
  ['runtime-quiescent']='上一次服务操作尚未结束，请稍后再试。',
+ ['acme-cleanup-pending']='证书任务待收尾，本次更改未应用，原有服务继续运行。',
  ['editor-check']='配置未通过保存前检查，请刷新页面核对当前配置。',
  ['editor-busy']='配置正被另一项任务使用，请稍后再试。',
  ['editor-ddns-busy']='后台 DNS 同步仍在进行，配置尚未保存。同步结束后请重试。',
@@ -790,7 +841,7 @@ local function shell(command)
     if rc~=0 then return raw,rc end
    end
    if not stopped_for_save then
-    local rc,stage=stop_and_wait()
+    local rc,stage=stop_and_wait(true)
     if rc~=0 then return refused_stage(stage,rc) end
    end
    local ddns,certs,web={},{},{}
@@ -957,7 +1008,8 @@ modules['luci.template']={render=function(name,data)
   local row=pending and find('homegate',pending)
   if row and row.kind=='wol_host' then result.data.wol_pending_add=pending end
  end
- if name=='homegate/maintenance' and not fixture then result.data.plugin_update_url=read_update_url() end
+ if name=='homegate/maintenance' and not fixture then result.data.plugin_update_url=update.read_source() end
+ if name=='homegate/overview' then result.data.update_check_enabled=true end
 end}
 modules['nixio.fs']={chmod=function(path)if files[path]then return true end;return false end,stat=function(path)
  if fixture then return nil end
@@ -988,6 +1040,17 @@ local ok,err=pcall(function()
   result.ok=result.error==nil
   return
  end
+ if request.route=='update_confirm' then
+  local ok,reason
+  if not fixture then
+   local online=assert(loadfile(base..'/native-online-update.lua'))('library')
+   ok,reason=online.prepare(request.form,work:match('/([0-9a-f]+)$'))
+  end
+  result.ok=ok==true
+  result.update_queued=result.ok or nil
+  result.update_reason=reason
+  return
+ end
  if request.route=='diagnostic_download' and not fixture then
   local collect=assert(loadfile(base..'/native-diagnostics.lua'))()
   result.body=collect(core,call,load_document('homegate'),lib,work)
@@ -998,7 +1061,7 @@ local ok,err=pcall(function()
  end
  if request.route=='api/access_recent' and not fixture then
   local data,code=decoded({'access-recent'})
-  if code==0 and type(data)=='table' and data.ok==true and type(data.entries)=='table' then
+  if code==0 and type(data)=='table' and data.ok==true and type(data.entries)=='table' and #data.entries>0 then
    local document=load_document('homegate')
    local view=lib.read_public_view() or lib.public_view(document)
    local main=assert(find('homegate','main')).values
@@ -1009,6 +1072,21 @@ local ok,err=pcall(function()
    end
   end
   result.body=codec.json(data or {ok=false})
+  result.headers['Content-Type']='application/json'
+  result.ok=true
+  return
+ end
+ if request.route=='api/overview_update' then
+  local data=fixture and {ok=true,state='checking'} or update.status()
+  result.body=codec.json(data)
+  result.headers['Content-Type']='application/json'
+  result.ok=true
+  return
+ end
+ if request.route=='api/update_result' then
+  local data=fixture and {ok=true,state='idle'} or
+   assert(loadfile(base..'/native-online-update.lua'))('library').status()
+  result.body=codec.json(data)
   result.headers['Content-Type']='application/json'
   result.ok=true
   return
@@ -1092,8 +1170,33 @@ local ok,err=pcall(function()
    result.failure_stage='homegate-disabled';result.error=stage_messages['homegate-disabled'];return
   end
  end
- if request.route=='public_apply' then
-  if not fixture and not lib.read_public_view() then public_before=lib.public_view(load_document('homegate')) end
+ if request.route=='config_import' then
+  local proposed=codec.parse(request.form.config_payload)
+  for _,row in ipairs(proposed or {}) do
+   if row.kind=='dns_account' and row.values.provider=='huaweicloud' then
+    result.body=codec.json({api_version=1,ok=false,phase='config-import',
+     error='备份仍包含华为云 DNS 账户。请先在旧版迁移这些账户，再导入配置。'})
+    result.headers['Content-Type']='application/json'
+    result.ok=true
+    return
+   end
+  end
+ elseif request.route=='public_apply' then
+  local document=load_document('homegate')
+  public_order_before={}
+  local keys=public_zone_keys(document)
+  for i,row in ipairs(document) do
+   local zone=keys[row.name]
+   if zone then
+    public_order_before[#public_order_before+1]={name=row.name,zone=zone,
+     order=tonumber(row.values.list_order) or 129,index=i}
+   end
+  end
+  table.sort(public_order_before,function(a,b)
+   if a.order~=b.order then return a.order<b.order end
+   return a.index<b.index
+  end)
+  if not fixture and not lib.read_public_view() then public_before=lib.public_view(document) end
   local count=tonumber(request.form.public_service_count)
   local needs_eab=false
   if count and count>=0 and count<=128 and count==math.floor(count) then

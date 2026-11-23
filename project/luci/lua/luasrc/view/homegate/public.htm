@@ -48,7 +48,6 @@
   </div>
 </div>
 
-<span id="hg-public-applied-state" data-known="<%=public_applied_enabled ~= nil and '1' or '0'%>" data-enabled="<%=pcdata(public_applied_enabled or '')%>" hidden></span>
 <span id="hg-public-management-state" data-domain="<%=pcdata(main.management_domain or '')%>" data-enabled="<%=b(main.management_wan) and '1' or '0'%>" hidden></span>
 <span id="hg-public-zerossl-state" data-key-id="<%=pcdata(zerossl_eab_key_id or '')%>" hidden></span>
 
@@ -323,18 +322,12 @@ function hgPublicRowSignature(r){return JSON.stringify(hgPublicRowState(r));}
 function hgPublicStateSignature(){var rows=[];for(var i=0;i<hgPublicRows.length;i++)rows.push(hgPublicRowState(hgPublicRows[i]));var scope=document.getElementById('hg-public-access-scope'),allow=document.getElementById('hg-public-access-allow-source'),deny=document.getElementById('hg-public-access-deny-source');return JSON.stringify([(scope&&scope.value)||'',(allow&&allow.value)||'',(deny&&deny.value)||'',rows]);}
 function hgPublicCaptureSavedState(){hgPublicSavedRows={};for(var i=0;i<hgPublicRows.length;i++){var r=hgPublicRows[i],k=hgPublicRowIdentity(r);r.dirty=false;if(k)hgPublicSavedRows[k]=hgPublicRowSignature(r);}var scope=document.getElementById('hg-public-access-scope'),allow=document.getElementById('hg-public-access-allow-source'),deny=document.getElementById('hg-public-access-deny-source');hgPublicSavedAccessScope=(scope&&scope.value)||'';hgPublicSavedAccessAllow=(allow&&allow.value)||'';hgPublicSavedAccessDeny=(deny&&deny.value)||'';hgPublicSavedSignature=hgPublicStateSignature();hgPublicSavedManagementDomain=hgPublicManagementDomain;hgPublicHasUnsaved=false;hgSetPending('hg-public-dirty',false);}
 function hgPublicRecomputeDirty(){for(var i=0;i<hgPublicRows.length;i++){var r=hgPublicRows[i],k=hgPublicRowIdentity(r),saved=k?hgPublicSavedRows[k]:null;r.dirty=!saved||hgPublicRowSignature(r)!==saved;}if(hgPublicPendingEab&&!hgPublicRows.some(function(row){return row.https&&row.cert_source==='auto'&&row.cert_ca==='zerossl';}))hgPublicPendingEab=null;hgPublicHasUnsaved=hgPublicStateSignature()!==hgPublicSavedSignature||hgPublicManagementDomain!==hgPublicSavedManagementDomain||!!hgPublicPendingEab;hgSetPending('hg-public-dirty',hgPublicHasUnsaved);}
-var hgPublicAppliedEnabled=new Set();
 function hgPublicLoadRows(){
   hgPublicRows=[];var rows=document.querySelectorAll('#hg-public-services tr.hg-public-row');
   for(var i=0;i<rows.length;i++){var x=rows[i],env=x.getAttribute('data-cert-environment')||'production';hgPublicRows.push({web_id:x.getAttribute('data-web-id')||'',ddns_id:x.getAttribute('data-ddns-id')||'',external_dns:x.dataset.externalDns==='1',account_id:x.getAttribute('data-account-id')||'',cert_id:x.getAttribute('data-cert-id')||'',cert_source:x.getAttribute('data-cert-source')==='local'?'local':'auto',cert_ca:x.getAttribute('data-cert-ca')||'letsencrypt',cert_environment:env,cert_managed:x.getAttribute('data-cert-managed')=='1',cert_renew_days:x.getAttribute('data-cert-renew-days')||'<%=pcdata(default_renew_days or '5')%>',cert_shared:x.getAttribute('data-cert-shared')=='1',local_upload:false,local_cert_pem:'',local_key_pem:'',enabled:x.getAttribute('data-enabled')=='1',domain:x.getAttribute('data-domain')||'',target:x.getAttribute('data-target')||'',external_port:x.getAttribute('data-external-port')||'',https:x.getAttribute('data-https')=='1',provider:x.getAttribute('data-provider')||'aliyun',key_id:x.getAttribute('data-key-id')||'',provider_account_id:x.getAttribute('data-provider-account-id')||'',endpoint:x.getAttribute('data-endpoint')||'',secret:'',secret_saved:x.getAttribute('data-secret-saved')=='1',zone:x.getAttribute('data-zone')||'',host:x.getAttribute('data-host')||'',ttl:x.getAttribute('data-ttl')||'600',dirty:false});}
   var management=document.getElementById('hg-public-management-state');
   for(var index=0;index<rows.length;index++)hgPublicRows[index].cert_ca_lock=rows[index].getAttribute('data-cert-ca-lock')||'';
   hgPublicManagementDomain=management.dataset.enabled==='1'?management.dataset.domain:'';
-  var applied=document.getElementById('hg-public-applied-state');
-  var enabled=applied.dataset.known==='1'
-    ? applied.dataset.enabled.split(',').filter(Boolean).map(function(id){return 'web:'+id;})
-    : hgPublicRows.filter(function(row){return row.enabled;}).map(hgPublicRowIdentity);
-  hgPublicAppliedEnabled=new Set(enabled);
   hgPublicClearUnusedManagement();hgPublicCaptureSavedState();hgPublicRender();
 }
 function hgPublicReadCertificateChoices(){var box=document.getElementById('hg-public-certificate-data'),nodes=box?box.querySelectorAll('span[data-id]'):[];hgPublicCertificateChoices=[];for(var i=0;i<nodes.length;i++){var o=nodes[i];hgPublicCertificateChoices.push({id:o.getAttribute('data-id')||'',label:o.textContent||'',domains:o.getAttribute('data-domains')||'',renew_days:o.getAttribute('data-renew-days')||'<%=pcdata(default_renew_days or '5')%>',use_count:parseInt(o.getAttribute('data-use-count')||'0',10)||0,enabled:o.getAttribute('data-enabled')!='0',retained:o.dataset.retained==='1',source:o.getAttribute('data-source')==='local'?'local':'acme',ca:o.getAttribute('data-ca')||'letsencrypt',environment:o.getAttribute('data-environment')||'production'});}}
@@ -990,7 +983,7 @@ function hgPublicAccessOpen(){
   hgPublicRecentRows=[];
   hgPublicAccessMessage('hg-public-access-message','');
   hgSetModalOpen('hg-public-access-modal',true);
-  hgPublicAccessRenderRecent();
+  hgTableMessage('hg-public-access-body',5,'<%:Loading...%>');
   hgPublicAccessRefresh();
 }
 function hgPublicDeleteAllAccess(){
@@ -1086,13 +1079,13 @@ function hgPublicRender(){
   hgClearNode(body);
   var groups=new Map();
   hgPublicRows.forEach(function(row,index){
-    if(!groups.has(row.domain))groups.set(row.domain,[]);
-    groups.get(row.domain).push(index);
+    var domain=hgPublicTrim(row.domain).toLowerCase().replace(/\.$/,'');
+    var zone=hgPublicTrim(row.zone).toLowerCase().replace(/\.$/,'');
+    var key=zone&&(domain===zone||domain.endsWith('.'+zone))?zone:domain;
+    if(!groups.has(key))groups.set(key,[]);
+    groups.get(key).push(index);
   });
-  function enabled(index){return hgPublicAppliedEnabled.has(hgPublicRowIdentity(hgPublicRows[index]));}
-  var grouped=Array.from(groups.values());
-  var ordered=grouped.filter(function(group){return group.some(enabled);}).concat(grouped.filter(function(group){return !group.some(enabled);}));
-  ordered.forEach(function(group){group.filter(enabled).concat(group.filter(function(index){return !enabled(index);})).forEach(function(idx){
+  groups.forEach(function(group){group.forEach(function(idx){
     var r=hgPublicRows[idx],tr=document.createElement('tr');tr.className='hg-public-row';
     var enabledLabel=hgLabel('hg-public-label-enabled');
     var ec=hgAppendTableCell(tr,'',enabledLabel),ch=document.createElement('input');

@@ -67,7 +67,15 @@ if not ca:
         headers=config['header'];action=next(v.split(': ',1)[1] for v in headers if v.startswith('X-TC-Action: '));assert any(v.startswith('Authorization: TC3-HMAC-SHA256') for v in headers)
         q=data_body();rows=db['records'];rid=format(q.get('RecordId',0),'032x')
         def dnp(body):output({'Response':{'RequestId':'fixture',**body}})
-        if action=='DescribeRecordList':dnp({'RecordList':[dnp_value(v) for v in rows],'RecordCountInfo':{'TotalCount':len(rows)}})
+        if action=='DescribeRecordList':
+            if 'RecordType' in q:
+                assert q['RecordType']=='TXT' and q['SubDomain']=='_acme-challenge'
+                rows=[v for v in rows if v['type']==q['RecordType'] and v['name']==q['SubDomain']+'.example.test']
+            page=rows[q['Offset']:q['Offset']+q['Limit']]
+            total=len(rows)
+            if mode=='dnspod-add-pagination' or mode=='dnspod-cleanup-pagination' and db.get('dnspod_ca_rejected'):
+                total+=1
+            dnp({'RecordList':[dnp_value(v) for v in page],'RecordCountInfo':{'TotalCount':total,'ListCount':len(page)}})
         if action=='CreateRecord':
             rid=format(len(rows)+100,'032x');rows.append({'id':rid,'type':q['RecordType'],'name':q['SubDomain']+'.example.test','content':q['Value'],'ttl':q['TTL']});dnp({'RecordId':int(rid,16)})
         if action=='DescribeRecord':
@@ -172,7 +180,9 @@ if kind in ['authz','challenge']:
         thumb=b64(hashlib.sha256(json.dumps({k:jwk[k] for k in ['crv','kty','x','y']},sort_keys=True,separators=(',',':')).encode()).digest())
         value=b64(hashlib.sha256((token+'.'+thumb).encode()).digest());name='_acme-challenge.'+domain.removeprefix('*.')
         assert any(v['type']=='TXT' and v['name']==name and v['content']==value for v in db['records']), 'Challenge TXT missing'
-        if mode=='ca-reject':output({'type':'urn:ietf:params:acme:error:unauthorized','detail':'private fixture rejection'},400)
+        if mode in ('ca-reject','dnspod-cleanup-pagination'):
+            if mode=='dnspod-cleanup-pagination':db['dnspod_ca_rejected']=True
+            output({'type':'urn:ietf:params:acme:error:unauthorized','detail':'private fixture rejection'},400)
         if processing:
             order.setdefault('verification_wait',{})[str(i)]=[time.monotonic(),name,value]
             output('{\n  "sta\\u0074us" : "processing"\n}',retry_after=3)

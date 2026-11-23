@@ -7,7 +7,7 @@ unset IPKG_INSTROOT INIT_TRACE LUA_INIT LUA_PATH LUA_CPATH HOMEGATE_CONFIG_PROTO
 acme_jobs_enabled=false
 fail() { printf '{"api_version":1,"engineering":true,"ok":false,"phase":"acme-job","effect":"none","write_ready":false,"error":"ACME request unavailable; inspect retained job and DNS receipts"}\n';exit "${1:-7}"; }
 [ "$acme_jobs_enabled" = true ] && [ "$(id -u)" = 0 ] || fail 2
-scheduled=false;allow_continuous_ddns=false;lock_busy=4
+scheduled=false;coordinated=false;allow_continuous_ddns=false;lock_busy=4
 action=${1:-}
 if [ "$action" = issue-live ];then
  [ "$#" -eq 4 ] || fail 2
@@ -16,6 +16,10 @@ fi
 if [ "$action" = scheduled-renew ];then
  [ "$#" -eq 5 ] && [ "$5" = --confirm ] || fail 2
  schedule_token=$4;scheduled=true;set -- renew "$2" "$3" --confirm;action=renew
+fi
+if [ "$action" = renew-coordinated ];then
+ [ "$#" -eq 4 ] || fail 2
+ coordinated=true;set -- renew "$2" "$3" "$4";action=renew
 fi
 case "$action" in
  issue|renew) [ "$#" -eq 4 ] && [ "$4" = --confirm ] || fail 2;certificate=$2;HG_JOB=$3;case "$certificate" in ''|*[!a-zA-Z0-9_-]*) fail 2;;esac;[ "${#certificate}" -le 64 ] || fail 2;;
@@ -123,6 +127,9 @@ for fd in 6 7;do
  hg_bound "$fd" "$lock" || fail 4
  flock -n "$fd" || fail "$lock_busy"
 done
+# An Apply that holds these locks can close the coordinator's launch
+# window before marking the service for stop.
+if [ "$coordinated" = true ] && hg_exists "$HG_RUN/native-service.stop";then fail 4;fi
 # Recheck under the admission locks: a session may have started after the
 # earlier point-in-time quiescence observation.
 if [ "$scheduled" != true ] && { [ "$action" = issue ] || [ "$action" = renew ]; };then

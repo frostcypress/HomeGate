@@ -14,6 +14,10 @@ file(){ [ -f "$1" ] && [ ! -L "$1" ] && [ "$(stat -c '%u:%a:%h' "$1")" = 0:600:1
 empty(){ file "$1" && [ "$(stat -c %s "$1")" = 0 ]; }
 valid_id(){ [ "${#1}" = 32 ] && case "$1" in *[!0-9a-f]*) false;;*) true;;esac; }
 held(){ [ -e /etc/homegate/package-state ] || [ -L /etc/homegate/package-state ] || [ -e /etc/.homegate-transition/hold ] || [ -L /etc/.homegate-transition/hold ]; }
+update_idle(){
+ [ ! -e /etc/homegate/online-update.json ] && [ ! -L /etc/homegate/online-update.json ] ||
+  lua "$base/native-online-update.lua" web-write
+}
 [ "$(id -u)" = 0 ] && [ "$#" = 2 ] || fail 2
 action=$1;value=$2
 case "$action" in
@@ -47,6 +51,7 @@ case "$action" in
  submit)
   lua "$codec" validate-request "$value" >/dev/null || fail 1
   held && fail 4
+  update_idle || fail 4
   if [ ! -e "$root" ] && [ ! -L "$root" ];then mkdir "$root" || fail;fi
   dir "$root" || fail
   if [ ! -e "$root/.allocation.lock" ] && [ ! -L "$root/.allocation.lock" ];then (set -C;: > "$root/.allocation.lock") || :;fi
@@ -111,6 +116,8 @@ case "$action" in
  while ! flock -n 8;do now=$(lua "$clock" now) || fail;[ "$now" -lt "$deadline" ] || not_started;pause 100 .1 || sleep 1;done
   not_started_reason=package-state
   held && not_started
+  not_started_reason=busy
+  update_idle || not_started
   stopped=false;trap 'stopped=true' TERM INT
   started=true;trap - EXIT
   # Keep Web output small; the trusted region worker sets its own size limit.
@@ -233,6 +240,12 @@ case "$action" in
   file "$work/deadline" && rm "$work/deadline" || fail
   file "$work/request" && rm "$work/request" || fail
   for name in call-input call-output runtime-receipt starting applying-start applying-stop;do if [ -e "$work/$name" ];then file "$work/$name" && rm "$work/$name" || fail;fi;done
+  if grep -Fq '"update_queued":true' "$work/result";then
+   # The package removal hook may purge completed Web jobs. Never keep
+   # either Web lease open in the updater that invokes that hook.
+   exec 8>&- 9>&-
+   lua "$base/native-web-session.lua" online-update "$value" </dev/null >/dev/null &
+  fi
   exit 0;;
  *) fail 2;;
 esac

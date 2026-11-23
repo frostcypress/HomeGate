@@ -262,6 +262,12 @@ if not ok then
  if desired and (mode=='apply' or mode=='watch' or (mode=='protect-idle' and updating))then
   desired.reconcile=false;desired.failure=failure;pcall(save,'desired',desired)
   local clean=pcall(cleanup)
+  -- A missing WAN sample during watch is recoverable after verified cleanup.
+  -- Keep the existing proxy admission so a later sample can recreate its rules.
+  if clean and mode=='watch' and not updating and failure=='wan_unavailable' then
+   desired.reconcile=true
+   save('desired',desired)
+  end
   pcall(report,false,clean,false,clean and 'apply_failed_clean' or 'cleanup_failed',desired)
  else pcall(report,false,false,false,'unavailable',desired)end
  os.exit(7)

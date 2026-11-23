@@ -1,0 +1,13 @@
+#!/bin/sh /etc/rc.common
+START=96
+STOP=09
+USE_PROCD=1
+
+start_service() {
+    [ -z "${IPKG_INSTROOT:-}" ] || return 0
+    procd_open_instance
+    procd_set_param command /usr/bin/lua /usr/libexec/homegate/native-update.lua schedule
+    procd_set_param term_timeout 10
+    procd_set_param respawn 3600 30 5
+    procd_close_instance
+}

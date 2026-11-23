@@ -764,7 +764,34 @@ config wol_host 'host_a'
         self.assertEqual(report['state'],'skipped',self.acme_diagnostics(job2));self.assertEqual(len(json.loads((STATE/'acme-fixture.json').read_text())['events']),count)
         self.verify_unchanged()
     def acme_provider(self,provider):
-        s=self.acme_setup(provider);self.acme_config(s,domains='example.test');job='5'*32
+        s=self.acme_setup(provider);self.acme_config(s,domains='example.test')
+        if provider=='dnspod':
+            mode=STATE/'acme-mode';mode.write_text('dnspod-add-pagination')
+            directory=Path('/etc/homegate-engineering/acme/jobs')
+            add_job='6'*32
+            self.cfg('acme_issue',s,id='cert_a',job=add_job,consent='1')
+            failed=self.acme_wait(s,add_job)
+            self.assertEqual((failed['state'],failed['cleanup_required']),('failed',False),failed)
+            challenge,=(directory/add_job).glob('challenges/*.json')
+            self.assertEqual(json.loads(challenge.read_text())['state'],'unmodified')
+            self.assertEqual(json.loads((STATE/'acme-fixture.json').read_text())['records'],[])
+            mode.write_text('dnspod-cleanup-pagination')
+            failed_job='7'*32
+            self.cfg('acme_issue',s,id='cert_a',job=failed_job,consent='1')
+            failed=self.acme_wait(s,failed_job)
+            self.assertEqual((failed['state'],failed['cleanup_required']),('failed',True),failed)
+            root=directory/failed_job
+            challenge,=root.glob('challenges/*.json')
+            self.assertEqual(json.loads(challenge.read_text())['state'],'owned')
+            response=json.loads((root/'dns.result').read_text())
+            self.assertEqual((response['provider_code'],response['effect']),('pagination_changed','none'))
+            self.assertEqual(len(json.loads((STATE/'acme-fixture.json').read_text())['records']),1)
+            mode.unlink()
+            self.cfg('acme_cleanup',s,job=failed_job,consent='1')
+            cleaned=self.acme_wait(s,failed_job)
+            self.assertEqual((cleaned['state'],cleaned['cleanup_required']),('cleaned',False),cleaned)
+            self.assertEqual(json.loads((STATE/'acme-fixture.json').read_text())['records'],[])
+        job='5'*32
         self.cfg('acme_issue',s,id='cert_a',job=job,consent='1');report=self.acme_wait(s,job)
         self.assertEqual(report['state'],'issued',self.acme_diagnostics(job))
         db=json.loads((STATE/'acme-fixture.json').read_text());self.assertEqual(db['records'],[])

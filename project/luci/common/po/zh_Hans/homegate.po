@@ -445,6 +445,99 @@ msgstr "插件许可"
 msgid "Update URL saved"
 msgstr "更新地址已保存"
 
+msgid "HomeGate update"
+msgstr "HomeGate 更新"
+
+msgid "Checking for updates…"
+msgstr "正在检查更新…"
+
+msgid "HomeGate is up to date."
+msgstr "HomeGate 已是最新版本。"
+
+msgid "A new HomeGate version is available."
+msgstr "发现新版本。"
+
+msgid "No stable release is available from this update source."
+msgstr "此更新源暂无可用的正式版本。"
+
+msgid "Unable to check for updates."
+msgstr "检查更新失败。"
+
+msgid "The update source did not respond in time."
+msgstr "更新源响应超时。"
+
+msgid "The update source returned invalid release information."
+msgstr "更新源返回的发布信息无效。"
+
+msgid "The saved update URL is invalid."
+msgstr "保存的更新地址无效。"
+
+msgid "Available version"
+msgstr "可更新版本"
+
+msgid "Release notes"
+msgstr "更新日志"
+
+msgid "Release notes have been shortened."
+msgstr "更新日志过长，已截取显示。"
+
+msgid "No release notes were provided."
+msgstr "此版本暂无更新日志。"
+
+msgid "Confirm update"
+msgstr "确认更新"
+
+msgid "Install the preceding version before updating to this release."
+msgstr "请先升级到此版本的上一修订。"
+
+msgid "The release signing key is unavailable."
+msgstr "缺少可信的发布签名公钥。"
+
+msgid "The release is missing the signed update files."
+msgstr "此版本缺少已签名的更新文件。"
+
+msgid "Preparing to update HomeGate…"
+msgstr "正在准备更新 HomeGate…"
+
+msgid "Downloading and verifying the three-package update…"
+msgstr "正在下载并校验三包更新…"
+
+msgid "Installing the update. Public services may briefly stop."
+msgstr "正在安装更新，公网服务可能短暂停止。"
+
+msgid "Update installed and verified."
+msgstr "更新已安装并通过校验。"
+
+msgid "Update stopped before installation."
+msgstr "更新在安装前已停止。"
+
+msgid "Installation requires review. Check the maintenance log before trying again."
+msgstr "安装结果待核对，请查看插件维护日志后再操作。"
+
+msgid "HomeGate is already processing an update."
+msgstr "HomeGate 正在处理一项更新。"
+
+msgid "The available update has changed. Refresh this page and check again."
+msgstr "可用更新已变化，请刷新页面后重新查看。"
+
+msgid "The release signature could not be verified."
+msgstr "发布签名校验失败。"
+
+msgid "The update download did not complete."
+msgstr "更新文件下载未完成。"
+
+msgid "The downloaded update did not match its checksum."
+msgstr "下载文件的摘要不匹配。"
+
+msgid "The update package does not match this router architecture."
+msgstr "更新包与当前路由器架构不匹配。"
+
+msgid "The signed release information does not match the requested update."
+msgstr "签名清单与确认的更新版本不匹配。"
+
+msgid "The update archive is incomplete or invalid."
+msgstr "更新归档不完整或格式无效。"
+
 msgid "Unable to save the plugin update URL"
 msgstr "无法保存插件更新地址"
 

@@ -65,9 +65,11 @@ GATES = {
   'dnspod_receipt_enabled','huaweicloud_receipt_enabled'],
 }
 
-def render(name, raw):
+def render(name, raw, retired_providers=()):
     text = raw.decode('utf-8')
     for gate in GATES.get(Path(name).name, []):
+        if any(gate.startswith(provider+'_') for provider in retired_providers):
+            continue
         text, count = re.subn('^'+gate+'=false$',gate+'=true',text,flags=re.M)
         if count != 1: raise ValueError('Deployment gate drift: '+name+':'+gate)
     # Keep the on-disk schema and protocol identifiers intact. Only filesystem
@@ -107,11 +109,13 @@ def render(name, raw):
             text=text.replace(anchor,'dns_provider='+provider+';dns_receipt_enabled=false\n')
     return text.encode('utf-8')
 
-def payload(root):
+def payload(root, *, retired_providers=()):
     files={}
     for file in sorted((root/PROTO).iterdir()):
         if file.suffix in ('.sh','.lua'):
-            files[PROTO+file.name]=render(file.name,file.read_bytes())
+            if any(file.name.startswith((provider+'-', 'homegate-'+provider+'-')) for provider in retired_providers):
+                continue
+            files[PROTO+file.name]=render(file.name,file.read_bytes(),retired_providers)
     for name in ['acme.sh','LICENSE.md','PROVENANCE.json']:
         files['acme/'+name]=(root/'third_party/acme.sh-3.1.6'/name).read_bytes()
     provenance=json.loads(files['acme/PROVENANCE.json'])

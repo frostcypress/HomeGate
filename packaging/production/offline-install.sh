@@ -22,6 +22,8 @@ fail() {
     exit 7
 }
 
+@DNS_MIGRATION_CHECK@
+
 case "$#:$*" in
     1:--fresh) mode=fresh;;
     1:--migrate) mode=migrate;;
@@ -268,6 +270,14 @@ else
         *) fail unsupported_migration_version;;
     esac
     if [ "$current" != "$version" ]; then
+        if check_dns_migration /etc/config/homegate && check_dns_migration "${store%/*}/package-config"; then
+            :
+        else
+            case "$?" in
+                2) fail retired_huaweicloud_dns_account;;
+                *) fail dns_provider_configuration_unverified;;
+            esac
+        fi
         upgrade_from=$current
         write_upgrade_log begin none || :
     fi

@@ -281,15 +281,22 @@ elseif mode=='dns-input' then
 elseif mode=='dns-tuple' then local d=input();io.write(codec.json({name=d.name,value=d.value}),'\n');return
 elseif mode=='dns-request' then local d=input();io.write(codec.json({operation=d.action=='add' and 'upsert' or 'delete',kind='dns01',resource=d.resource,domain=d.domain,value=d.value})..'\n');return
 elseif mode=='challenge-write' then
- local key,state=arg[3],arg[4];if not hex(key,64) or not ({prepared=true,owned=true,preexisting=true,removed=true,unknown=true})[state] or arg[5] then fail() end
+ local key,state=arg[3],arg[4];if not hex(key,64) or not ({prepared=true,owned=true,preexisting=true,removed=true,unmodified=true,unknown=true})[state] or arg[5] then fail() end
  local d=input();d.state=state;write(base..'/challenges/'..key..'.next',codec.json(d)..'\n');return
 elseif mode=='challenge-state' then
  local key=arg[3];if not hex(key,64) or arg[4] then fail() end
  local d=parse(read(base..'/challenges/'..key..'.json',4096));local now=input()
- if d.resource~=now.resource or d.name~=now.name or d.value~=now.value or not ({prepared=true,owned=true,preexisting=true,removed=true,unknown=true})[d.state] then fail() end
+ if d.resource~=now.resource or d.name~=now.name or d.value~=now.value or not ({prepared=true,owned=true,preexisting=true,removed=true,unmodified=true,unknown=true})[d.state] then fail() end
  io.write(d.state,'\n');return
 elseif mode=='dns-result' then
- local d=parse(io.stdin:read(4097) or '');local s=scope()
+ local raw=io.stdin:read(4097) or '';local s=scope()
+ if arg[3]=='1' and s.provider=='dnspod' then
+  local records=assert(loadfile(dir..'/dnspod-records.lua'))()
+  if raw==records.report(s.account,s.revision,'temporary',true,'pagination_changed','failed','none',0) then
+   io.write('pagination-unmodified\n');return
+  end
+ end
+ local d=parse(raw)
  if arg[3]~='0' or d.ok~=true or d.provider~=s.provider or d.account~=s.account or d.configuration_revision~=s.revision or (d.effect~='none' and d.effect~='confirmed') or not ({created=true,updated=true,unchanged=true,deleted=true,absent=true})[d.result] then fail() end
  io.write(d.effect=='confirmed' and 'owned\n' or 'preexisting\n');return
 elseif mode=='challenge-load' then
@@ -298,7 +305,7 @@ elseif mode=='challenge-load' then
  io.write(d.name,'\n',d.value,'\n');return
 elseif mode=='clean-check' then
  -- Shell supplies only validated fixed record names; no glob/path from a caller.
- for i=3,#arg do local key=arg[i];if not hex(key,64) then fail() end;local d=parse(read(base..'/challenges/'..key..'.json',4096));if d.state~='removed' and d.state~='preexisting' then fail() end end;return
+ for i=3,#arg do local key=arg[i];if not hex(key,64) then fail() end;local d=parse(read(base..'/challenges/'..key..'.json',4096));if d.state~='removed' and d.state~='preexisting' and d.state~='unmodified' then fail() end end;return
 elseif mode=='install' then
  local cert=read(base..'/issued/fullchain.pem',65536);local key=read(base..'/issued/privkey.pem',16384)
  io.write(codec.json({certificate_pem=cert,private_key_pem=key}));return

@@ -112,7 +112,7 @@ function hgMaintenanceSaveUpdateUrl(form){
   var notice=document.getElementById('hg-plugin-update-result'),value=input.value.trim();
   input.disabled=button.disabled=true;
   hgShowNotice(notice,'');
-  hgMaintenanceAction(form.action,{token:form.elements.token.value,plugin_update_url:value},function(result){
+  hgWebAction(form.action,{token:form.elements.token.value,plugin_update_url:value},function(result){
     input.disabled=button.disabled=false;
     if(!result.ok||typeof result.plugin_update_url!=='string'){
       hgShowNotice(notice,result.error||'<%:Unable to save the plugin update URL%>','error');
@@ -124,37 +124,13 @@ function hgMaintenanceSaveUpdateUrl(form){
   });
   return false;
 }
-function hgMaintenanceAction(url,values,done){
-  var route=url.match(/\/homegate\/([a-z_]+)$/);
-  if(!route){done({ok:false,error:'<%:Invalid HomeGate action%>'});return;}
-  if(typeof window.homegateMaintenanceAction==='function'){window.homegateMaintenanceAction(route[1],values).then(done,function(e){done({ok:false,error:e.message});});return;}
-  var base=url.slice(0,url.lastIndexOf('/')),attempts=0;
-  function xhr(method,path,body,callback){
-    var req=new XMLHttpRequest();req.open(method,path,true);req.timeout=20000;
-    req.setRequestHeader('Accept','application/json');
-    if(method==='POST')req.setRequestHeader('Content-Type','application/x-www-form-urlencoded');
-    req.onload=function(){try{callback(JSON.parse(req.responseText));}catch(e){done({ok:false,error:'<%:Unable to read action result%>'});}};
-    req.onerror=req.ontimeout=function(){done({ok:false,error:'<%:Unable to read action result%>'});};req.send(body);
-  }
-  function poll(id){
-    xhr('GET',base+'/compat_job/'+id,null,function(d){
-      if(!d.ok){done(d);return;}
-      if(d.pending){if(++attempts<240)setTimeout(function(){poll(id);},1000);else done({ok:false,error:'<%:Action timed out; inspect status before retrying%>'});return;}
-      if(!d.result){done({ok:false,error:'<%:Invalid HomeGate bridge response%>'});return;}
-      if(!d.result.uncertain){var ack=new XMLHttpRequest();ack.open('POST',base+'/compat_ack/'+id,true);ack.timeout=20000;ack.setRequestHeader('Content-Type','application/x-www-form-urlencoded');ack.send('token='+encodeURIComponent(values.token||''));}
-      done(d.result);
-    });
-  }
-  var body=Object.keys(values).map(function(k){return encodeURIComponent(k)+'='+encodeURIComponent(values[k]);}).join('&');
-  xhr('POST',url,body,function(d){if(d.ok&&d.pending&&/^[0-9a-f]{32}$/.test(d.job||''))poll(d.job);else done(d);});
-}
 function hgMaintenanceSubmit(form,clear){
   if(form.getAttribute('data-busy')==='1')return false;
   var reset=/\/config_reset$/.test(form.action);
   if(reset&&!confirm('<%:Restore HomeGate defaults? Managed cloud AAAA records, local settings, certificates and keys, access rules, access history and region data will be removed.%>'))return false;
   form.setAttribute('data-busy','1');var button=form.querySelector('button');if(button)button.disabled=true;
   hgMaintenanceMessage('<%:Processing...%>','pending');
-  hgMaintenanceAction(form.action,{token:form.elements.token.value},function(result){
+  hgWebAction(form.action,{token:form.elements.token.value},function(result){
     form.removeAttribute('data-busy');if(button)button.disabled=false;
     if(!result.ok){hgMaintenanceMessage(result.error||'<%:Action failed%>','error');return;}
     if(clear){hgMaintenanceMessage('<%:Log cleared%>');hgMaintenanceRefreshLog();return;}
@@ -209,7 +185,7 @@ function hgMaintenanceShowPreview(result,pending){
 }
 function hgMaintenanceRequestPreview(form,payload,done,mode,confirmation){
   var values={config_payload:payload,token:form.elements.token.value,mode:mode||'check',confirmation:confirmation||''};
-  hgMaintenanceAction(form.action,values,function(result){
+  hgWebAction(form.action,values,function(result){
     if(!result.ok||result.redirect){done({ok:false,error:result.error});return;}
     try{done(JSON.parse(result.body||'{}'));}catch(e){done({ok:false});}
   });

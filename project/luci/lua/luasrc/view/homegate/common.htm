@@ -860,6 +860,30 @@ function hgGet(url, cb) {
     cb(data, xhr);
   });
 }
+function hgWebAction(url,values,done){
+  var route=url.match(/\/homegate\/([a-z_]+)$/);
+  if(!route){done({ok:false,error:'<%:Invalid HomeGate action%>'});return;}
+  if(typeof window.homegateMaintenanceAction==='function'){window.homegateMaintenanceAction(route[1],values).then(done,function(e){done({ok:false,error:e.message});});return;}
+  var base=url.slice(0,url.lastIndexOf('/')),attempts=0;
+  function xhr(method,path,body,callback){
+    var req=new XMLHttpRequest();req.open(method,path,true);req.timeout=20000;
+    req.setRequestHeader('Accept','application/json');
+    if(method==='POST')req.setRequestHeader('Content-Type','application/x-www-form-urlencoded');
+    req.onload=function(){try{callback(JSON.parse(req.responseText));}catch(e){done({ok:false,error:'<%:Unable to read action result%>'});}};
+    req.onerror=req.ontimeout=function(){done({ok:false,error:'<%:Unable to read action result%>'});};req.send(body);
+  }
+  function poll(id){
+    xhr('GET',base+'/compat_job/'+id,null,function(d){
+      if(!d.ok){done(d);return;}
+      if(d.pending){if(++attempts<240)setTimeout(function(){poll(id);},1000);else done({ok:false,error:'<%:Action timed out; inspect status before retrying%>'});return;}
+      if(!d.result){done({ok:false,error:'<%:Invalid HomeGate bridge response%>'});return;}
+      if(!d.result.uncertain){var ack=new XMLHttpRequest();ack.open('POST',base+'/compat_ack/'+id,true);ack.timeout=20000;ack.setRequestHeader('Content-Type','application/x-www-form-urlencoded');ack.send('token='+encodeURIComponent(values.token||''));}
+      done(d.result);
+    });
+  }
+  var body=Object.keys(values).map(function(k){return encodeURIComponent(k)+'='+encodeURIComponent(values[k]);}).join('&');
+  xhr('POST',url,body,function(d){if(d.ok&&d.pending&&/^[0-9a-f]{32}$/.test(d.job||''))poll(d.job);else done(d);});
+}
 function hgSetPending(id, dirty) {
   var e = document.getElementById(id);
   if (e) e.style.display = dirty ? 'block' : 'none';

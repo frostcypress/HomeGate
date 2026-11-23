@@ -17,6 +17,29 @@ have_tool() {
 }
 dir() { [ -d "$1" ] && [ ! -L "$1" ] && [ "$(stat -c '%u:%a' "$1")" = 0:700 ]; }
 file() { [ -f "$1" ] && [ ! -L "$1" ] && [ "$(stat -c '%u:%a:%h' "$1")" = 0:600:1 ] && [ "$(stat -c %s "$1")" -le 64 ]; }
+# BEGIN DNS MIGRATION CHECK
+check_dns_migration() (
+ config=$1
+ [ -e "$config" ] || [ -L "$config" ] || exit 0
+ [ -f "$config" ] && [ ! -L "$config" ] && [ "$(stat -c %s "$config")" -le 262144 ] || exit 1
+ values=$(uci -q -c "${config%/*}" show "${config##*/}") || exit 1
+ printf '%s\n' "$values" | awk -F= -v package="${config##*/}" '
+  $1 ~ /^[^.]+\.[^.]+$/ && $2 == "dns_account" { accounts[$1] = 1 }
+  $1 ~ /^[^.]+\.[^.]+\.provider$/ {
+   section=$1
+   sub(/\.provider$/, "", section)
+   provider=tolower($2)
+   gsub(/\047/, "", provider)
+   if (provider == "huaweicloud" || provider == "huawei" || provider == "hwcloud") retired[section] = 1
+  }
+  index($1, package ".") == 1 { read_configuration = 1 }
+  END {
+   if (!read_configuration) exit 1
+   for (section in retired) if (section in accounts) exit 2
+  }
+ '
+)
+# END DNS MIGRATION CHECK
 read_record() {
  file "$record" || return 1
  { IFS= read -r magic && IFS= read -r mode && IFS= read -r boot && IFS= read -r running && ! IFS= read -r extra; } < "$record" || return 1
@@ -71,6 +94,11 @@ case "$action" in
   # Firmware BusyBox applets vary. Refuse before mkdir/record/config writes.
   for tool in stat fsync flock lua sha256sum mkdir mv cat;do
    have_tool "$tool" || { printf 'HomeGate package prerequisite missing: %s\n' "$tool" >&2;exit 7; }
+  done
+  for config in /etc/config/homegate "$root/package-config";do
+   check_dns_migration "$config" && continue
+   printf '%s\n' 'HomeGate cannot upgrade this DNS configuration. Migrate any Huawei Cloud DNS accounts using the previous version and retry.' >&2
+   exit 4
   done
   if [ ! -e "$root" ] && [ ! -L "$root" ];then mkdir "$root" || exit 7;fi
   dir "$root" || exit 7
@@ -136,6 +164,10 @@ case "$action" in
     { printf '%s\n' 'HomeGate remote DNS cleanup did not finish. Local configuration and credentials were retained.' >&2;exit 4; }
   fi
   init_with_stop_lease package_stopped || exit 4
+  if [ -x /etc/init.d/homegate-update ];then
+   /etc/init.d/homegate-update stop >/dev/null 2>&1 || :
+   if [ "$desired_mode" = remove ];then /etc/init.d/homegate-update disable || exit 7;fi
+  fi
   stash_config || exit 7;mode=$desired_mode;write_record || exit 7;;
  postinst)
   dir "$root" && read_record || exit 7
@@ -143,7 +175,12 @@ case "$action" in
   source_locks && lua /usr/libexec/homegate/native-package.lua restore-config || exit 7
   fsync /etc/config /etc/homegate || exit 7
   exec 6>&- 7>&-
-  mode=ready;write_record || exit 7;;
+  mode=ready;write_record || exit 7
+  # Metadata checks are independent of the proxy's enabled/running state.
+  # A failure here must leave the successfully migrated core usable.
+  if ! /etc/init.d/homegate-update enable || ! /etc/init.d/homegate-update start;then
+   printf '%s\n' 'HomeGate automatic update checks could not be started.' >&2
+  fi;;
  restore-config)
   dir "$root" && read_record || exit 7
   source_locks && lua /usr/libexec/homegate/native-package.lua restore-config || exit 7

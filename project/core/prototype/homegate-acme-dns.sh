@@ -18,9 +18,9 @@ if hg_exists "$HG_PATH/challenges/$HG_KEY.json";then
  HG_STATE=$(lua "$HG_DIR/homegate-acme.lua" challenge-state "$HG_JOB" "$HG_KEY") || exit 1
 fi
 if [ "$HG_ACTION" = add ];then
- case "$HG_STATE" in owned|preexisting) exit 0;;none) ;;*) exit 1;;esac
+ case "$HG_STATE" in owned|preexisting) exit 0;;none|unmodified) ;;*) exit 1;;esac
 else
- case "$HG_STATE" in preexisting|removed) exit 0;;owned) ;;*) exit 1;;esac
+ case "$HG_STATE" in preexisting|removed|unmodified) exit 0;;owned) ;;*) exit 1;;esac
 fi
 hg_publish_challenge() {
  lua "$HG_DIR/homegate-acme.lua" challenge-write "$HG_JOB" "$HG_KEY" "$1" &&
@@ -36,6 +36,12 @@ lua "$HG_DIR/homegate-acme.lua" dns-request "$HG_JOB" > "$HG_PATH/dns.request" |
 cat "$HG_PATH/dns.request" 3>&- 4>&- 5>&- 6>&- 7>&- 8>&- 9>&- | ash "$HG_DIR/homegate-cloudflare-read.sh" --acme-records-internal "$HG_PROVIDER" "$HG_ACCOUNT" --confirm > "$HG_PATH/dns.result" 2>/dev/null & HG_PID=$!
 HG_RC=0;wait "$HG_PID" || HG_RC=$?
 HG_OUT=$(lua "$HG_DIR/homegate-acme.lua" dns-result "$HG_JOB" "$HG_RC" < "$HG_PATH/dns.result") || { hg_publish_challenge unknown;exit 1; }
+if [ "$HG_OUT" = pagination-unmodified ];then
+ # A rejected list did not dispatch a write. Keep ownership on removal.
+ if [ "$HG_ACTION" = remove ];then hg_publish_challenge owned
+ else hg_publish_challenge unmodified;fi
+ exit 1
+fi
 # A confirmed operation must retain its original, validated checkpoint before
 # the explicit issue workflow acknowledges that one successful transition.
 if [ "$HG_OUT" = owned ];then

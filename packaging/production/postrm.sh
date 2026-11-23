@@ -17,6 +17,10 @@ for path do
  [ ! -L "$path" ] || exit 7
  [ ! -e "$path" ] || { [ -d "$path" ] && [ "$(stat -c %u "$path")" = 0 ]; } || exit 7
 done
+path=/tmp/homegate-update-check
+if [ ! -L "$path" ] && [ -d "$path" ] && [ "$(stat -c '%u:%a' "$path")" = 0:700 ];then
+ set -- "$@" "$path"
+fi
 if [ -e /etc/.homegate-transition ];then
  [ "$(stat -c '%u:%a' /etc/.homegate-transition)" = 0:700 ] || exit 7
  for path in /etc/.homegate-transition/hold /etc/.homegate-transition/source.config /usr/lib/opkg/info/homegate.control;do

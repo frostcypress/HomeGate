@@ -7,6 +7,7 @@ by the engineering deployment. Native procd/package sources are staged; full CLI
 from pathlib import Path
 import argparse
 from engineering_runtime import payload as business_payload, web_payload
+from online_release import PUBLIC_KEY_PATH, public_key
 
 BASE = 'usr/libexec/homegate/'
 COMPONENT_PACKAGES = {
@@ -31,7 +32,12 @@ def native(raw):
     return text.encode('utf-8')
 
 def payload(root, *, bundled=False):
-    files={BASE+name:native(raw) for name,raw in business_payload(root).items()}
+    files={BASE+name:native(raw) for name,raw in business_payload(
+        root,retired_providers=('huaweicloud',)).items()}
+    catalog=BASE+'project/core/prototype/homegate-cli-catalog.lua'
+    availability=b'local huaweicloud_available=true\n'
+    assert files[catalog].count(availability)==1
+    files[catalog]=files[catalog].replace(availability,b'local huaweicloud_available=false\n')
     readonly={
         'homegate-network-read.sh':['network_resolve_enabled'],
         'homegate-network-worker.sh':['network_resolve_enabled'],
@@ -75,6 +81,7 @@ def payload(root, *, bundled=False):
     for name in ['native-cli.lua','native-service.sh','native-service.lua','native-package.sh','native-package.lua','native-adapters.sh','native-adapters.lua','native-access.lua','native-certificates.sh','native-certificates.lua','native-public.lua','native-public-listeners.lua','native-management.lua','native-luci-cache.lua','native-log.sh','native-dns-cleanup.sh']:
         files[BASE+name]=(root/'packaging/production'/name).read_bytes()
     files['etc/init.d/homegate']=(root/'packaging/production/homegate.init').read_bytes()
+    files['etc/init.d/homegate-update']=(root/'packaging/production/homegate-update.init').read_bytes()
     files['etc/hotplug.d/iface/95-homegate']=(root/'packaging/production/95-homegate').read_bytes()
     files[BASE+'factory.config']=(root/'packaging/production/homegate.config').read_bytes()
     control=BASE+'ddns-control.sh'
@@ -242,7 +249,7 @@ def web_runtime(root,files):
     key=BASE+'project/core/prototype/homegate-certificate.sh'
     assert files[key].count(b'native_certificate_maintenance_enabled=false\n')==1
     files[key]=files[key].replace(b'native_certificate_maintenance_enabled=false\n',b'native_certificate_maintenance_enabled=true\n')
-    for name in ['native-web.sh','native-web-session.lua','native-web.lua','native-web-store.lua','native-selftest.lua','native-diagnostics.lua']:
+    for name in ['native-web.sh','native-web-session.lua','native-web.lua','native-web-store.lua','native-selftest.lua','native-diagnostics.lua','native-update.lua','native-online-update.lua']:
         files[BASE+name]=(root/'packaging/production'/name).read_bytes()
     parser=(root/'project/core/prototype/cloudflare-codec.lua').read_text(encoding='utf-8')
     parser=parser[parser.index('local function parse(body)'):parser.index('local function envelope(')]
@@ -250,8 +257,10 @@ def web_runtime(root,files):
     contract=json.loads((root/'docs/核心CLI合同.json').read_text(encoding='utf-8'))
     routes=contract['routes'] if 'routes' in contract else contract['web_routes']
     routes.update({'api/overview_status': {'write':False}, 'api/overview_ipv6': {'write':False},
-                   'api/management_domains': {'write':False}})
+                   'api/management_domains': {'write':False}, 'api/overview_update': {'write':False},
+                   'api/update_result': {'write':False}})
     routes['update_url_save']={'write':True}
+    routes['update_confirm']={'write':True}
     files[BASE+'legacy-routes.json']=(json.dumps(routes,ensure_ascii=False,separators=(',',':'))+'\n').encode()
     files[BASE+'legacy-controller.lua']=(root/'project/luci/lua/luasrc/controller/homegate.lua').read_bytes()
     # Private preview reuses the production PEM/key/date/SAN validator verbatim.
@@ -453,16 +462,21 @@ def stage_sdk(root, sdk, *, bundled=False):
     shutil.copyfile(root / 'homegate-version.mk', sdk / 'homegate-version.mk')
 
 
-def stage_package(root,destination, *, bundled=False):
+def stage_package(root,destination, *, bundled=False, update_public_key=None):
     """Source-only SDK feed input. Does not compile, install, enable or publish."""
     if destination.exists() and (destination.is_symlink() or any(destination.iterdir())):
         raise ValueError('Package staging destination must be empty')
+    pin_bytes = public_key(update_public_key) if update_public_key is not None else None
     destination.mkdir(parents=True,exist_ok=True)
     import shutil
     for name,raw in payload(root,bundled=bundled).items():
         kind='web' if name.startswith(('usr/lib/lua/luci/','www/')) else 'core'
         path=destination/'payload'/kind/name;path.parent.mkdir(parents=True,exist_ok=True);path.write_bytes(raw)
-        path.chmod(0o755 if name in ['usr/bin/homegate','etc/init.d/homegate','etc/hotplug.d/iface/95-homegate'] or name.endswith('.sh') or name.endswith('service-disabled') else 0o644)
+        path.chmod(0o755 if name in ['usr/bin/homegate','etc/hotplug.d/iface/95-homegate'] or name.startswith('etc/init.d/') or name.endswith(('.sh','service-disabled')) else 0o644)
+    if pin_bytes is not None:
+        pin = destination/'payload/core'/PUBLIC_KEY_PATH
+        pin.write_bytes(pin_bytes)
+        pin.chmod(0o644)
     config=destination/'payload/core/etc/config/homegate';config.parent.mkdir(parents=True,exist_ok=True)
     config.write_bytes((root/'packaging/production/homegate.config').read_bytes());config.chmod(0o600)
     license=destination/'payload/core/usr/share/licenses/homegate-core';license.mkdir(parents=True)
@@ -509,7 +523,7 @@ def stage(root,destination):
         raise ValueError('Staging destination must be an empty real directory')
     for name,raw in payload(root).items():
         path=destination/name;path.parent.mkdir(parents=True,exist_ok=True)
-        path.write_bytes(raw);path.chmod(0o755 if name in ['usr/bin/homegate','etc/init.d/homegate','etc/hotplug.d/iface/95-homegate'] or name.endswith('.sh') or name.endswith('service-disabled') else 0o644)
+        path.write_bytes(raw);path.chmod(0o755 if name in ['usr/bin/homegate','etc/hotplug.d/iface/95-homegate'] or name.startswith('etc/init.d/') or name.endswith(('.sh','service-disabled')) else 0o644)
 
 def stage_installed(root,installed,destination):
     """Copy verified plugin bytes from a pristine real opkg offline root.
@@ -559,7 +573,9 @@ if __name__=='__main__':
     parser=argparse.ArgumentParser(description=__doc__);group=parser.add_mutually_exclusive_group(required=True)
     group.add_argument('--output',type=Path);group.add_argument('--package-output',type=Path)
     parser.add_argument('--bundled',action='store_true',help='Include the private target components in Core')
+    parser.add_argument('--update-public-key',type=Path,help='PEM publisher public key to install with Core')
     args=parser.parse_args();root=Path(__file__).resolve().parents[1]
     if args.bundled and not args.package_output:parser.error('--bundled requires --package-output')
-    if args.package_output:stage_package(root,args.package_output,bundled=args.bundled)
+    if args.update_public_key and not args.package_output:parser.error('--update-public-key requires --package-output')
+    if args.package_output:stage_package(root,args.package_output,bundled=args.bundled,update_public_key=args.update_public_key)
     else:stage(root,args.output)

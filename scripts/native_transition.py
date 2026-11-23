@@ -118,7 +118,7 @@ def matching_components(root, components, inspector, architecture):
     return files,permissions
 
 
-def prepare_kit(root,packages,destination, *, architecture='all', components=None):
+def prepare_kit(root,packages,destination, *, architecture='all', components=None, update_public_key=None):
     root=Path(root);destination=Path(destination);packages=Path(packages)
     if destination.exists():raise ValueError('Kit destination must not exist')
     inspector=module(root/'scripts/检查三包.py','native_kit_packages')
@@ -129,7 +129,7 @@ def prepare_kit(root,packages,destination, *, architecture='all', components=Non
     paths=sorted(packages.glob('*.ipk'))
     if len(paths)!=3:raise ValueError('Exactly three native IPKs required')
     with tempfile.TemporaryDirectory() as temporary:
-        feed=Path(temporary)/'feed';stage_package(root,feed,bundled=bundled)
+        feed=Path(temporary)/'feed';stage_package(root,feed,bundled=bundled,update_public_key=update_public_key)
         po=module(root/'project/luci/common/tools/po2lmo.py','native_kit_po')
         translated=Path(temporary)/'homegate.zh-cn.lmo';po.build(feed/'po/zh_Hans/homegate.po',translated)
         expected={name:{} for name in NAMES};permissions={name:{} for name in NAMES}
@@ -180,12 +180,13 @@ def prepare_kit(root,packages,destination, *, architecture='all', components=Non
         (destination/'receipt.json').write_text(json.dumps(receipt,ensure_ascii=False,indent=2)+'\n',encoding='utf-8')
         (destination/'receipt.json').chmod(0o600)
         return receipt
-def build_offline_bundle(root, packages, destination, architecture, components):
+def build_offline_bundle(root, packages, destination, architecture, components, update_public_key=None):
     root, packages, destination = map(Path, (root,packages,destination))
     if destination.exists():
         raise ValueError('Offline bundle destination must be new')
     with tempfile.TemporaryDirectory() as work:
-        receipt=prepare_kit(root,packages,Path(work)/'verified',architecture=architecture,components=components)
+        receipt=prepare_kit(root,packages,Path(work)/'verified',architecture=architecture,components=components,
+                            update_public_key=update_public_key)
     version=receipt['version']
     nginx=json.loads((root/'packaging/components/homegate-nginx/sources.json').read_text(encoding='utf-8'))
     wol=(root/'packaging/components/homegate-wol/Makefile').read_text(encoding='utf-8')
@@ -197,6 +198,9 @@ def build_offline_bundle(root, packages, destination, architecture, components):
     if any(not re.fullmatch(r'[a-zA-Z0-9._-]+',value) for value in fields.values()):
         raise ValueError('Unsafe offline installer metadata')
     installer=(root/'packaging/production/offline-install.sh').read_text(encoding='utf-8')
+    hook=(root/'packaging/production/native-package.sh').read_text(encoding='utf-8')
+    dns_check=hook.split('# BEGIN DNS MIGRATION CHECK\n',1)[1].split('# END DNS MIGRATION CHECK\n',1)[0].rstrip()
+    installer=installer.replace('@DNS_MIGRATION_CHECK@',dns_check)
     for marker,value in fields.items():
         if marker not in installer:
             raise ValueError('Missing offline installer template field: '+marker)
@@ -226,10 +230,12 @@ def build_offline_bundle(root, packages, destination, architecture, components):
 if __name__=='__main__':
     parser=argparse.ArgumentParser(description=__doc__);parser.add_argument('--packages',type=Path,required=True);parser.add_argument('--output',type=Path,required=True)
     parser.add_argument('--architecture',default='all');parser.add_argument('--components',type=Path)
+    parser.add_argument('--update-public-key',type=Path)
     parser.add_argument('--offline-bundle',action='store_true')
     args=parser.parse_args()
     if args.offline_bundle and args.components is None:parser.error('--offline-bundle requires --components')
     build=build_offline_bundle if args.offline_bundle else prepare_kit
     receipt=build(Path(__file__).resolve().parents[1],args.packages,args.output,
-                                                architecture=args.architecture,components=args.components)
+                                                architecture=args.architecture,components=args.components,
+                                                update_public_key=args.update_public_key)
     print(json.dumps({'staged':True,'version':receipt['version'],'installed':False,'target_verified':False}))

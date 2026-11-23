@@ -7,7 +7,7 @@ local FIELDS = {
     dns_account = {"name", "provider"},
     ddns_rule = {"enabled", "name", "account", "zone", "host", "type", "source", "interface", "ttl", "retained", "external_dns"},
     certificate = {"enabled", "name", "source", "account", "zone", "domains", "email", "renew_days", "ca", "environment", "retained"},
-    web_rule = {"enabled", "domain", "https", "certificate", "certificate_mode", "certificate_managed", "external_port", "certificate_ca_lock", "retained"},
+    web_rule = {"enabled", "domain", "https", "certificate", "certificate_mode", "certificate_managed", "external_port", "certificate_ca_lock", "retained", "list_order"},
     wol_host = {"name", "mac"}
 }
 local DIRECTORY = "https://acme-v02.api.letsencrypt.org/directory"
@@ -29,7 +29,7 @@ local DEFAULTS = {
 }
 local KEYS = {}
 -- Read the removed r245 option so past generations remain byte-compatible.
-local OPTIONAL = {external_port=true, certificate_ca_lock=true, block_standard_public_ports=true, management_domain=true,management_wan=true,management_certificate=true,retained=true,external_dns=true}
+local OPTIONAL = {external_port=true, certificate_ca_lock=true, block_standard_public_ports=true, management_domain=true,management_wan=true,management_certificate=true,retained=true,external_dns=true,list_order=true}
 for kind, fields in pairs(FIELDS) do
     KEYS[kind] = {}
     for _, key in ipairs(fields) do KEYS[kind][key] = true end
@@ -78,6 +78,16 @@ function M.management_domain(value)
     if type(value)~="string" or #value>254 then return nil end
     local name=domain(value,false,true)
     if name=="" or (name and name:find(".",1,true) and name:find("[a-z]")) then return name end
+end
+function M.public_zone(name, zone)
+    if type(name)~="string" then return nil end
+    name=domain(name,true,false)
+    if not name then return nil end
+    if type(zone)=="string" then
+        zone=domain(zone,false,false)
+        if zone and (name==zone or name:sub(-(#zone+1))=="."..zone) then return zone end
+    end
+    return name
 end
 function M.active_management_domain(sections)
     local selected
@@ -160,6 +170,7 @@ local function scalar(kind, key, v)
     if key=="ddns_interval" then return integer(v,60,999999999) end
     if key=="renew_days" then return integer(v,1,3650) end
     if key=="ttl" then return integer(v,1,214748364) end
+    if key=="list_order" then return integer(v,1,128) end
     if key=="external_port" then return integer(v,1,65535) end
     if key=="certificate_ca_lock" then return (v=="letsencrypt" or v=="zerossl") and v or nil end
     if key:match("_port$") then return integer(v,0,65535) end

@@ -60,7 +60,15 @@ class Runtime(ReadRuntime):
         if action=='DescribeDomainList':return ok(DomainCountInfo={'DomainTotal':0},DomainList=[])
         self.assertEqual(q['Domain'],'example.test');self.assertNotIn('DomainId',q)
         if action=='DescribeRecordList':
-            self.assertEqual(set(q),{'Domain','Offset','Limit','ErrorOnEmpty'});items=list(self.db.values());return ok(RecordCountInfo={'TotalCount':len(items)},RecordList=copy.deepcopy(items[q['Offset']:q['Offset']+q['Limit']]))
+            fields={'Domain','Offset','Limit','ErrorOnEmpty'}
+            items=list(self.db.values())
+            if 'RecordType' in q:
+                self.assertEqual(q['RecordType'],'TXT')
+                fields.update(('SubDomain','RecordType'))
+                items=[r for r in items if r['Type']==q['RecordType'] and r['Name']==q['SubDomain']]
+            self.assertEqual(set(q),fields)
+            page=copy.deepcopy(items[q['Offset']:q['Offset']+q['Limit']])
+            return ok(RecordCountInfo={'TotalCount':len(items),'ListCount':len(page)},RecordList=page)
         if action=='CreateRecord':
             self.next_id+=1;rid=self.next_id;self.db[rid]=record(rid,q['RecordType'],q['SubDomain'],q['Value'],TTL=q['TTL'],Line=q['RecordLine'],LineId=q['RecordLineId']);return ok(RecordId=rid)
         rid=q['RecordId'];r=self.db.get(rid)
@@ -87,6 +95,31 @@ class Runtime(ReadRuntime):
         self.add(*(record(i) for i in range(1,101)),record(101,value='2001:0DB8:0:0:0:0:0:0002'));self.assertEqual(self.records()['result'],'unchanged');self.assertEqual(self.mutations(),[]);self.assertEqual(len(self.calls),2);self.clean()
     def test_txt_create_and_exact_delete_preserve_other_challenges(self):
         self.add(record(1,'TXT','_acme-challenge','OTHER'),record(2,'TXT','other',VALUE));self.assertEqual(self.records(self.txt())['result'],'created');self.assertEqual(self.records(self.txt())['result'],'unchanged');self.assertEqual(self.records(self.txt(operation='delete'))['affected'],1);self.assertEqual(set(self.db),{1,2});self.clean()
+    def test_txt_pagination_rechecks_only_the_read(self):
+        owned=record(1,'TXT','_acme-challenge',VALUE)
+        self.add(owned,record(2,'TXT','_acme-challenge','UNRELATED'))
+        offsets=[]
+        def drift(action,q):
+            if action!='DescribeRecordList':return None
+            self.assertEqual((q.get('SubDomain'),q.get('RecordType')),('_acme-challenge','TXT'))
+            offsets.append(q['Offset'])
+            if len(offsets)==1:
+                return 200,{'Response':{'RequestId':'fixture','RecordCountInfo':{'TotalCount':2,'ListCount':1},'RecordList':[owned]}}
+        self.hook=drift
+        self.assertEqual(self.records(self.txt(operation='delete'))['result'],'deleted')
+        self.assertEqual(offsets,[0,0,0])
+        self.assertEqual([self.action(c) for c in self.mutations()],['DeleteRecord'])
+        self.assertEqual(set(self.db),{2})
+        self.clean()
+    def test_txt_inconsistent_pages_cannot_authorize_delete(self):
+        owned=record(1,'TXT','_acme-challenge',VALUE)
+        self.add(owned)
+        self.hook=lambda a,q:(200,{'Response':{'RequestId':'fixture','RecordCountInfo':{'TotalCount':2,'ListCount':1},'RecordList':[owned]}}) if a=='DescribeRecordList' else None
+        result=self.records(self.txt(operation='delete'),expected=1)
+        self.assertEqual((result['provider_code'],result['effect']),('pagination_changed','none'))
+        self.assertEqual(len(self.calls),2)
+        self.assertEqual(self.mutations(),[])
+        self.clean()
     def test_exact_and_explicit_all_aaaa_delete(self):
         self.add(record(1),record(2,value='2001:db8::2'),record(3,rr='other'));self.records(self.payload(operation='delete'));self.assertEqual(set(self.db),{1,3});self.records(self.payload(operation='delete',value='',all=True));self.assertEqual(set(self.db),{3});self.clean()
     def test_later_page_failure_never_writes(self):

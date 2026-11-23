@@ -97,7 +97,7 @@ local function rule_members(value)
  end
  return members
 end
-local function candidate_prefixes(address)
+local function candidate_prefixes(address,lengths)
  local n=v4(address)
  local full=not n and ip.ipv6(address)
  if full and full:sub(1,30)=='0000:0000:0000:0000:0000:ffff:' then
@@ -105,7 +105,7 @@ local function candidate_prefixes(address)
  end
  local keys={}
  if n then
-  for bits=0,32 do
+  for bits in pairs(lengths.ipv4) do
    local width=2^(32-bits)
    keys[#keys+1]=addr(n-n%width)..'/'..bits
   end
@@ -115,16 +115,16 @@ local function candidate_prefixes(address)
         first==172 and second>=16 and second<=31 or first==192 and second==168)
   return keys,public
  end
- if not full then return keys,false end
+ if not full then return nil,false end
  local groups={}
  for group in full:gmatch('[^:]+') do groups[#groups+1]=tonumber(group,16) end
- for bits=0,128 do
-  local network={}
-  for index,value in ipairs(groups) do
-   local width=2^(16-math.max(0,math.min(16,bits-(index-1)*16)))
-   network[index]=string.format('%04x',value-value%width)
-  end
-  keys[#keys+1]=table.concat(network,':')..'/'..bits
+ local zeros=':0000:0000:0000:0000:0000:0000:0000'
+ for bits in pairs(lengths.ipv6) do
+  local index=math.max(1,math.ceil(bits/16))
+  local offset=(index-1)*5
+  local width=2^(index*16-bits)
+  local value=groups[index]
+  keys[#keys+1]=full:sub(1,offset)..string.format('%04x',value-value%width)..zeros:sub(1,(8-index)*5)..'/'..bits
  end
  return keys,groups[1]>=0x2000 and groups[1]<0x4000
 end
@@ -139,10 +139,20 @@ function M.access_view(scope,allow,deny,cache_path)
    if ok then members=cache.members end
   end
  end
+ local lengths={ipv4={},ipv6={}}
+ local function index_prefixes(set)
+  for prefix in pairs(set) do
+   local family=prefix:find(':',1,true) and 'ipv6' or 'ipv4'
+   lengths[family][tonumber(prefix:match('/(%d+)$'))]=true
+  end
+ end
+ index_prefixes(allowed)
+ index_prefixes(denied)
+ if members then index_prefixes(members) end
  return function(address)
   if type(address)~='string' then return '','unknown' end
-  local keys,public=candidate_prefixes(address)
-  if #keys==0 then return '','unknown' end
+  local keys,public=candidate_prefixes(address,lengths)
+  if not keys then return '','unknown' end
   local function matches(set)
    for _,key in ipairs(keys) do if set[key] then return true end end
    return false

@@ -70,15 +70,19 @@ function M.run(snapshot,account,revision,api)
     local function checked(r,detail)
         local record=M.record(c,r,api.plan,detail);if not record then invalid('invalid_record') end;return record
     end
-    local function list()
+    local function scan()
         local out,seen,total,rows,bytes={},{},nil,0,0
         for page=1,1000 do
-            -- Unfiltered domain pagination gives TotalCount one fixed meaning.
-            local d,shape=api.fetch({Domain=c.zone,Offset=(page-1)*100,Limit=100,ErrorOnEmpty='no'},'DescribeRecordList')
+            local request={Domain=c.zone,Offset=(page-1)*100,Limit=100,ErrorOnEmpty='no'}
+            if c.type=='TXT' then request.SubDomain=c.rr;request.RecordType=c.type end
+            local d,shape=api.fetch(request,'DescribeRecordList')
             if not shape or not shape.children.RecordList or shape.children.RecordList.kind~='array' or
                 not shape.children.RecordCountInfo or shape.children.RecordCountInfo.kind~='object' or
                 type(d.RecordCountInfo)~='table' or not integer(d.RecordCountInfo.TotalCount,0,100000) or type(d.RecordList)~='table' or #d.RecordList>100 then invalid() end
-            local count=d.RecordCountInfo.TotalCount;if total and total~=count then invalid('pagination_changed') end;total=count
+            local count=d.RecordCountInfo.TotalCount
+            local page_count=d.RecordCountInfo.ListCount
+            if (total and total~=count) or (page_count~=nil and page_count~=#d.RecordList) then return nil end
+            total=count
             for _,r in ipairs(d.RecordList) do
                 if type(r)~='table' or not integer(r.RecordId,1,9007199254740991) or seen[r.RecordId] or type(r.Name)~='string' or type(r.Type)~='string' then invalid('invalid_record') end
                 seen[r.RecordId]=true
@@ -86,11 +90,18 @@ function M.run(snapshot,account,revision,api)
                     local record=checked(r);bytes=bytes+#api.encode(record)+32;if bytes>8388608 then invalid('state_limit') end;out[#out+1]=record
                 end
             end
-            rows=rows+#d.RecordList;if rows>total or (#d.RecordList==0 and rows<total) then invalid('pagination_changed') end
+            rows=rows+#d.RecordList;if rows>total then return nil end
             if rows==total then return out end
-            if #d.RecordList<100 then invalid('pagination_changed') end
+            if #d.RecordList<100 then return nil end
         end
         invalid('pagination_limit')
+    end
+    local function list()
+        local records=scan()
+        -- A changing list can be read again without replaying a DNS write.
+        if not records and c.type=='TXT' then records=scan() end
+        if not records then invalid('pagination_changed') end
+        return records
     end
     local function detail(r)
         local doc=api.fetch({Domain=c.zone,RecordId=tonumber(r.id)},'DescribeRecord');local actual=checked(doc.RecordInfo,true)

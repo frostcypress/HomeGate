@@ -1172,10 +1172,11 @@ local ok,err=pcall(function()
  end
  if request.route=='config_import' then
   local proposed=codec.parse(request.form.config_payload)
+  local supported_dns={aliyun=true,cloudflare=true,dnspod=true}
   for _,row in ipairs(proposed or {}) do
-   if row.kind=='dns_account' and row.values.provider=='huaweicloud' then
+   if row.kind=='dns_account' and not supported_dns[row.values.provider] then
     result.body=codec.json({api_version=1,ok=false,phase='config-import',
-     error='备份仍包含华为云 DNS 账户。请先在旧版迁移这些账户，再导入配置。'})
+     error='备份中有当前版本不支持的 DNS 账户。请先迁移这些账户，再导入配置。'})
     result.headers['Content-Type']='application/json'
     result.ok=true
     return

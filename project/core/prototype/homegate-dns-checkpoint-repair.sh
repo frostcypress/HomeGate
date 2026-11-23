@@ -6,14 +6,11 @@ export LC_ALL=C
 dns_checkpoint_repair_enabled=false
 aliyun_checkpoint_repair_enabled=false
 dnspod_checkpoint_repair_enabled=false
-huaweicloud_checkpoint_repair_enabled=false
 provider=cloudflare
 if [ "${1:-}" = --aliyun-internal ]; then
     [ "$aliyun_checkpoint_repair_enabled" = true ] || exit 2;provider=aliyun;shift
 elif [ "${1:-}" = --dnspod-internal ]; then
     [ "$dnspod_checkpoint_repair_enabled" = true ] || exit 2;provider=dnspod;shift
-elif [ "${1:-}" = --huaweicloud-internal ]; then
-    [ "$huaweicloud_checkpoint_repair_enabled" = true ] || exit 2;provider=huaweicloud;shift
 else [ "$dns_checkpoint_repair_enabled" = true ] || exit 2;fi
 [ "$#" -eq 4 ] && [ "$1" = repair-checkpoint ] || exit 2
 journal_format=HGCFJOURNAL1;snapshot_command=dns-recovery-snapshot-read
@@ -24,9 +21,6 @@ if [ "$provider" = aliyun ]; then
 elif [ "$provider" = dnspod ]; then
     journal_format=HGDNPJOURNAL1;snapshot_command=migration-source-recovery-snapshot-read
     checkpoint_codec=dnspod-checkpoint.lua;checkpoint_ready=HGDNPCVALID1
-elif [ "$provider" = huaweicloud ]; then
-    journal_format=HGHWJOURNAL1;snapshot_command=migration-source-recovery-snapshot-read
-    checkpoint_codec=huaweicloud-checkpoint.lua;checkpoint_ready=HGHWCVALID1
 fi
 account=$2;revision=$3;job=$4
 case "$account" in ''|*[!a-zA-Z0-9_-]*) exit 2;; esac

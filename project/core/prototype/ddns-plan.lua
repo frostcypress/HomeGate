@@ -1,6 +1,6 @@
 -- Configuration-bound automatic or exact-device AAAA preflight. No provider mutation or URL read.
 local M={}
-local providers={cloudflare=true,aliyun=true,dnspod=true,huaweicloud=true}
+local providers={cloudflare=true,aliyun=true,dnspod=true}
 local function id(s)return type(s)=='string' and #s>=1 and #s<=64 and s:match('^[a-zA-Z0-9_-]+$') end
 M.id=id
 local statuses={ready={'',false},disabled={'',false},unsupported={'unsupported',false},invalid_rule={'invalid_request',false},network_unavailable={'network_unavailable',true}}

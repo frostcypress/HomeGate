@@ -28,7 +28,6 @@ GATES = {
  'homegate-cloudflare-worker.sh': ['dns_read_enabled','dns_records_enabled','dns_reconcile_enabled','dns_receipt_enabled'],
  'homegate-aliyun-worker.sh': ['aliyun_read_enabled','aliyun_records_enabled','aliyun_reconcile_enabled','aliyun_receipt_enabled'],
  'homegate-dnspod-worker.sh': ['dnspod_read_enabled','dnspod_records_enabled','dnspod_reconcile_enabled','dnspod_receipt_enabled'],
- 'homegate-huaweicloud-worker.sh': ['huaweicloud_read_enabled','huaweicloud_records_enabled','huaweicloud_reconcile_enabled','huaweicloud_receipt_enabled'],
  'homegate-store-bootstrap-prototype.sh': ['bootstrap_enabled'],
  'homegate-lifecycle-prepare.sh': ['runtime_prepare_enabled','lifecycle_startup_enabled','lifecycle_intent_check_enabled','lifecycle_intent_record_enabled'],
  'homegate-startup-active.sh': ['startup_active_enabled'],
@@ -41,35 +40,31 @@ GATES = {
  'homegate-ddns-work.sh': ['ddns_work_enabled','ddns_runtime_enabled'],
  'homegate-ddns-state.sh': ['ddns_state_enabled','ddns_batch_enabled'],
  'homegate-service-observer-watchdog.sh': ['certificate_validation_enabled','ddns_plan_enabled','dns_read_enabled',
-  'aliyun_read_enabled','dnspod_read_enabled','huaweicloud_read_enabled','dns_records_enabled',
+  'aliyun_read_enabled','dnspod_read_enabled','dns_records_enabled',
   'dns_reconcile_enabled','dns_receipt_enabled','aliyun_records_enabled','aliyun_reconcile_enabled',
-  'aliyun_receipt_enabled','dnspod_records_enabled','dnspod_reconcile_enabled','dnspod_receipt_enabled',
-  'huaweicloud_records_enabled','huaweicloud_reconcile_enabled','huaweicloud_receipt_enabled'],
+  'aliyun_receipt_enabled','dnspod_records_enabled','dnspod_reconcile_enabled','dnspod_receipt_enabled'],
  'homegate-cloudflare-read.sh': ['acme_dns_records_enabled','dns_read_enabled','dns_status_read_enabled','ddns_sync_enabled',
   'ddns_work_enabled','ddns_runtime_enabled','ddns_closeout_enabled','dns_migrated_read_enabled','dns_records_enabled',
   'dns_reconcile_enabled','dns_receipt_enabled','aliyun_read_enabled','aliyun_records_enabled',
   'aliyun_reconcile_enabled','aliyun_receipt_enabled','dnspod_read_enabled','dnspod_records_enabled',
-  'dnspod_reconcile_enabled','dnspod_receipt_enabled','huaweicloud_read_enabled',
-  'huaweicloud_records_enabled','huaweicloud_reconcile_enabled','huaweicloud_receipt_enabled',
-  'dns_settlement_enabled','aliyun_settlement_enabled','dnspod_settlement_enabled','huaweicloud_settlement_enabled',
-  'dns_retention_enabled','aliyun_retention_enabled','dnspod_retention_enabled','huaweicloud_retention_enabled',
-  'dns_orphan_collection_enabled','aliyun_orphan_collection_enabled','dnspod_orphan_collection_enabled','huaweicloud_orphan_collection_enabled'],
+  'dnspod_reconcile_enabled','dnspod_receipt_enabled',
+  'dns_settlement_enabled','aliyun_settlement_enabled','dnspod_settlement_enabled',
+  'dns_retention_enabled','aliyun_retention_enabled','dnspod_retention_enabled',
+  'dns_orphan_collection_enabled','aliyun_orphan_collection_enabled','dnspod_orphan_collection_enabled'],
  'homegate-dns-recovery.sh': ['ddns_closeout_enabled','dns_settlement_enabled','aliyun_settlement_enabled',
-  'dnspod_settlement_enabled','huaweicloud_settlement_enabled','dns_orphan_collection_enabled',
-  'aliyun_orphan_collection_enabled','dnspod_orphan_collection_enabled','huaweicloud_orphan_collection_enabled'],
+  'dnspod_settlement_enabled','dns_orphan_collection_enabled',
+  'aliyun_orphan_collection_enabled','dnspod_orphan_collection_enabled'],
  'homegate-dns-orphan.sh': ['ddns_closeout_enabled','dns_orphan_collection_enabled',
-  'aliyun_orphan_collection_enabled','dnspod_orphan_collection_enabled','huaweicloud_orphan_collection_enabled'],
+  'aliyun_orphan_collection_enabled','dnspod_orphan_collection_enabled'],
  'homegate-dns-retention.sh': ['ddns_closeout_enabled','dns_retention_enabled','aliyun_retention_enabled',
-  'dnspod_retention_enabled','huaweicloud_retention_enabled'],
+  'dnspod_retention_enabled'],
  'homegate-dns-receipt.sh': ['dns_receipt_enabled','ddns_runtime_enabled','aliyun_receipt_enabled',
-  'dnspod_receipt_enabled','huaweicloud_receipt_enabled'],
+  'dnspod_receipt_enabled'],
 }
 
-def render(name, raw, retired_providers=()):
+def render(name, raw):
     text = raw.decode('utf-8')
     for gate in GATES.get(Path(name).name, []):
-        if any(gate.startswith(provider+'_') for provider in retired_providers):
-            continue
         text, count = re.subn('^'+gate+'=false$',gate+'=true',text,flags=re.M)
         if count != 1: raise ValueError('Deployment gate drift: '+name+':'+gate)
     # Keep the on-disk schema and protocol identifiers intact. Only filesystem
@@ -103,19 +98,17 @@ def render(name, raw, retired_providers=()):
         if text.count(anchor)!=1: raise ValueError('Provider dispatch drift')
         text=text.replace(anchor,'[ "$provider" = cloudflare ] || dns_receipt_enabled=false\n'+anchor,1)
     if Path(name).name == 'homegate-service-observer-watchdog.sh':
-        for provider in ['aliyun','dnspod','huaweicloud']:
+        for provider in ['aliyun','dnspod']:
             anchor='dns_provider='+provider+'\n'
             if text.count(anchor)!=1: raise ValueError('Watchdog provider drift')
             text=text.replace(anchor,'dns_provider='+provider+';dns_receipt_enabled=false\n')
     return text.encode('utf-8')
 
-def payload(root, *, retired_providers=()):
+def payload(root):
     files={}
     for file in sorted((root/PROTO).iterdir()):
         if file.suffix in ('.sh','.lua'):
-            if any(file.name.startswith((provider+'-', 'homegate-'+provider+'-')) for provider in retired_providers):
-                continue
-            files[PROTO+file.name]=render(file.name,file.read_bytes(),retired_providers)
+            files[PROTO+file.name]=render(file.name,file.read_bytes())
     for name in ['acme.sh','LICENSE.md','PROVENANCE.json']:
         files['acme/'+name]=(root/'third_party/acme.sh-3.1.6'/name).read_bytes()
     provenance=json.loads(files['acme/PROVENANCE.json'])

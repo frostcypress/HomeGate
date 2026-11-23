@@ -122,7 +122,7 @@ case "$result" in 0|1)
             lua "$dir/homegate-ddns-sync.lua" dispatch "$revision" "$rule" 4>"$work/input" 5<"$work/plan" 8<"$work/intent" 9<"$work/result" 2>/dev/null) || fail
         if [ "$target" != disabled ]; then
         provider=${target%%:*};account=${target#*:}
-        case "$provider" in cloudflare|aliyun|dnspod|huaweicloud) ;; *) fail;; esac
+        case "$provider" in cloudflare|aliyun|dnspod) ;; *) fail;; esac
         case "$account" in ''|*[!a-zA-Z0-9_-]*) fail;; esac
         [ "${#account}" -le 64 ] || fail
         bind=bind;dispatch=--ddns-sync-internal

@@ -59,7 +59,7 @@ elseif arg[1]=='dispatch' or arg[1]=='work-bound' or arg[1]=='work-bound-runtime
     io.write(entry.provider..':'..entry.account..'\n')
 elseif arg[1]=='result' or arg[1]=='delete-result' then
     local provider,account,rc=arg[4],arg[5],arg[6]
-    if arg[7] or not planner.id(account) or (provider~='cloudflare' and provider~='aliyun' and provider~='dnspod' and provider~='huaweicloud') then os.exit(1) end
+    if arg[7] or not planner.id(account) or (provider~='cloudflare' and provider~='aliyun' and provider~='dnspod') then os.exit(1) end
     local raw=io.stdin:read(4097) or '';local d=shared.parse(raw)
     local out,effect=sync.result(raw,d,provider,account,revision,rule,rc,arg[1]=='delete-result' and 'delete' or nil)
     if #raw>4096 or not out then os.exit(1) end

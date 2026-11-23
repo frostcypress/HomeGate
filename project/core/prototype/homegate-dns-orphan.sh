@@ -7,14 +7,11 @@ ddns_closeout_enabled=false
 dns_orphan_collection_enabled=false
 aliyun_orphan_collection_enabled=false
 dnspod_orphan_collection_enabled=false
-huaweicloud_orphan_collection_enabled=false
 provider=cloudflare
 if [ "${1:-}" = --aliyun-internal ]; then
     [ "$aliyun_orphan_collection_enabled" = true ] || exit 2;provider=aliyun;shift
 elif [ "${1:-}" = --dnspod-internal ]; then
     [ "$dnspod_orphan_collection_enabled" = true ] || exit 2;provider=dnspod;shift
-elif [ "${1:-}" = --huaweicloud-internal ]; then
-    [ "$huaweicloud_orphan_collection_enabled" = true ] || exit 2;provider=huaweicloud;shift
 else [ "$dns_orphan_collection_enabled" = true ] || exit 2;fi
 [ "$#" -eq 4 ] && [ "$1" = collect-orphan ] || exit 2
 members='request result zones state input context attempt'
@@ -28,10 +25,6 @@ elif [ "$provider" = dnspod ]; then
     members='request result zones state input context attempt sign-input sign-output'
     orphan_format=HGDNPOrphan1;attempt_marker=HGDNPATTEMPT1;attempt_size=14
     snapshot_command=migration-source-recovery-snapshot-read;bound_codec=dnspod-checkpoint.lua;bound_ready=HGDNPOBOUND1
-elif [ "$provider" = huaweicloud ]; then
-    members='request result zones state input context attempt sign-input sign-output'
-    orphan_format=HGHWOrphan1;attempt_marker=HGHWATTEMPT1;attempt_size=13
-    snapshot_command=migration-source-recovery-snapshot-read;bound_codec=huaweicloud-checkpoint.lua;bound_ready=HGHWOBOUND1
 fi
 account=$2;revision=$3;job=$4
 case "$account" in ''|*[!a-zA-Z0-9_-]*) exit 2;; esac
@@ -78,8 +71,6 @@ if [ "$provider" = aliyun ]; then
     ash "$dir/homegate-dns-recovery.sh" --aliyun-internal orphan-check "$account" "$revision" "$job" >/dev/null 2>/dev/null || exit 1
 elif [ "$provider" = dnspod ]; then
     ash "$dir/homegate-dns-recovery.sh" --dnspod-internal orphan-check "$account" "$revision" "$job" >/dev/null 2>/dev/null || exit 1
-elif [ "$provider" = huaweicloud ]; then
-    ash "$dir/homegate-dns-recovery.sh" --huaweicloud-internal orphan-check "$account" "$revision" "$job" >/dev/null 2>/dev/null || exit 1
 else
 ash "$dir/homegate-dns-recovery.sh" orphan-check "$account" "$revision" "$job" >/dev/null 2>/dev/null || exit 1
 fi
@@ -123,7 +114,7 @@ member() {
         context) limit=8388608;expected_hash=${h_context:-};;
         attempt) limit=$attempt_size;expected_hash=${h_attempt:-};;
         sign-input) [ "$provider" != cloudflare ] || return 1;limit=131072;expected_hash=${h_sign_input:-};;
-        sign-output) [ "$provider" != cloudflare ] || return 1;limit=20;[ "$provider" != dnspod ] || limit=32;[ "$provider" != huaweicloud ] || limit=32;expected_hash=${h_sign_output:-};;
+        sign-output) [ "$provider" != cloudflare ] || return 1;limit=20;[ "$provider" != dnspod ] || limit=32;expected_hash=${h_sign_output:-};;
         *) return 1;;
     esac
     private_file "$work/$1" && [ "$(stat -c %s "$work/$1")" -le "$limit" ] || return 1

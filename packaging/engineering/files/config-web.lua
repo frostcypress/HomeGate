@@ -27,7 +27,7 @@ local function request()
  if d.action=='preview_web_rule' and not ({['0']=true,['1']=true})[d.https]then return nil end
  if d.job and not hex(d.job) then return nil end
  if d.id and not id(d.id) then return nil end
- if d.provider and not ({cloudflare=true,aliyun=true,dnspod=true,huaweicloud=true})[d.provider] then return nil end
+ if d.provider and not ({cloudflare=true,aliyun=true,dnspod=true})[d.provider] then return nil end
  if d.consent and d.consent~='1' then return nil end
  if d.confirmation and not hex(d.confirmation) then return nil end
  if d.action=='preview_rule' and (not id(d.account) or not ({auto=true,interface=true})[d.source] or

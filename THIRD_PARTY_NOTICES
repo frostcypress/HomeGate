@@ -12,7 +12,7 @@ HomeGate 0.5.0-12 can optionally download a selected China/province IPv4+IPv6 CI
 
 - https://github.com/thintsing/ip-geo-list
 
-These geographic CIDR lists are **not bundled or redistributed** in the HomeGate source/IPK artifacts. The upstream project states that its generated lists aggregate several geolocation sources (including ip2region, qqwry, GeoLite2, Huawei regional data, and Meituan arbitration data). Use of downloaded data is subject to the upstream project and underlying data-source terms. HomeGate treats the data only as an approximate access-control signal; it is not an authentication mechanism.
+These geographic CIDR lists are **not bundled or redistributed** in the HomeGate source/IPK artifacts. The upstream project states that its generated lists aggregate several geolocation sources; the upstream repository lists the underlying data sources. Use of downloaded data is subject to the upstream project and underlying data-source terms. HomeGate treats the data only as an approximate access-control signal; it is not an authentication mechanism.
 
 LuCI frontend and the shared configuration controller retain the luci-app-homegate Apache-2.0 license. Core combines MIT code with that controller (MIT AND Apache-2.0). License text: legal/Apache-2.0.txt.
 
@@ -34,30 +34,16 @@ The packaged GPL-3.0 script includes HomeGate's transport status and authorizati
 polling fixes from scripts/engineering_runtime.py. Installed provenance records both hashes.
 HomeGate supplies its own fixed DNS/HTTP adapters and does not run the installer, cron, or automatic upgrade.
 
-Ubuntu AppArmor 4.0.1 (CI host prerequisite only)
-The original bwrap-userns-restrict source is extracted from Ubuntu
-apparmor-profiles 4.0.1really4.0.1-0ubuntu0.24.04.9 and distributed under GPL-2.0-or-later.
-Ubuntu's copyright notice and the GPL-2 license are preserved in third_party/ubuntu-apparmor-4.0.1/.
-Package provenance and both SHA-256 digests are recorded in docs/CI私有隔离与AppArmor前置.md.
-
-HomeGate private nginx component recipe (r151)
-Upstream nginx 1.30.6: https://nginx.org/ (BSD-2-Clause; LICENSE retained in the component package).
+HomeGate private nginx component recipe
+Upstream nginx 1.30.7: https://nginx.org/ (BSD-2-Clause; LICENSE retained in the component package).
 Cross-compile patches: ImmortalWrt packages commit fce1553dac2d00c0b0f66647d8a9bd102b73e49c, net/nginx/patches/nginx.
 Feed packaging is GPL-2.0; corresponding repository COPYING is preserved under legal/.
 Only cross-compile feature/size/error-range/endianness patches are used. No optional modules or system service/config are installed by this recipe.
 Source/patch digests and target verification boundaries: packaging/components/homegate-nginx/sources.json.
 
-HomeGate private nginx component static dependencies (r172 / component release 3)
+HomeGate private nginx component static dependencies
 The selected ImmortalWrt 24.10.6 SDK supplies OpenSSL 3.0.19 and PCRE2 10.42 static archives.
 They are linked into the private executable, without installing shared libraries over the router's system copies.
 Original OpenSSL Apache-2.0 and PCRE2 license texts are retained under
 packaging/components/homegate-nginx/licenses/ and installed under /usr/share/licenses/homegate-nginx/.
 The local static-link/config-isolation patch is BSD-2-Clause. Exact source and patch hashes are in sources.json.
-
-Temporary native component probe supervisor (r173)
-HomeGate scripts/native-component-probe.c is MIT licensed. The temporary AArch64
-supervisor is statically linked using the existing ImmortalWrt 24.10.6 toolchain;
-it does not install or replace the router's libc or tools. Original musl 1.2.5
-copyright/license and GCC runtime notices are retained under legal/ and in the
-temporary probe bundle. GCC runtime licensing includes the GCC Runtime Library
-Exception; the retained GPL-3.0 and GCC-13-runtime-copyright texts provide its terms.

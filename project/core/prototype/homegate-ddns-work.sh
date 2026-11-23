@@ -45,7 +45,7 @@ read_fields() {
     [ "$stored_job" = "$job" ] || return 1
     case "$format" in HGDDNSWORK1) ;; HGDDNSWORK2) [ "$ddns_runtime_enabled" = true ] || return 1;; *) return 1;; esac
     id "$rule" && id "$account" || return 1
-    case "$provider" in cloudflare|aliyun|dnspod|huaweicloud) ;; *) return 1;; esac
+    case "$provider" in cloudflare|aliyun|dnspod) ;; *) return 1;; esac
     case "$revision" in ''|0*|*[!0-9]*) return 1;; esac
     [ "${#revision}" -le 9 ] && [ "$revision" -le 999999999 ] || return 1
     case "$birth" in ''|*[!0-9]*) return 1;; esac
@@ -117,7 +117,7 @@ quiet() {
     case "$info" in '') [ ! -e "/proc/$job" ] && [ ! -L "/proc/$job" ];; Z:*|X:*) ;; *) return 1;; esac
 }
 terminal_check() {
-    case "$provider" in cloudflare) set -- ;; aliyun) set -- --aliyun-internal;; dnspod) set -- --dnspod-internal;; huaweicloud) set -- --huaweicloud-internal;; esac
+    case "$provider" in cloudflare) set -- ;; aliyun) set -- --aliyun-internal;; dnspod) set -- --dnspod-internal;; esac
     ash "$dir/homegate-dns-recovery.sh" "$@" orphan-check "$account" "$revision" "$job" >/dev/null 2>/dev/null || return 1
     hash "$store/dns-operation/terminal-meta" || return 1
     [ -z "${terminal_binding:-}" ] || [ "$sum" = "$terminal_binding" ] || return 1
@@ -126,7 +126,7 @@ terminal_check() {
 if [ "$action" = bind ]; then
     id "$rule" && id "$account" && private_dir "$work" || fail
     ! exists "$plan" && ! exists "$next" || fail
-    case "$provider" in cloudflare|aliyun|dnspod|huaweicloud) ;; *) fail;; esac
+    case "$provider" in cloudflare|aliyun|dnspod) ;; *) fail;; esac
     case "$revision" in ''|0*|*[!0-9]*) fail;; esac
     [ "${#revision}" -le 9 ] && [ "$revision" -le 999999999 ] || fail
     exists "$work/binding" && fail

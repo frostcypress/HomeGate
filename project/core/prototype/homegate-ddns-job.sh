@@ -44,7 +44,7 @@ read_meta() {
  [ "$#" -eq 10 ] || return 1
  jid=$1;jrule=$2;provider=$3;revision=$4;identity=$5;generation=$6;grant=$7;boot=$8;created=$9;deadline=${10}
  hex "$jid" 32 && id "$jrule" || return 1
- case "$provider" in cloudflare|aliyun|dnspod|huaweicloud) ;; *) return 1;; esac
+ case "$provider" in cloudflare|aliyun|dnspod) ;; *) return 1;; esac
  case "$revision:$created:$deadline" in *[!0-9:]*) return 1;; esac
  case "$revision" in ''|0*) return 1;; esac
  case "$created" in ''|0?*) return 1;; esac;case "$deadline" in ''|0?*) return 1;; esac
@@ -230,7 +230,7 @@ if [ -n "$existing" ];then printf '%s\n' "$existing";exit 0;fi
 business_locks || fail 4
 snapshot || fail
 provider=$(ash "$dir/homegate-ddns-state.sh" status "$rule" | lua "$dir/homegate-ddns-job.lua" status "$rule") || fail 4
-case "$provider" in cloudflare|aliyun|dnspod|huaweicloud) ;; *) fail;; esac
+case "$provider" in cloudflare|aliyun|dnspod) ;; *) fail;; esac
 p=$root/$job;mkdir "$p" || fail
 (set -C; : > "$p/lock";frame HGDDNSUIJOB1 "$job:$rule:$provider:$current_revision:$current_identity:$current_generation:$current_grant:$current_boot:$current_now:$((current_now+300))" > "$p/meta") || fail
 exec 8>>"$p/lock" || fail;bound 8 "$p/lock" && flock -n 8 && fsync "$p/meta" "$p/lock" "$p" "$root" || fail

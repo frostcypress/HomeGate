@@ -1,6 +1,6 @@
 -- Pure, scoped DDNS grant overlay; never changes the normalized configuration.
 local M={}
-local slots={cloudflare={'secret'},aliyun={'key_id','secret'},dnspod={'key_id','secret'},huaweicloud={'key_id','secret','account_id'}}
+local slots={cloudflare={'secret'},aliyun={'key_id','secret'},dnspod={'key_id','secret'}}
 function M.selection(raw,valid_id)
     if type(raw)~='string' or #raw<1 or #raw>2079 then return nil end
     local names,seen={},{}

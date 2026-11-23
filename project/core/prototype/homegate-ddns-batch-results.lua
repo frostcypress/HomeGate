@@ -61,7 +61,7 @@ if not assert(loadfile(dir..'/'..entry.provider..'-reconcile-plan.lua'))().resto
 local function fixed(path,limit)local f=io.open(path,'rb');if not f then fail() end;local raw=f:read(limit+1) or '';if not f:close() or #raw>limit then fail() end;return raw end
 local active=fixed(store..'/dns-operation/current',2);if active~='1\n' and active~='2\n' then fail() end
 local manifest={};for v in fixed(store..'/dns-operation/slot-'..active:sub(1,1)..'/manifest',512):gmatch('([^\n]*)\n') do manifest[#manifest+1]=v end
-local formats={cloudflare='HGCFJOURNAL1',aliyun='HGALIJOURNAL1',dnspod='HGDNPJOURNAL1',huaweicloud='HGHWJOURNAL1'}
+local formats={cloudflare='HGCFJOURNAL1',aliyun='HGALIJOURNAL1',dnspod='HGDNPJOURNAL1'}
 if #manifest~=10 or manifest[1]~=formats[entry.provider] or manifest[2]~='homegate' or manifest[3]~=identity or manifest[4]~=boot or manifest[5]~=tostring(snapshot.revision) or manifest[6]~=entry.account or manifest[8]~=generation then fail() end
 local receipt=read(4,4096);local public=read(8,4096)
 local original,effect=sync.result(receipt,shared.parse(receipt),entry.provider,entry.account,tostring(snapshot.revision),rule,'0')

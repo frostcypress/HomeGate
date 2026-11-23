@@ -363,7 +363,7 @@ open_store() {
     fi
 }
 slot_valid() {
-    case "$1" in aliyun|cloudflare|dnspod|huaweicloud) ;;
+    case "$1" in aliyun|cloudflare|dnspod) ;;
         ddns|web) [ "$public_mode" = true ] || return 1;; *) return 1;; esac
     if [ "$public_mode" = true ]; then
         case "$2" in ''|*[!a-zA-Z0-9_-]*) return 1;; esac

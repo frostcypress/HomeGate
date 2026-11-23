@@ -30,12 +30,12 @@ check_dns_migration() (
    sub(/\.provider$/, "", section)
    provider=tolower($2)
    gsub(/\047/, "", provider)
-   if (provider == "huaweicloud" || provider == "huawei" || provider == "hwcloud") retired[section] = 1
+   if (provider == "aliyun" || provider == "cloudflare" || provider == "dnspod") supported[section] = 1
   }
   index($1, package ".") == 1 { read_configuration = 1 }
   END {
    if (!read_configuration) exit 1
-   for (section in retired) if (section in accounts) exit 2
+   for (section in accounts) if (!(section in supported)) exit 2
   }
  '
 )
@@ -97,7 +97,7 @@ case "$action" in
   done
   for config in /etc/config/homegate "$root/package-config";do
    check_dns_migration "$config" && continue
-   printf '%s\n' 'HomeGate cannot upgrade this DNS configuration. Migrate any Huawei Cloud DNS accounts using the previous version and retry.' >&2
+   printf '%s\n' 'HomeGate cannot upgrade this DNS configuration. Migrate unsupported DNS accounts using the previous version and retry.' >&2
    exit 4
   done
   if [ ! -e "$root" ] && [ ! -L "$root" ];then mkdir "$root" || exit 7;fi

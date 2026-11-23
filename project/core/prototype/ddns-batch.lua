@@ -1,6 +1,6 @@
 -- Data-only full-plan reconstruction and redacted per-rule batch rows.
 local M={}
-local providers={cloudflare=true,aliyun=true,dnspod=true,huaweicloud=true}
+local providers={cloudflare=true,aliyun=true,dnspod=true}
 local decisions={ready=true,stale=true,blocked=true,reconciliation_required=true,unauthorized=true,clock_invalid=true,paused=true,retry_wait=true,waiting=true}
 local outcomes={none=true,inflight=true,created=true,updated=true,unchanged=true,retry_wait=true,paused=true,unknown=true}
 local kinds={['']=true,authentication=true,not_found=true,unsupported=true,invalid_request=true,invalid_zone=true,record_conflict=true,temporary=true,network_unavailable=true,timeout=true,rate_limit=true,invalid_configuration=true}

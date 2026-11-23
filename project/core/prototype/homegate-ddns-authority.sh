@@ -92,7 +92,7 @@ scope() {
     [ "$format" != HGDDNSAUTH2 ] || [ "$ddns_multi_authority_enabled" = true ] || return 1
     provider=$(ash "$dir/homegate-config-prototype.sh" --persistent "$snapshot_command" 3>&1 4>&- 8>&- 9>&- >/dev/null 2>/dev/null |
         lua "$dir/homegate-ddns-authority.lua" scope "$revision" "$rule" 3>&- 4>&- 8>&- 9>&- 2>/dev/null) || return 1
-    case "$provider" in cloudflare|aliyun|dnspod|huaweicloud|multiple) ;; *) return 1;; esac
+    case "$provider" in cloudflare|aliyun|dnspod|multiple) ;; *) return 1;; esac
 }
 public_scope() {
     if [ "$format" = HGDDNSAUTH2 ]; then

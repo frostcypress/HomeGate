@@ -58,7 +58,7 @@ select_provider() {
 provider=$(select_provider) || fail
 case "$provider" in
     not_found|unsupported) lua "$dir/homegate-dns-status.lua" "$error_mode" "$revision" "$account" "$provider" || fail;exit 1;;
-    cloudflare|aliyun|dnspod|huaweicloud) ;;
+    cloudflare|aliyun|dnspod) ;;
     *) fail;;
 esac
 # Keep FD6/7 throughout selection, the supervised request and final source check.

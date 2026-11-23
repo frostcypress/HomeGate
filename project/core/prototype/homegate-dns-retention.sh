@@ -7,7 +7,6 @@ ddns_closeout_enabled=false
 dns_retention_enabled=false
 aliyun_retention_enabled=false
 dnspod_retention_enabled=false
-huaweicloud_retention_enabled=false
 provider=cloudflare
 if [ "${1:-}" = --aliyun-internal ]; then
     [ "$aliyun_retention_enabled" = true ] || exit 2;provider=aliyun;shift
@@ -15,14 +14,10 @@ if [ "${1:-}" = --aliyun-internal ]; then
 elif [ "${1:-}" = --dnspod-internal ]; then
     [ "$dnspod_retention_enabled" = true ] || exit 2;provider=dnspod;shift
     [ "${1:-}" = retire ] || exit 2
-elif [ "${1:-}" = --huaweicloud-internal ]; then
-    [ "$huaweicloud_retention_enabled" = true ] || exit 2;provider=huaweicloud;shift
-    [ "${1:-}" = retire ] || exit 2
 fi
 retire_format=HGCFRetire1
 [ "$provider" != aliyun ] || retire_format=HGALIRetire1
 [ "$provider" != dnspod ] || retire_format=HGDNPRetire1
-[ "$provider" != huaweicloud ] || retire_format=HGHWRetire1
 action=${1:-}
 case "$action" in
     check) [ "$#" -eq 1 ] || exit 2;;
@@ -69,7 +64,7 @@ plan_read() {
         IFS= read -r meta_hash <&8 && IFS= read -r checksum <&8 || return 1
     if IFS= read -r extra <&8; then return 1;fi
     exec 8<&-
-    case "$format" in HGCFRetire1|HGALIRetire1|HGDNPRetire1|HGHWRetire1) p_format=$format;; *) return 1;;esac
+    case "$format" in HGCFRetire1|HGALIRetire1|HGDNPRetire1) p_format=$format;; *) return 1;;esac
     [ "$slug:$stored_identity" = "homegate:$identity_hash" ] || return 1
     case "$p_account" in ''|*[!a-zA-Z0-9_-]*) return 1;; esac
     [ "${#p_account}" -le 64 ] || return 1
@@ -115,8 +110,6 @@ if ! exists "$plan"; then
         ash "$dir/homegate-dns-recovery.sh" --aliyun-internal retire-check "$account" "$revision" "$job" >/dev/null 2>/dev/null || exit 1
     elif [ "$provider" = dnspod ]; then
         ash "$dir/homegate-dns-recovery.sh" --dnspod-internal retire-check "$account" "$revision" "$job" >/dev/null 2>/dev/null || exit 1
-    elif [ "$provider" = huaweicloud ]; then
-        ash "$dir/homegate-dns-recovery.sh" --huaweicloud-internal retire-check "$account" "$revision" "$job" >/dev/null 2>/dev/null || exit 1
     else
     ash "$dir/homegate-dns-recovery.sh" retire-check "$account" "$revision" "$job" >/dev/null 2>/dev/null || exit 1
     fi
@@ -149,8 +142,6 @@ if exists "$archive";then
         ash "$dir/homegate-dns-recovery.sh" --aliyun-internal retire-check "$account" "$revision" "$job" >/dev/null 2>/dev/null || exit 1
     elif [ "$provider" = dnspod ]; then
         ash "$dir/homegate-dns-recovery.sh" --dnspod-internal retire-check "$account" "$revision" "$job" >/dev/null 2>/dev/null || exit 1
-    elif [ "$provider" = huaweicloud ]; then
-        ash "$dir/homegate-dns-recovery.sh" --huaweicloud-internal retire-check "$account" "$revision" "$job" >/dev/null 2>/dev/null || exit 1
     else
     ash "$dir/homegate-dns-recovery.sh" retire-check "$account" "$revision" "$job" >/dev/null 2>/dev/null || exit 1
     fi

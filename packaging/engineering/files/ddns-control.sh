@@ -109,10 +109,10 @@ case "$action" in
     ddns-delete|ddns-reset) [ "$#" -eq 2 ] && id_valid "$1" && [ "$2" = --confirm ] || fail;;
     ddns-reconcile|ddns-collect-receipt|ddns-collect-orphan|ddns-retire-archive)
         [ "$#" -eq 4 ] && id_valid "$2" && job_valid "$3" && [ "$4" = --confirm ] || fail
-        case "$1" in cloudflare|aliyun|dnspod|huaweicloud) ;; *) fail;; esac;;
+        case "$1" in cloudflare|aliyun|dnspod) ;; *) fail;; esac;;
     ddns-collect-work) [ "$#" -eq 2 ] && job_valid "$1" && [ "$2" = --confirm ] || fail;;
     secret-put) [ "$#" -eq 3 ] && id_valid "$2" || fail
-        case "$1" in cloudflare|aliyun|dnspod|huaweicloud) ;; *) fail;; esac
+        case "$1" in cloudflare|aliyun|dnspod) ;; *) fail;; esac
         case "$3" in key_id|secret|account_id|endpoint) ;; *) fail;; esac;;
     *) fail;;
 esac

@@ -1,6 +1,6 @@
 -- Bounded private original receipts. No authority, network or filesystem actions.
 local M={}
-local formats={cloudflare='HGCFRetire1',aliyun='HGALIRetire1',dnspod='HGDNPRetire1',huaweicloud='HGHWRetire1'}
+local formats={cloudflare='HGCFRetire1',aliyun='HGALIRetire1',dnspod='HGDNPRetire1'}
 local function id(v)return type(v)=='string' and #v>0 and #v<=64 and v:match('^[a-zA-Z0-9_-]+$') end
 local function hex(v)return type(v)=='string' and #v==64 and v:match('^[0-9a-f]+$') end
 local function keys(d,allowed,n)

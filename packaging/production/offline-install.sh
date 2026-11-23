@@ -274,7 +274,7 @@ else
             :
         else
             case "$?" in
-                2) fail retired_huaweicloud_dns_account;;
+                2) fail unsupported_dns_provider;;
                 *) fail dns_provider_configuration_unverified;;
             esac
         fi

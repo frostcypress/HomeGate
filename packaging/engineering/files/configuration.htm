@@ -20,7 +20,7 @@
   <div class="cbi-section"><h3>DNS 账户</h3><div id="hg-config-accounts"></div>
     <form id="hg-config-account"><div class="cbi-value"><label class="cbi-value-title">账户标识</label><div class="cbi-value-field"><input class="cbi-input-text" name="id" required maxlength="64" pattern="[a-zA-Z0-9_-]+" /></div></div>
     <div class="cbi-value"><label class="cbi-value-title">名称</label><div class="cbi-value-field"><input class="cbi-input-text" name="name" maxlength="128" /></div></div>
-    <div class="cbi-value"><label class="cbi-value-title">提供商</label><div class="cbi-value-field"><select class="cbi-input-select" name="provider"><option value="cloudflare">Cloudflare</option><option value="aliyun">Aliyun</option><option value="dnspod">DNSPod</option><option value="huaweicloud">华为云</option></select></div></div>
+    <div class="cbi-value"><label class="cbi-value-title">提供商</label><div class="cbi-value-field"><select class="cbi-input-select" name="provider"><option value="cloudflare">Cloudflare</option><option value="aliyun">Aliyun</option><option value="dnspod">DNSPod</option></select></div></div>
     <button class="cbi-button cbi-button-save" type="submit">预览账户变更</button></form>
   </div>
   <div class="cbi-section"><h3>DDNS 规则</h3><div id="hg-config-rules"></div>
@@ -39,10 +39,10 @@
     <button class="cbi-button cbi-button-negative" type="submit">删除 AAAA</button></form>
   </div>
   <div class="cbi-section"><h3>私有凭据</h3>
-    <p>Cloudflare 使用 secret；其他提供商使用 key_id 和 secret，华为云还需 account_id。每次保存一个字段，值不会回显。账户配置变更须先确认，再保存凭据。</p>
+    <p>Cloudflare 使用 secret；其他提供商使用 key_id 和 secret。每次保存一个字段，值不会回显。账户配置变更须先确认，再保存凭据。</p>
     <form id="hg-config-secret" autocomplete="off">
     <div class="cbi-value"><label class="cbi-value-title">账户标识</label><div class="cbi-value-field"><input class="cbi-input-text" name="id" required maxlength="64" /></div></div>
-    <div class="cbi-value"><label class="cbi-value-title">提供商</label><div class="cbi-value-field"><select class="cbi-input-select" name="provider"><option value="cloudflare">Cloudflare</option><option value="aliyun">Aliyun</option><option value="dnspod">DNSPod</option><option value="huaweicloud">华为云</option></select></div></div>
+    <div class="cbi-value"><label class="cbi-value-title">提供商</label><div class="cbi-value-field"><select class="cbi-input-select" name="provider"><option value="cloudflare">Cloudflare</option><option value="aliyun">Aliyun</option><option value="dnspod">DNSPod</option></select></div></div>
     <div class="cbi-value"><label class="cbi-value-title">字段</label><div class="cbi-value-field"><select class="cbi-input-select" name="slot"><option value="secret">secret</option><option value="key_id">key_id</option><option value="account_id">account_id</option></select></div></div>
     <div class="cbi-value"><label class="cbi-value-title">新值</label><div class="cbi-value-field"><input class="cbi-input-text" type="password" name="value" required maxlength="4096" autocomplete="new-password" /></div></div>
     <button class="cbi-button cbi-button-save" type="submit">保存私有凭据</button></form>

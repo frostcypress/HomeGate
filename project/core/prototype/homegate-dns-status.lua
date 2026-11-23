@@ -4,7 +4,7 @@ local mode,revision,account=arg[1],arg[2],arg[3]
 if type(revision)~='string' or not revision:match('^[1-9]%d*$') or tonumber(revision)>999999999 or
     type(account)~='string' or #account<1 or #account>64 or not account:match('^[a-zA-Z0-9_-]+$') then os.exit(1) end
 local codec=assert(loadfile(dir..'/../../luci/lua/luasrc/model/homegate/backup.lua'))()
-local providers={cloudflare=true,aliyun=true,dnspod=true,huaweicloud=true}
+local providers={cloudflare=true,aliyun=true,dnspod=true}
 if mode=='select' then
     if arg[4] then os.exit(1) end
     local snapshot=assert(loadfile(dir..'/private-snapshot.lua'))().read(io.stdin,codec)

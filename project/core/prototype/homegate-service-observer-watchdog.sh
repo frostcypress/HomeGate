@@ -13,10 +13,6 @@ ddns_recovery_read_enabled=false
 dns_read_enabled=false
 aliyun_read_enabled=false
 dnspod_read_enabled=false
-huaweicloud_read_enabled=false
-huaweicloud_records_enabled=false
-huaweicloud_reconcile_enabled=false
-huaweicloud_receipt_enabled=false
 dnspod_records_enabled=false
 dnspod_reconcile_enabled=false
 dnspod_receipt_enabled=false
@@ -36,11 +32,9 @@ if [ "${1:-}" = --certificate-validate ];then
     set -- --action "$2" certificate-validate
 fi
 dns_provider=cloudflare
-if [ "${1:-}" = --cloudflare-check ] || [ "${1:-}" = --aliyun-check ] || [ "${1:-}" = --dnspod-check ] || [ "${1:-}" = --huaweicloud-check ]; then
+if [ "${1:-}" = --cloudflare-check ] || [ "${1:-}" = --aliyun-check ] || [ "${1:-}" = --dnspod-check ]; then
     if [ "$1" = --aliyun-check ]; then
         [ "$aliyun_read_enabled" = true ] || exit 2;dns_provider=aliyun
-    elif [ "$1" = --huaweicloud-check ]; then
-        [ "$huaweicloud_read_enabled" = true ] || exit 2;dns_provider=huaweicloud
     elif [ "$1" = --dnspod-check ]; then
         [ "$dnspod_read_enabled" = true ] || exit 2;dns_provider=dnspod
     fi
@@ -49,7 +43,6 @@ if [ "${1:-}" = --cloudflare-check ] || [ "${1:-}" = --aliyun-check ] || [ "${1:
     action=cloudflare-check; budget=30
     dns_account=$2; dns_revision=$3; dns_job=$4
     dns_mode=${5:-check}; case "$dns_mode" in check|zones) ;; hosts:*) [ "$dns_provider" = aliyun ] || exit 2;; records) [ "$dns_records_enabled" = true ] || exit 2;; reconcile) [ "$dns_records_enabled" = true ] && [ "$dns_reconcile_enabled" = true ] || exit 2;; *) exit 2;; esac
-    [ "$dns_provider" != huaweicloud ] || { [ "$dns_mode" = check ] || [ "$dns_mode" = zones ] || { { [ "$dns_mode" = records ] || { [ "$dns_mode" = reconcile ] && [ "$huaweicloud_reconcile_enabled" = true ]; }; } && [ "$huaweicloud_records_enabled" = true ] && [ "$dns_receipt_enabled" = false ]; }; } || exit 2
     [ "$dns_provider" != dnspod ] || { [ "$dns_mode" = check ] || [ "$dns_mode" = zones ] || { { [ "$dns_mode" = records ] || { [ "$dns_mode" = reconcile ] && [ "$dnspod_reconcile_enabled" = true ]; }; } && [ "$dnspod_records_enabled" = true ] && [ "$dns_receipt_enabled" = false ]; }; } || exit 2
     if [ "$dns_provider" = aliyun ]; then
         case "$dns_mode" in
@@ -195,13 +188,7 @@ case "$action" in
             ash "$dir/homegate-recovery-worker.sh" "$recovery_revision" "$recovery_job" "$recovery_token" 0<&5 5<&- 6>&- 7>&- 8>&- 9>&- >/dev/null 2>&1 &
         fi;;
     cloudflare-check)
-        if [ "$dns_provider" = huaweicloud ]; then
-            if [ "$huaweicloud_receipt_enabled" = true ]; then
-            ash "$dir/homegate-huaweicloud-worker.sh" "$dns_account" "$dns_revision" "$dns_job" "$dns_mode" 0<&5 5<&- 8>&- 9>&- >/dev/null 2>&1 &
-            else
-            ash "$dir/homegate-huaweicloud-worker.sh" "$dns_account" "$dns_revision" "$dns_job" "$dns_mode" 0<&5 5<&- 6>&- 7>&- 8>&- 9>&- >/dev/null 2>&1 &
-            fi
-        elif [ "$dns_provider" = dnspod ]; then
+        if [ "$dns_provider" = dnspod ]; then
             if [ "$dnspod_receipt_enabled" = true ]; then
             ash "$dir/homegate-dnspod-worker.sh" "$dns_account" "$dns_revision" "$dns_job" "$dns_mode" 0<&5 5<&- 8>&- 9>&- >/dev/null 2>&1 &
             else

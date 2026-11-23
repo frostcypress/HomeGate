@@ -174,7 +174,7 @@ local function scalar(kind, key, v)
     if key=="external_port" then return integer(v,1,65535) end
     if key=="certificate_ca_lock" then return (v=="letsencrypt" or v=="zerossl") and v or nil end
     if key:match("_port$") then return integer(v,0,65535) end
-    if key=="provider" then return enum(v,{"aliyun","cloudflare","dnspod","huaweicloud"}) end
+    if key=="provider" then return enum(v,{"aliyun","cloudflare","dnspod"}) end
     if key=="source" then return enum(v,kind=="certificate" and {"acme","local"} or {"auto","interface","url"}) end
     if key=="type" then return enum(v,{"A","AAAA"}) end
     if key=="ca" then return enum(v,{"letsencrypt","zerossl"}) end

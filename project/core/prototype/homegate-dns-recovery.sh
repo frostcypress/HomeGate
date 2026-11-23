@@ -7,9 +7,6 @@ ddns_closeout_enabled=false
 dns_settlement_enabled=false
 aliyun_settlement_enabled=false
 dnspod_settlement_enabled=false
-huaweicloud_settlement_enabled=false
-huaweicloud_terminal_repair_enabled=false
-huaweicloud_orphan_collection_enabled=false
 dnspod_terminal_repair_enabled=false
 dnspod_orphan_collection_enabled=false
 aliyun_terminal_repair_enabled=false
@@ -21,9 +18,6 @@ if [ "${1:-}" = --aliyun-internal ]; then
 elif [ "${1:-}" = --dnspod-internal ]; then
     [ "$dnspod_settlement_enabled" = true ] || exit 2;provider=dnspod;shift
     case "${1:-}" in settle|collect|load|retire-check) ;; repair-terminal) [ "$dnspod_terminal_repair_enabled" = true ] || exit 2;; orphan-check) [ "$dnspod_orphan_collection_enabled" = true ] || exit 2;; *) exit 2;;esac
-elif [ "${1:-}" = --huaweicloud-internal ]; then
-    [ "$huaweicloud_settlement_enabled" = true ] || exit 2;provider=huaweicloud;shift
-    case "${1:-}" in settle|collect|load|retire-check) ;; repair-terminal) [ "$huaweicloud_terminal_repair_enabled" = true ] || exit 2;; orphan-check) [ "$huaweicloud_orphan_collection_enabled" = true ] || exit 2;; *) exit 2;;esac
 fi
 dns_terminal_repair_enabled=false
 dns_orphan_collection_enabled=false
@@ -92,7 +86,6 @@ exec 8<&-
 # An archive guard must remain active even when optional entry gates are closed.
 if [ "$action" = archive-check ] && [ "$format" = HGALIJOURNAL1 ]; then provider=aliyun;fi
 if [ "$action" = archive-check ] && [ "$format" = HGDNPJOURNAL1 ]; then provider=dnspod;fi
-if [ "$action" = archive-check ] && [ "$format" = HGHWJOURNAL1 ]; then provider=huaweicloud;fi
 journal_format=HGCFJOURNAL1;terminal_format=HGCFTerminal1;collection_format=HGCFCollection1
 terminal_codec=cloudflare-records.lua;terminal_ready=HGCFTVALID1
 if [ "$provider" = aliyun ]; then
@@ -101,9 +94,6 @@ if [ "$provider" = aliyun ]; then
 elif [ "$provider" = dnspod ]; then
     journal_format=HGDNPJOURNAL1;terminal_format=HGDNPTerminal1;collection_format=HGDNPCollection1
     terminal_codec=dnspod-checkpoint.lua;terminal_ready=HGDNPVALID1
-elif [ "$provider" = huaweicloud ]; then
-    journal_format=HGHWJOURNAL1;terminal_format=HGHWTerminal1;collection_format=HGHWCollection1
-    terminal_codec=huaweicloud-checkpoint.lua;terminal_ready=HGHWVALID1
 fi
 [ "$format:$slug:$stored_identity" = "$journal_format:homegate:$identity_hash" ] || exit 1
 case "$stored_account" in ''|*[!a-zA-Z0-9_-]*) exit 1;; esac

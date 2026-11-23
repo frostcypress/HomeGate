@@ -12,15 +12,6 @@ ddns_runtime_enabled=false
 ddns_closeout_enabled=false
 aliyun_read_enabled=false
 dnspod_read_enabled=false
-huaweicloud_read_enabled=false
-huaweicloud_records_enabled=false
-huaweicloud_reconcile_enabled=false
-huaweicloud_receipt_enabled=false
-huaweicloud_settlement_enabled=false
-huaweicloud_retention_enabled=false
-huaweicloud_terminal_repair_enabled=false
-huaweicloud_orphan_collection_enabled=false
-huaweicloud_checkpoint_repair_enabled=false
 dnspod_records_enabled=false
 dnspod_reconcile_enabled=false
 dnspod_receipt_enabled=false
@@ -54,10 +45,8 @@ fail() {
         operation_error="Cloudflare operation is unavailable"
         [ "${provider:-cloudflare}" != aliyun ] || operation_error="Aliyun operation is unavailable"
         [ "${provider:-cloudflare}" != dnspod ] || operation_error="DNSPod operation is unavailable"
-        [ "${provider:-cloudflare}" != huaweicloud ] || operation_error="Huawei Cloud operation is unavailable"
         printf '{"api_version":1,"prototype":true,"ok":false,"phase":"dns-provider","effect":"%s","reconciliation_required":%s,"error":"%s"}\n' "$effect" "$required" "$operation_error"
     elif [ "${provider:-cloudflare}" = aliyun ]; then printf '{"api_version":1,"prototype":true,"ok":false,"phase":"dns-provider","error":"Aliyun reader is unavailable"}\n'
-    elif [ "${provider:-cloudflare}" = huaweicloud ]; then printf '{"api_version":1,"prototype":true,"ok":false,"phase":"dns-provider","error":"Huawei Cloud reader is unavailable"}\n'
     elif [ "${provider:-cloudflare}" = dnspod ]; then printf '{"api_version":1,"prototype":true,"ok":false,"phase":"dns-provider","error":"DNSPod reader is unavailable"}\n'
     else printf '{"api_version":1,"prototype":true,"ok":false,"phase":"dns-provider","error":"Cloudflare reader is unavailable"}\n'; fi
     exit "${1:-7}"
@@ -69,7 +58,7 @@ acme_dispatch=false
 if [ "${1:-}" = --acme-records-internal ];then
     [ "$acme_dns_records_enabled" = true ] && [ "$#" -eq 4 ] && [ "$4" = --confirm ] || fail 2
     acme_dispatch=true
-    case "$2" in cloudflare) set -- "$3" --records;; aliyun|dnspod|huaweicloud) set -- --"$2"-internal "$3" --records;; *) fail 2;;esac
+    case "$2" in cloudflare) set -- "$3" --records;; aliyun|dnspod) set -- --"$2"-internal "$3" --records;; *) fail 2;;esac
 fi
 ddns_dispatch=false;runtime_dispatch=false;runtime_recovery=false;runtime_closeout=false;runtime_delete=false
 case "${1:-}" in
@@ -77,12 +66,12 @@ case "${1:-}" in
         [ "$ddns_runtime_enabled" = true ] && [ "$ddns_closeout_enabled" = true ] && [ "$#" -eq 5 ] && [ "$5" = --confirm ] || fail 2
         runtime_closeout=true
         case "$1" in --runtime-collect-orphan-internal) maintenance=--collect-orphan;; --runtime-collect-receipt-internal) maintenance=--collect-receipt;; --runtime-retire-archive-internal) maintenance=--retire-archive;; esac
-        case "$2" in cloudflare) set -- "$3" "$maintenance" "$4" --confirm;; aliyun|dnspod|huaweicloud) set -- --"$2"-internal "$3" "$maintenance" "$4" --confirm;; *) fail 2;; esac;;
+        case "$2" in cloudflare) set -- "$3" "$maintenance" "$4" --confirm;; aliyun|dnspod) set -- --"$2"-internal "$3" "$maintenance" "$4" --confirm;; *) fail 2;; esac;;
 esac
 if [ "${1:-}" = --runtime-reconcile-internal ]; then
     [ "$ddns_runtime_enabled" = true ] && [ "$#" -eq 5 ] && [ "$5" = --confirm ] || fail 2
     runtime_recovery=true
-    case "$2" in cloudflare) set -- "$3" --reconcile-receipt "$4" --confirm;; aliyun|dnspod|huaweicloud) set -- --"$2"-internal "$3" --reconcile-receipt "$4" --confirm;; *) fail 2;; esac
+    case "$2" in cloudflare) set -- "$3" --reconcile-receipt "$4" --confirm;; aliyun|dnspod) set -- --"$2"-internal "$3" --reconcile-receipt "$4" --confirm;; *) fail 2;; esac
 fi
 if [ "${1:-}" = --ddns-runtime-sync-internal ] || [ "${1:-}" = --ddns-runtime-delete-internal ]; then
     [ "$1" != --ddns-runtime-delete-internal ] || runtime_delete=true
@@ -98,7 +87,6 @@ if [ "${1:-}" = --ddns-sync-internal ]; then
         cloudflare) set -- "$3" --records;;
         aliyun) set -- --aliyun-internal "$3" --records;;
         dnspod) set -- --dnspod-internal "$3" --records;;
-        huaweicloud) set -- --huaweicloud-internal "$3" --records;;
         *) fail 2;;
     esac
 fi
@@ -114,7 +102,6 @@ elif [ "${1:-}" = --runtime-check-internal ] || [ "${1:-}" = --runtime-zones-int
         cloudflare) ;;
         aliyun) [ "$aliyun_read_enabled" = true ] || fail 2;;
         dnspod) [ "$dnspod_read_enabled" = true ] || fail 2;;
-        huaweicloud) [ "$huaweicloud_read_enabled" = true ] || fail 2;;
         *) fail 2;;
     esac
     runtime_check=true;provider=$2
@@ -122,9 +109,6 @@ elif [ "${1:-}" = --runtime-check-internal ] || [ "${1:-}" = --runtime-zones-int
 elif [ "${1:-}" = --aliyun-internal ]; then
     [ "$aliyun_read_enabled" = true ] || fail 2
     provider=aliyun;shift
-elif [ "${1:-}" = --huaweicloud-internal ]; then
-    provider=huaweicloud;[ "$huaweicloud_read_enabled" = true ] || fail 2;shift
-    [ "$#" -eq 1 ] || { [ "$#" -eq 2 ] && { [ "$2" = --zones ] || [ "$2" = --records ]; }; } || { [ "$#" -eq 4 ] && { [ "$2" = --reconcile ] || [ "$2" = --reconcile-receipt ] || [ "$2" = --collect-receipt ] || [ "$2" = --retire-archive ] || [ "$2" = --repair-terminal ] || [ "$2" = --collect-orphan ] || [ "$2" = --repair-checkpoint ]; } && [ "$4" = --confirm ]; } || fail 2
 elif [ "${1:-}" = --dnspod-internal ]; then
     provider=dnspod;[ "$dnspod_read_enabled" = true ] || fail 2;shift
     [ "$#" -eq 1 ] || { [ "$#" -eq 2 ] && { [ "$2" = --zones ] || [ "$2" = --records ]; }; } || { [ "$#" -eq 4 ] && { [ "$2" = --reconcile ] || [ "$2" = --reconcile-receipt ] || [ "$2" = --collect-receipt ] || [ "$2" = --retire-archive ] || [ "$2" = --repair-terminal ] || [ "$2" = --collect-orphan ] || [ "$2" = --repair-checkpoint ]; } && [ "$4" = --confirm ]; } || fail 2
@@ -158,22 +142,6 @@ if [ "$#" -eq 4 ]; then
                     --repair-terminal) [ "$aliyun_terminal_repair_enabled" = true ] || fail 2;mode=repair;;
                     --collect-orphan) [ "$aliyun_orphan_collection_enabled" = true ] || fail 2;mode=orphan;;
                     --repair-checkpoint) [ "$aliyun_checkpoint_repair_enabled" = true ] || fail 2;mode=checkpoint;;
-                esac;;
-            *) fail 2;;
-        esac
-    elif [ "$provider" = huaweicloud ]; then
-        [ "$huaweicloud_reconcile_enabled" = true ] || fail 2
-        case "$2" in
-            --reconcile) ;;
-            --reconcile-receipt) [ "$huaweicloud_receipt_enabled" = true ] || fail 2;persistent_reconcile=true;;
-            --collect-receipt|--retire-archive|--repair-terminal|--collect-orphan|--repair-checkpoint)
-                [ "$huaweicloud_receipt_enabled" = true ] && [ "$huaweicloud_settlement_enabled" = true ] || fail 2
-                case "$2" in
-                    --collect-receipt) mode=collect;;
-                    --retire-archive) [ "$huaweicloud_retention_enabled" = true ] || fail 2;mode=retire;;
-                    --repair-terminal) [ "$huaweicloud_terminal_repair_enabled" = true ] || fail 2;mode=repair;;
-                    --collect-orphan) [ "$huaweicloud_orphan_collection_enabled" = true ] || fail 2;mode=orphan;;
-                    --repair-checkpoint) [ "$huaweicloud_checkpoint_repair_enabled" = true ] || fail 2;mode=checkpoint;;
                 esac;;
             *) fail 2;;
         esac
@@ -214,10 +182,6 @@ elif [ "$provider" = dnspod ]; then
     case "$mode" in check|zones) ;; records) [ "$dnspod_records_enabled" = true ] && [ "$dns_receipt_enabled" = false ] || fail 2;; reconcile) [ "$dnspod_reconcile_enabled" = true ] && [ "$dns_receipt_enabled" = false ] || fail 2;; collect|retire|repair|orphan|checkpoint) [ "$dnspod_settlement_enabled" = true ] && [ "$dnspod_receipt_enabled" = true ] && [ "$dns_receipt_enabled" = false ] || fail 2;; *) fail 2;; esac
     if [ "$runtime_check" != true ]; then [ "$dns_migrated_read_enabled" = true ] || fail 2;migrated_read=true;fi
     codec=dnspod-reader.lua;watchdog_mode=--dnspod-check
-elif [ "$provider" = huaweicloud ]; then
-    case "$mode" in check|zones) ;; records) [ "$huaweicloud_records_enabled" = true ] && [ "$dns_receipt_enabled" = false ] || fail 2;; reconcile) [ "$huaweicloud_records_enabled" = true ] && [ "$huaweicloud_reconcile_enabled" = true ] && [ "$dns_receipt_enabled" = false ] || fail 2;; collect|retire|repair|orphan|checkpoint) [ "$huaweicloud_settlement_enabled" = true ] && [ "$huaweicloud_receipt_enabled" = true ] && [ "$dns_receipt_enabled" = false ] || fail 2;; *) fail 2;;esac
-    if [ "$runtime_check" != true ]; then [ "$dns_migrated_read_enabled" = true ] || fail 2;migrated_read=true;fi
-    codec=huaweicloud-reader.lua;watchdog_mode=--huaweicloud-check
 fi
 if [ "$ddns_dispatch" = true ]; then
     [ "$mode" = records ] && [ "$dns_migrated_read_enabled" = true ] || fail 2
@@ -226,7 +190,6 @@ if [ "$ddns_dispatch" = true ]; then
         cloudflare) [ "$dns_receipt_enabled" = true ] && [ "$dns_settlement_enabled" = true ] || fail 2;;
         aliyun) [ "$aliyun_receipt_enabled" = true ] && [ "$aliyun_settlement_enabled" = true ] || fail 2;;
         dnspod) [ "$dnspod_receipt_enabled" = true ] && [ "$dnspod_settlement_enabled" = true ] || fail 2;;
-        huaweicloud) [ "$huaweicloud_receipt_enabled" = true ] && [ "$huaweicloud_settlement_enabled" = true ] || fail 2;;
     esac
 fi
 case "$account" in ''|*[!a-zA-Z0-9_-]*) fail 2;; esac
@@ -255,7 +218,7 @@ fi
 check_command=writer-check;snapshot_command=snapshot-read
 if [ "$runtime_check" = true ]; then snapshot_command=runtime-ddns-snapshot-read;fi
 if { [ "$mode" = reconcile ] || [ "$mode" = collect ] || [ "$mode" = retire ] || [ "$mode" = repair ] || [ "$mode" = checkpoint ] || [ "$mode" = orphan ]; } && [ "$dns_receipt_enabled" = true ]; then check_command=dns-recovery-check;snapshot_command=dns-recovery-snapshot-read; fi
-if { [ "$provider" = aliyun ] || [ "$provider" = dnspod ] || [ "$provider" = huaweicloud ]; } && { [ "$mode" = reconcile ] || [ "$mode" = collect ] || [ "$mode" = retire ] || [ "$mode" = repair ] || [ "$mode" = orphan ] || [ "$mode" = checkpoint ]; }; then check_command=dns-recovery-check;snapshot_command=migration-source-recovery-snapshot-read;migrated_read=false;fi
+if { [ "$provider" = aliyun ] || [ "$provider" = dnspod ]; } && { [ "$mode" = reconcile ] || [ "$mode" = collect ] || [ "$mode" = retire ] || [ "$mode" = repair ] || [ "$mode" = orphan ] || [ "$mode" = checkpoint ]; }; then check_command=dns-recovery-check;snapshot_command=migration-source-recovery-snapshot-read;migrated_read=false;fi
 if [ "$runtime_dispatch" = true ]; then migrated_read=false;snapshot_command=runtime-ddns-snapshot-read;fi
 if [ "$acme_dispatch" = true ];then migrated_read=false;snapshot_command=runtime-ddns-snapshot-read;fi
 if [ "$runtime_recovery" = true ]; then
@@ -310,8 +273,6 @@ if [ "$mode" = orphan ]; then
         ash "$dir/homegate-dns-orphan.sh" --aliyun-internal collect-orphan "$account" "$revision" "$old_job" >/dev/null 2>/dev/null || fail
     elif [ "$provider" = dnspod ]; then
         ash "$dir/homegate-dns-orphan.sh" --dnspod-internal collect-orphan "$account" "$revision" "$old_job" >/dev/null 2>/dev/null || fail
-    elif [ "$provider" = huaweicloud ]; then
-        ash "$dir/homegate-dns-orphan.sh" --huaweicloud-internal collect-orphan "$account" "$revision" "$old_job" >/dev/null 2>/dev/null || fail
     else
     ash "$dir/homegate-dns-orphan.sh" collect-orphan "$account" "$revision" "$old_job" >/dev/null 2>/dev/null || fail
     fi
@@ -323,8 +284,6 @@ if [ "$mode" = checkpoint ]; then
         ash "$dir/homegate-dns-checkpoint-repair.sh" --aliyun-internal repair-checkpoint "$account" "$revision" "$old_job" >/dev/null 2>/dev/null || fail
     elif [ "$provider" = dnspod ]; then
         ash "$dir/homegate-dns-checkpoint-repair.sh" --dnspod-internal repair-checkpoint "$account" "$revision" "$old_job" >/dev/null 2>/dev/null || fail
-    elif [ "$provider" = huaweicloud ]; then
-        ash "$dir/homegate-dns-checkpoint-repair.sh" --huaweicloud-internal repair-checkpoint "$account" "$revision" "$old_job" >/dev/null 2>/dev/null || fail
     else
     ash "$dir/homegate-dns-checkpoint-repair.sh" repair-checkpoint "$account" "$revision" "$old_job" >/dev/null 2>/dev/null || fail
     fi
@@ -336,8 +295,6 @@ if [ "$mode" = repair ]; then
         ash "$dir/homegate-dns-recovery.sh" --aliyun-internal repair-terminal "$account" "$revision" "$old_job" >/dev/null 2>/dev/null || fail
     elif [ "$provider" = dnspod ]; then
         ash "$dir/homegate-dns-recovery.sh" --dnspod-internal repair-terminal "$account" "$revision" "$old_job" >/dev/null 2>/dev/null || fail
-    elif [ "$provider" = huaweicloud ]; then
-        ash "$dir/homegate-dns-recovery.sh" --huaweicloud-internal repair-terminal "$account" "$revision" "$old_job" >/dev/null 2>/dev/null || fail
     else
     ash "$dir/homegate-dns-recovery.sh" repair-terminal "$account" "$revision" "$old_job" >/dev/null 2>/dev/null || fail
     fi
@@ -349,8 +306,6 @@ if [ "$mode" = retire ]; then
         ash "$dir/homegate-dns-retention.sh" --aliyun-internal retire "$account" "$revision" "$old_job" >/dev/null 2>/dev/null || fail
     elif [ "$provider" = dnspod ]; then
         ash "$dir/homegate-dns-retention.sh" --dnspod-internal retire "$account" "$revision" "$old_job" >/dev/null 2>/dev/null || fail
-    elif [ "$provider" = huaweicloud ]; then
-        ash "$dir/homegate-dns-retention.sh" --huaweicloud-internal retire "$account" "$revision" "$old_job" >/dev/null 2>/dev/null || fail
     else
     ash "$dir/homegate-dns-retention.sh" retire "$account" "$revision" "$old_job" >/dev/null 2>/dev/null || fail
     fi
@@ -360,8 +315,6 @@ fi
 if [ "$mode" = collect ]; then
     if [ "$provider" = aliyun ]; then
         ash "$dir/homegate-dns-recovery.sh" --aliyun-internal collect "$account" "$revision" "$old_job" >/dev/null 2>/dev/null || fail
-    elif [ "$provider" = huaweicloud ]; then
-        ash "$dir/homegate-dns-recovery.sh" --huaweicloud-internal collect "$account" "$revision" "$old_job" >/dev/null 2>/dev/null || fail
     elif [ "$provider" = dnspod ]; then
         ash "$dir/homegate-dns-recovery.sh" --dnspod-internal collect "$account" "$revision" "$old_job" >/dev/null 2>/dev/null || fail
     else
@@ -377,7 +330,6 @@ if [ "$mode" = reconcile ] && [ "$persistent_reconcile" = false ]; then
     marker=HGCFATTEMPT1;marker_size=13
     [ "$provider" != aliyun ] || { marker=HGALIATTEMPT1;marker_size=14; }
     [ "$provider" != dnspod ] || { marker=HGDNPATTEMPT1;marker_size=14; }
-    [ "$provider" != huaweicloud ] || { marker=HGHWATTEMPT1;marker_size=13; }
     [ "$(cat "$old_work/attempt" 2>/dev/null)" = "$marker" ] || fail
     [ "$(stat -c '%s' "$old_work/attempt" 2>/dev/null)" = "$marker_size" ] || fail
 fi
@@ -402,12 +354,6 @@ if [ "$mode" = records ] || [ "$mode" = reconcile ]; then
                 ash "$dir/homegate-dns-recovery.sh" --aliyun-internal load "$account" "$revision" "$old_job" 5>"$work/context" >/dev/null 2>/dev/null || fail
             else
             ash "$dir/homegate-dns-receipt.sh" --aliyun-internal load "$account" "$revision" "$old_job" 5>"$work/context" >/dev/null 2>/dev/null || fail
-            fi
-        elif [ "$provider" = huaweicloud ]; then
-            if [ "$huaweicloud_settlement_enabled" = true ]; then
-            ash "$dir/homegate-dns-recovery.sh" --huaweicloud-internal load "$account" "$revision" "$old_job" 5>"$work/context" >/dev/null 2>/dev/null || fail
-            else
-            ash "$dir/homegate-dns-receipt.sh" --huaweicloud-internal load "$account" "$revision" "$old_job" 5>"$work/context" >/dev/null 2>/dev/null || fail
             fi
         elif [ "$provider" = dnspod ]; then
             if [ "$dnspod_settlement_enabled" = true ]; then
@@ -453,9 +399,6 @@ if [ "$provider:$mode" = aliyun:records ] && [ "$aliyun_receipt_enabled" = true 
 fi
 if [ "$provider:$mode" = dnspod:records ] && [ "$dnspod_receipt_enabled" = true ] && [ "$dnspod_settlement_enabled" = true ] && [ "$effect" = unknown ] && [ "$result" -eq 0 ]; then
     ash "$dir/homegate-dns-recovery.sh" --dnspod-internal settle "$account" "$revision" "$job" >/dev/null 2>/dev/null || result=7
-fi
-if [ "$provider:$mode" = huaweicloud:records ] && [ "$huaweicloud_receipt_enabled" = true ] && [ "$huaweicloud_settlement_enabled" = true ] && [ "$effect" = unknown ] && [ "$result" -eq 0 ]; then
-    ash "$dir/homegate-dns-recovery.sh" --huaweicloud-internal settle "$account" "$revision" "$job" >/dev/null 2>/dev/null || result=7
 fi
 # Delete only this invocation's allocated slots, after the pipeline is quiet.
 case "$result" in 0|1) exec 5<"$work/zones" || fail;; esac

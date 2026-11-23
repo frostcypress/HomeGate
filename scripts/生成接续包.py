@@ -20,6 +20,7 @@ EXCLUDED = {'.git', '__pycache__', 'build', 'dist', 'node_modules', '.venv', '.a
 PUBLIC_MANIFEST = '公开文件清单.json'
 PRIVATE_PREFIXES = ('docs/验证/', 'targets/evidence/', '.github/reference/')
 FORBIDDEN_SUFFIXES = ('.ipk', '.apk', '.exe', '.o', '.pyc', '.zip', '.pem', '.key', '.log', '.png')
+PUBLIC_GUIDE_IMAGES = {'docs/images/public-services.png', 'docs/images/public-service-editor.png'}
 RETIRED_SOURCE_SUFFIXES = ('.go',)
 RETIRED_SOURCE_NAMES = {'go.mod', 'go.sum', 'go.work', 'go.work.sum'}
 
@@ -45,7 +46,7 @@ def public_files(root):
                 or relative.name in ('.gitkeep', '.env')
                 or relative.name in RETIRED_SOURCE_NAMES
                 or relative.suffix.lower() in RETIRED_SOURCE_SUFFIXES
-                or relative.suffix.lower() in FORBIDDEN_SUFFIXES
+                or (relative.suffix.lower() in FORBIDDEN_SUFFIXES and name not in PUBLIC_GUIDE_IMAGES)
                 or (relative.parts[0] not in SOURCE_DIRS and name not in SOURCE_FILES)):
             raise ValueError('Forbidden public source: ' + name)
         file = root / name

@@ -32,12 +32,7 @@ def native(raw):
     return text.encode('utf-8')
 
 def payload(root, *, bundled=False):
-    files={BASE+name:native(raw) for name,raw in business_payload(
-        root,retired_providers=('huaweicloud',)).items()}
-    catalog=BASE+'project/core/prototype/homegate-cli-catalog.lua'
-    availability=b'local huaweicloud_available=true\n'
-    assert files[catalog].count(availability)==1
-    files[catalog]=files[catalog].replace(availability,b'local huaweicloud_available=false\n')
+    files={BASE+name:native(raw) for name,raw in business_payload(root).items()}
     readonly={
         'homegate-network-read.sh':['network_resolve_enabled'],
         'homegate-network-worker.sh':['network_resolve_enabled'],

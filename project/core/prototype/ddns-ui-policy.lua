@@ -70,7 +70,7 @@ function M.response(action,payload,d,raw,select,id,json,schedule,jobs)
  if d.rules~=nil then fields.rules=true elseif d.rule~=nil then fields.rule=true else return false end
  if action=='preview' then fields.confirmation=true;fields.expires_in=true;count=count+2
  elseif action~='commit' then return false end
- if not keys(d,fields,count) or type(d.configuration_revision)~='number' or d.configuration_revision<1 or d.configuration_revision>999999999 or d.configuration_revision~=math.floor(d.configuration_revision) or not ({cloudflare=true,aliyun=true,dnspod=true,huaweicloud=true,multiple=true})[d.provider] then return false end
+ if not keys(d,fields,count) or type(d.configuration_revision)~='number' or d.configuration_revision<1 or d.configuration_revision>999999999 or d.configuration_revision~=math.floor(d.configuration_revision) or not ({cloudflare=true,aliyun=true,dnspod=true,multiple=true})[d.provider] then return false end
  local joined=d.rule
  if d.rules~=nil then
   if type(d.rules)~='table' or #d.rules<2 or #d.rules>32 then return false end

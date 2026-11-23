@@ -1,53 +1,60 @@
 # HomeGate
 
-基于 1.3.0-10 进行规范迁移的 OpenWrt 插件。当前为开发草稿，生产门禁关闭。r137已产出首批独立工程验证IPK三包；r138沿此安装路径接入私有配置、明确授权与手动四家DDNS执行/恢复；r139接入原生Lua配置/凭据网页和授权异步任务；r140接入有界自动调度、网络唤醒及独立生命周期入口；r141接入四家账户校验/区域发现与明确删除精确受管主机全部AAAA的网页及CLI；完整Shell/C产品、目标SDK/ABI、实机和资源验收仍未完成，工程包不替换生产核心。
+在 OpenWrt / QWRT 路由器上管理家庭公网服务。用自己的域名访问 NAS、家庭服务器或其他内网设备，并在 LuCI 管理动态 DNS、HTTPS 证书和网络唤醒。
 
-目标候选为 Zyxel Armor G5 (NBG7815) / QWRT R26.3.8 / aarch64_cortex-a53 / IPK / Lua LuCI。候选 SDK 不代表已经兼容，见 [目标兼容性说明](docs/目标兼容性报告.md)。
+[安装](#安装) · [添加公网服务](#添加公网服务) · [网络唤醒](#网络唤醒) · [维护与排查](#维护与排查) · [源码构建](#源码构建)
 
-当前核心由 Shell、Lua 和独立的 NGINX/WOL 组件组成。CLI 与 Web 兼容合同独立保存在 [核心接口基线](docs/核心接口与迁移验收.md)。源码、原生三包和目标设备验收分别核对。
+![HomeGate 公网服务页面，通过示例域名展示公网地址、内网目标和证书状态](docs/images/public-services.png)
 
-## 源码结构
+## 安装
 
-- `project/core/`：Shell/Lua 核心模块及隔离运行入口。原生 SDK 配方位于 `packaging/production/`。
-- `project/luci/`：Lua、JS 前端与公共中文语言源；沿用原生 LuCI 和 Bootstrap。
-- `scripts/`、`packaging/`：必要的构建、校验、打包与回归工具及夹具。
-- `.github/workflows/`：活动工作流，默认仅检查源码；目标构建和发布受门禁控制。
-- `docs/`、`targets/`：有效接口、迁移及目标兼容信息；[历史功能合同](docs/历史接续_1.3.0-10.md)保留基线范围，旧测试不代表本版通过。
-- `LICENSE`、`THIRD_PARTY_NOTICES`、`legal/`：本项目及第三方许可。
+到 [GitHub Releases](https://github.com/frostcypress/HomeGate/releases) 查看已发布的安装包和支持的固件。当前仓库仍处于发布前验收阶段。安装时以发布页标注的架构、包格式和升级路径为准。
 
-## 开发与检查
+离线归档中的 Core、LuCI 和中文语言包来自同一批次。将归档上传到路由器 `/tmp`，执行 `sha256sum 文件名`，与发布页的 SHA-256 比对。解包后进入归档内的目录，全新安装执行 `sh ./install.sh --fresh`。已有 HomeGate 时，按发布说明支持的版本路径执行 `sh ./install.sh --migrate`。
 
-Python 3.12+；Lua 回归需 `lupa==2.8`，页面回归需 `playwright==1.63.0`、Node 和 Chromium/Edge。Shell 执行检查需要 Linux BusyBox；完整依赖和命令见工作流。
+安装后打开 LuCI 的「服务 → 家庭公网服务」。
+
+## 添加公网服务
+
+以下以将 `https://nas.example.com:50443` 转发到 `http://192.168.1.100:5000` 为例。
+
+1. **保存 DNS 账户。** 在「公网服务 → 添加」中选择腾讯云 DNSPod、阿里云或 Cloudflare，填入该服务商的 DNS 凭据，再点「保存账户」。在弹窗里等到账户保存结果。已有账户时可点「刷新账户」读回云端记录。
+2. **填写地址。** 选择主域名 `example.com`，在「主机记录」输入 `nas`，填入公网端口 `50443` 和内网网址 `http://192.168.1.100:5000`。可从主机记录下拉列表选择已有记录。
+3. **设置 HTTPS。** 勾选 HTTPS 后，可以让 HomeGate 自动申请证书，也可以上传已有证书。日常访问用正式环境。测试环境适合验证签发流程，其证书可能不受浏览器信任。
+4. **应用并启用。** 在弹窗点「确定」，勾选这条服务的「启用」，再点「保存并应用」。确认「服务概览」的 HomeGate 总开关已启用。自动申请的证书会在后台办理，可在公网网址下方查看状态。
+5. **分别验证内外访问。** 用手机网络访问示例中的 HTTPS 地址，再从局域网 Wi-Fi 验证同一个地址。看到页面和有效证书后，公网转发才算验收完成。
+
+<details>
+<summary>查看公网服务配置示例</summary>
+
+![使用示例域名、端口和内网地址编辑公网服务，HTTPS 已勾选](docs/images/public-service-editor.png)
+
+</details>
+
+> 「保存」暂存更改，「保存并应用」提交并生效，「复位」撤销当前页面尚未保存的更改。
+
+## 网络唤醒
+
+进入「网络唤醒」，选择与目标设备相连的局域网接口。添加设备名称和 MAC 地址，保存并应用后，点击该设备的「唤醒」。目标设备需支持 WOL，并在关机或休眠时保持网卡供电。
+
+## 维护与排查
+
+| 遇到的情况 | 查看位置 |
+| --- | --- |
+| 外网打不开 | 先看「服务概览」是否运行，再到「公网服务」确认条目已启用。核对域名的 AAAA 记录、实际公网端口和内网服务是否可用。 |
+| 证书正在签发或稍后重试 | 在公网网址下方查看状态，到「插件维护 → 运行日志」查看签发或重试原因。 |
+| 需要限制访问来源 | 在「公网服务 → 访问限制」选择地区范围。进入「查看」可核对访问记录和手动允许或拒绝规则。 |
+| 检查更新 | 点「服务概览」版本旁的圆点查看结果。自定义更新源在「插件维护 → 更新地址」。确认更新前先阅读发布说明。 |
+| 备份配置 | 在「插件维护」导出配置。导出文件排除 DNS 密钥和证书私钥，恢复到新设备时需重新补齐。 |
+
+## 源码构建
+
+使用 Linux 和 Python 3.12 或更新版本。`make check` 核对版本与原生打包输入，`make frontend` 从 LuCI 模板重新生成 JavaScript。仓库里的 QWRT 清单为构建候选，完成目标 SDK、包格式和设备验收后才能用于正式构建。
 
 ```sh
-python3 scripts/project.py --check
-python3 scripts/重构回归.py
-python3 scripts/导航安全回归.py
-python3 scripts/frontend-source-regressions.py
+make check
+make frontend
+python3 scripts/目标SDK构建.py --target targets/qwrt-r26.3.8-ipq807x.json --luci lua --format ipk
 ```
 
-只编辑 `VERSION`、`RELEASE`，随后运行 `python3 scripts/project.py --sync`。修改前端模板后运行 `make frontend`，由 CI 核对生成副本。
-
-配置备份只导出允许的公共字段，排除凭据、私钥和带认证地址；恢复后总开关关闭。生产配置迁移与完整生命周期仍需完成，见 [重构设计](docs/重构设计.md)。
-
-目标设备的只读接口核实、SDK/ABI 与真实 LuCI/rpcd 的验证边界见 [目标验证入口](docs/目标SDK与LuCI验证入口.md)。
-
-`sh scripts/check-luci.sh` 验证固定宿主的真实会话、POST/CSRF，以及 LuCI HTTP 到 Shell DDNS 状态/任务只读链路；依赖已准备的 BusyBox 1.33.2。所有原候选门禁保持关闭，详见 [只读链路边界](docs/LuCI与ShellDDNS只读链路验证.md)。
-
-同一入口还验证 [HTTP/rpcd 到 Shell 只读链路](docs/HTTPRPC与ShellDDNS只读链路验证.md)，包括只读角色、旧式RPC及Bearer会话授权；临时夹具开启候选副本不表示生产接入完成。
-
-## 构建与分发
-
-活动源码、构建和 CI 已移除 Go。当前原生候选以 Lua LuCI 和 IPK 为构建组合，入口为 `scripts/native-sdk-build.py`。正式目标构建仍须核实目标 SDK、ABI 和核心迁移，LuCI 类型与包格式分别核实。
-
-公开仓库与源码产物只包含 `公开文件清单.json` 列出的必要文件。新增文件须审查用途和内容后更新该清单；CI 核对 Git 跟踪文件与清单完全一致。
-
-```sh
-python3 scripts/生成接续包.py --target pending --stage 源码检查 --public-source
-```
-
-公开源码包附逐文件 SHA256，不包含本地接续文档、详细验证、原始设备报告、截图或完整接续 ZIP。上述资料在本地完整保留；本地接续草稿仍使用 `--draft`，需要三份真实接续文档。公开源码包不等同于完整接续交付或已验收安装包。
-
-## 已构建的独立工程三包
-
-[r137工程验证三包](docs/工程验证三包.md)已通过真实SDK构建、三包元数据及实际包内只读入口验收。配方位于packaging/engineering，使用homegate-engineering独立包名/路径，提供目录及完整配置只读校验。工程包使用独立门禁，目标构建及发布按设备证据核对。
+GitHub Actions 可手动执行源码核对与匹配目标的构建。许可和第三方组件来源见 [LICENSE](LICENSE) 与 [THIRD_PARTY_NOTICES](THIRD_PARTY_NOTICES)。

@@ -7,14 +7,11 @@ dns_receipt_enabled=false
 ddns_runtime_enabled=false
 aliyun_receipt_enabled=false
 dnspod_receipt_enabled=false
-huaweicloud_receipt_enabled=false
 provider=cloudflare
 if [ "${1:-}" = --aliyun-internal ]; then
     [ "$aliyun_receipt_enabled" = true ] || exit 2;provider=aliyun;shift
 elif [ "${1:-}" = --dnspod-internal ]; then
     [ "$dnspod_receipt_enabled" = true ] || exit 2;provider=dnspod;shift
-elif [ "${1:-}" = --huaweicloud-internal ]; then
-    [ "$huaweicloud_receipt_enabled" = true ] || exit 2;provider=huaweicloud;shift
 else [ "$dns_receipt_enabled" = true ] || exit 2;fi
 [ "$#" -eq 4 ] || exit 2
 action=$1
@@ -23,7 +20,6 @@ journal_format=HGCFJOURNAL1;attempt_marker=HGCFATTEMPT1;attempt_size=13
 [ "$provider" != aliyun ] || { journal_format=HGALIJOURNAL1;attempt_marker=HGALIATTEMPT1;attempt_size=14; }
 checkpoint_codec=aliyun-checkpoint.lua
 [ "$provider" != dnspod ] || { journal_format=HGDNPJOURNAL1;attempt_marker=HGDNPATTEMPT1;attempt_size=14;checkpoint_codec=dnspod-checkpoint.lua; }
-[ "$provider" != huaweicloud ] || { journal_format=HGHWJOURNAL1;attempt_marker=HGHWATTEMPT1;attempt_size=13;checkpoint_codec=huaweicloud-checkpoint.lua; }
 account=$2;revision=$3;job=$4
 case "$account" in ''|*[!a-zA-Z0-9_-]*) exit 2;; esac
 [ "${#account}" -le 64 ] || exit 2

@@ -197,7 +197,7 @@ if mode=='scope' then
  local snap=assert(loadfile(dir..'/private-snapshot.lua'))().read(io.stdin,codec);if not snap then fail() end
  local accounts={};for _,s in ipairs(snap.configuration)do if s.kind=='dns_account' then accounts[s.name]=s.values.provider end end
  for _,s in ipairs(snap.configuration)do if s.kind=='certificate' and s.name==job then
-  local v=s.values;local provider=accounts[v.account];local slots={cloudflare={'secret'},aliyun={'key_id','secret'},dnspod={'key_id','secret'},huaweicloud={'key_id','secret','account_id','endpoint'}}
+  local v=s.values;local provider=accounts[v.account];local slots={cloudflare={'secret'},aliyun={'key_id','secret'},dnspod={'key_id','secret'}}
   if v.source~='acme' or not codec.acme_directory(v.ca,v.environment) or not slots[provider] or #v.domains<1 or #v.domains>32 then fail() end
   for _,slot in ipairs(slots[provider])do if not snap.credentials[provider..'.'..v.account..'.'..slot] then fail() end end
   local domains={};for _,d in ipairs(v.domains)do domains[#domains+1]=d end;table.sort(domains)

@@ -1,6 +1,6 @@
 -- Pure DDNS contribution. This never clears other modules or schedules retries.
 local M={}
-local providers={cloudflare=true,aliyun=true,dnspod=true,huaweicloud=true}
+local providers={cloudflare=true,aliyun=true,dnspod=true}
 local function id(s)return type(s)=='string' and #s>0 and #s<=64 and s:match('^[a-zA-Z0-9_-]+$') end
 local function hex(s)return type(s)=='string' and #s==64 and not s:find('[^0-9a-f]') end
 local function boot(s)return type(s)=='string' and #s==36 and s:match('^[0-9a-f-]+$') and s:sub(9,9)=='-' and s:sub(14,14)=='-' and s:sub(19,19)=='-' and s:sub(24,24)=='-' end

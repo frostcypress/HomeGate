@@ -3,25 +3,27 @@ on:
   workflow_dispatch:
     inputs:
       target_manifest:
-        description: 已核实目标清单路径
+        description: 构建目标清单路径
         type: string
-        default: targets/pending.json
+        default: targets/qwrt-r26.3.8-ipq807x.json
         required: true
       luci:
         description: 已核实 LuCI 类型，与包格式独立选择
         type: choice
         options: [lua, js]
+        default: lua
         required: true
       package_format:
         description: 按目标 SDK 校验包格式
         type: choice
         options: [auto, ipk, apk]
+        default: ipk
         required: true
       mode:
-        description: 草稿仅允许源码检查；目标与核心核实后才能构建
+        description: 仅构建会先核对源码，再编译三包
         type: choice
         options: [仅检查源码, 仅构建, 测试预发布, 正式发布]
-        default: 仅检查源码
+        default: 仅构建
         required: true
 permissions:
   contents: read
@@ -48,7 +50,7 @@ jobs:
           path: dist/*_公开源码.zip
           if-no-files-found: error
   build:
-    name: 已核实 SDK 三包构建
+    name: SDK 三包构建
     needs: source
     if: github.event_name == 'workflow_dispatch' && inputs.mode != '仅检查源码'
     runs-on: ubuntu-24.04
@@ -59,19 +61,26 @@ jobs:
         with:
           persist-credentials: false
       - name: 校验设备、核心迁移与包格式
+        if: inputs.mode != '仅构建' || inputs.target_manifest != 'targets/qwrt-r26.3.8-ipq807x.json'
         env:
           TARGET_MANIFEST: ${{ inputs.target_manifest }}
           LUCI: ${{ inputs.luci }}
           PACKAGE_FORMAT: ${{ inputs.package_format }}
         run: python3 scripts/检查发布条件.py --target "$TARGET_MANIFEST" --luci "$LUCI" --format "$PACKAGE_FORMAT"
-      - name: 安装 SDK 解压依赖
-        run: sudo apt-get update && sudo apt-get install --no-install-recommends -y zstd
+      - name: 安装 SDK 构建依赖
+        run: sudo apt-get update && sudo apt-get install --no-install-recommends -y zstd gawk libncurses-dev rsync xxd python3-setuptools
       - name: 使用目标 SDK 构建并验证真实三包
         env:
           TARGET_MANIFEST: ${{ inputs.target_manifest }}
           LUCI: ${{ inputs.luci }}
           PACKAGE_FORMAT: ${{ inputs.package_format }}
-        run: python3 scripts/目标SDK构建.py --target "$TARGET_MANIFEST" --luci "$LUCI" --format "$PACKAGE_FORMAT"
+          BUILD_MODE: ${{ inputs.mode }}
+        run: |
+          args=(--target "$TARGET_MANIFEST" --luci "$LUCI" --format "$PACKAGE_FORMAT")
+          if [ "$BUILD_MODE" = '仅构建' ] && [ "$TARGET_MANIFEST" = 'targets/qwrt-r26.3.8-ipq807x.json' ]; then
+            args+=(--candidate)
+          fi
+          python3 scripts/目标SDK构建.py "${args[@]}"
       - name: 上传当前目标三包及来源信息
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:

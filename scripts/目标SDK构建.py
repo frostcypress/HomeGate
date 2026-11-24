@@ -1,19 +1,25 @@
 #!/usr/bin/env python3
-"""Build the native packages after target and migration acceptance."""
+"""Build the native packages for a pinned candidate or an accepted target."""
 import argparse
 import hashlib
 import importlib.util
 import json
 import os
-from pathlib import Path
+from pathlib import Path, PurePosixPath
+import re
 import shutil
 import subprocess
 import tarfile
 import tempfile
 import urllib.request
-from project import ROOT, identity
+from project import ROOT, identity, selected_sdk_series, verify_generated
 from production_runtime import stage_sdk
 from native_transition import build_offline_bundle
+
+CANDIDATE_TARGET = ROOT / 'targets/qwrt-r26.3.8-ipq807x.json'
+CANDIDATE_INPUTS = ROOT / 'targets/native-candidate-24.10.6-ipq807x.json'
+SDK_HOST_BIN = ('staging_dir', 'host', 'bin')
+SDK_HOST_TOOLS = frozenset('awk bash cp diff egrep file gcc g++ getopt git grep gzip install ldconfig perl python python3 realpath rsync seq stat unzip wget which xxd'.split())
 
 
 def load_script(name):
@@ -23,9 +29,86 @@ def load_script(name):
     return module
 
 
-def build(target_file, frontend, fmt):
+def candidate_feeds(target_file, target, frontend, fmt):
+    verify_generated(ROOT)
+    if target_file.resolve() != CANDIDATE_TARGET or frontend != 'lua' or fmt not in ('ipk', 'auto'):
+        raise ValueError('候选构建仅支持当前 QWRT 目标的 Lua/IPK 组合')
+    if target.get('package_format') != 'ipk' or target.get('architecture') != 'aarch64_cortex-a53':
+        raise ValueError('候选目标的包格式或架构与 SDK 配方不一致')
+    pins = json.loads(CANDIDATE_INPUTS.read_text(encoding='utf-8'))
+    if (pins['scope'] != 'native-source-candidate-package-verification'
+        or pins['release_authorized'] is not False or pins['QWRT_runtime_ABI_verified'] is not False
+        or pins['sdk']['version'].rsplit('.', 1)[0] != selected_sdk_series('ipk', ROOT)
+        or any(target['sdk'].get(key) != pins['sdk'][key] for key in ('url', 'sha256', 'version'))):
+        raise ValueError('候选构建的 SDK 固定输入与目标清单不一致')
+    return pins['feeds']
+
+
+def checked_input(work, filename, url, expected_hash, cache):
+    path = (cache / filename) if cache else None
+    if path is None or not path.is_file():
+        path = work / filename
+        with urllib.request.urlopen(url, timeout=120) as response, path.open('xb') as output:
+            shutil.copyfileobj(response, output)
+    with path.open('rb') as stream:
+        if hashlib.file_digest(stream, 'sha256').hexdigest() != expected_hash:
+            raise ValueError('输入 SHA-256 校验失败：' + filename)
+    return path.resolve()
+
+
+def configure_candidate_feeds(work, sdk, feeds, cache):
+    config = []
+    for name, feed in feeds.items():
+        archive = checked_input(work, name + '-' + feed['commit'] + '.tar.gz', feed['archive_url'], feed['archive_sha256'], cache)
+        directory = work / 'feeds' / name
+        directory.mkdir(parents=True)
+        with tarfile.open(archive) as bundle:
+            bundle.extractall(directory, filter='data')
+        sources = list(directory.iterdir())
+        if len(sources) != 1 or not sources[0].is_dir():
+            raise ValueError('固定 feed 归档的目录布局不正确：' + name)
+        source = sources[0] / 'package' if name == 'base' else sources[0]
+        config.append(f'src-link {name} {source}\n')
+    (sdk / 'feeds.conf').write_text(''.join(config), encoding='utf-8')
+
+
+def unpack_sdk(archive, destination):
+    host_links = set()
+
+    def archive_filter(member, path):
+        parts = PurePosixPath(member.name).parts
+        if (member.issym() and member.linkname.startswith('/')
+            and parts[1:-1] == SDK_HOST_BIN and parts[-1] in SDK_HOST_TOOLS):
+            # The SDK records paths from its build host. Restore these tools
+            # after extraction so an archive link cannot redirect any writes.
+            host_links.add(parts[-1])
+            return None
+        return tarfile.data_filter(member, path)
+
+    with tarfile.open(archive) as bundle:
+        bundle.extractall(destination, filter=archive_filter)
+    roots = [p.parent for p in destination.glob('*/rules.mk')]
+    if len(roots) != 1:
+        raise ValueError('SDK root is ambiguous')
+    sdk = roots[0]
+    aliases = {'awk': 'gawk', 'python': 'python3'}
+    for name in sorted(host_links):
+        tool = sdk / 'scripts/noop.sh' if name == 'ldconfig' else shutil.which(aliases.get(name, name))
+        if not tool or not os.access(tool, os.X_OK):
+            raise ValueError('SDK 需要构建机工具：' + name)
+        sdk.joinpath(*SDK_HOST_BIN, name).symlink_to(Path(tool).absolute())
+    return sdk
+
+
+def build(target_file, frontend, fmt, *, candidate=False, cache=None):
     target = json.loads(target_file.read_text(encoding='utf-8'))
-    actual = load_script('检查发布条件').validate(target, frontend, fmt)
+    if candidate:
+        if os.name != 'posix' or os.getuid() == 0:
+            raise ValueError('候选构建需要非特权 Linux 用户')
+        feeds = candidate_feeds(target_file, target, frontend, fmt)
+        actual = 'ipk'
+    else:
+        actual = load_script('检查发布条件').validate(target, frontend, fmt)
     if (frontend, actual) != ('lua', 'ipk'):
         raise ValueError('当前原生配方只接通 Lua LuCI 与 IPK，所选组合尚未完成构建接合')
     item = identity()
@@ -34,10 +117,7 @@ def build(target_file, frontend, fmt):
         raise ValueError('Output exists; use a clean build workspace')
     with tempfile.TemporaryDirectory(prefix='homegate-sdk-') as directory:
         work = Path(directory)
-        archive = work / 'sdk.tar'
-        urllib.request.urlretrieve(target['sdk']['url'], archive)
-        if hashlib.sha256(archive.read_bytes()).hexdigest() != target['sdk']['sha256']:
-            raise ValueError('SDK SHA-256 mismatch')
+        archive = checked_input(work, 'sdk.tar', target['sdk']['url'], target['sdk']['sha256'], cache)
         extracted = work / 'sdk'
         extracted.mkdir()
         with archive.open('rb') as stream:
@@ -47,21 +127,30 @@ def build(target_file, frontend, fmt):
             with tar_path.open('xb') as stream:
                 subprocess.run(['zstd', '-d', '-c', str(archive)], stdout=stream, check=True, timeout=120)
             archive = tar_path
-        with tarfile.open(archive) as bundle:
-            bundle.extractall(extracted, filter='data')
-        roots = [p.parent for p in extracted.glob('*/rules.mk')]
-        if len(roots) != 1:
-            raise ValueError('SDK root is ambiguous')
-        sdk = roots[0]
+        sdk = unpack_sdk(archive, extracted)
         stage_sdk(ROOT, sdk, bundled=True)
+        if candidate:
+            configure_candidate_feeds(work, sdk, feeds, cache)
         names = (item['slug'] + '-core', 'luci-app-' + item['slug'], 'luci-i18n-' + item['slug'] + '-zh-cn')
         components = ('homegate-nginx', 'homegate-wol')
-        with (sdk / '.config').open('a', encoding='utf-8') as config:
-            config.write('\n' + ''.join(f'CONFIG_PACKAGE_{name}=y\n' for name in (*names, *components)))
+        packages = (*components, 'homegate-native-candidate')
+        selected = (*names, *components)
+        if candidate:
+            packages = ('feeds/base/openssl', 'feeds/base/pcre2', *packages)
+            selected += ('libopenssl', 'libpcre2')
+        config = sdk / '.config'
+        settings = config.read_text(encoding='utf-8') if config.exists() else ''
+        if candidate:
+            # The SDK defaults select all packages and kernel modules.
+            for option in ('ALL', 'ALL_NONSHARED', 'ALL_KMODS'):
+                settings = re.sub(rf'^(?:CONFIG_{option}=.*|# CONFIG_{option} is not set)\n?', '', settings, flags=re.M)
+                settings += f'\n# CONFIG_{option} is not set\n'
+        settings += '\n' + ''.join(f'CONFIG_PACKAGE_{name}=y\n' for name in selected)
+        config.write_text(settings, encoding='utf-8')
         for command in (['./scripts/feeds', 'update', '-a'], ['./scripts/feeds', 'install', '-a'],
                         ['make', 'defconfig'],
                         *(['make', f'package/{package}/compile', 'V=s', '-j2']
-                          for package in (*components, 'homegate-native-candidate'))):
+                          for package in packages)):
             subprocess.run(command, cwd=sdk, check=True)
         found = []
         for file in (sdk / 'bin').rglob('*.' + actual):
@@ -86,6 +175,8 @@ def build(target_file, frontend, fmt):
         evidence = {'target': target, 'identity': item, 'luci': frontend, 'format': actual,
                     'source_commit': os.environ.get('GITHUB_SHA'), 'run_id': os.environ.get('GITHUB_RUN_ID'),
                     'packages': report, 'status': 'compiled-metadata-verified-not-device-tested'}
+        if candidate:
+            evidence.update(scope='pinned-sdk-candidate-build', feeds=feeds, release_authorized=False)
         (destination / 'build-evidence.json').write_text(json.dumps(evidence, ensure_ascii=False, indent=2), encoding='utf-8')
 
 
@@ -94,5 +185,9 @@ if __name__ == '__main__':
     parser.add_argument('--target', type=Path, required=True)
     parser.add_argument('--luci', choices=('lua', 'js'), required=True)
     parser.add_argument('--format', choices=('auto', 'ipk', 'apk'), default='auto')
+    parser.add_argument('--candidate', action='store_true', help='使用固定 SDK 和 feed 构建候选三包')
+    parser.add_argument('--input-cache', type=Path, help='含 sdk.tar 和固定 feed 归档的候选构建缓存')
     args = parser.parse_args()
-    build(args.target, args.luci, args.format)
+    if args.input_cache and not args.candidate:
+        parser.error('--input-cache requires --candidate')
+    build(args.target, args.luci, args.format, candidate=args.candidate, cache=args.input_cache)

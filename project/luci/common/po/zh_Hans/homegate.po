@@ -442,29 +442,71 @@ msgstr "更新地址"
 msgid "Plugin license"
 msgstr "插件许可"
 
-msgid "Update URL saved"
-msgstr "更新地址已保存"
-
 msgid "HomeGate update"
 msgstr "HomeGate 更新"
+
+msgid "Check for updates"
+msgstr "检查更新"
+
+msgid "Offline installation"
+msgstr "离线安装"
+
+msgid "Install"
+msgstr "安装"
+
+msgid "No update info"
+msgstr "暂无信息"
+
+msgid "Up to date"
+msgstr "已是最新"
+
+msgid "New version"
+msgstr "发现新版"
+
+msgid "Update error"
+msgstr "更新异常"
+
+msgid "Uploading and verifying the signed offline package…"
+msgstr "正在上传并校验签名离线包…"
+
+msgid "Offline package verified. Install %s?"
+msgstr "离线包已通过校验。是否安装 %s？"
+
+msgid "Choose a signed HomeGate offline package (.tar)."
+msgstr "请选择 HomeGate 已签名的离线安装包（.tar）。"
+
+msgid "The offline package upload did not complete. Please try again."
+msgstr "离线包上传未完成，请重试。"
+
+msgid "Unable to save temporary update data. Check the router's available space."
+msgstr "无法保存临时更新数据，请检查路由器的可用空间。"
 
 msgid "Checking for updates…"
 msgstr "正在检查更新…"
 
-msgid "HomeGate is up to date."
-msgstr "HomeGate 已是最新版本。"
+msgid "No update check result yet."
+msgstr "暂无检查结果。"
+
+msgid "Already up to date."
+msgstr "已是最新版本。"
 
 msgid "A new HomeGate version is available."
 msgstr "发现新版本。"
 
 msgid "No stable release is available from this update source."
-msgstr "此更新源暂无可用的正式版本。"
+msgstr "当前更新源暂无正式版本。"
 
 msgid "Unable to check for updates."
 msgstr "检查更新失败。"
 
-msgid "The update source did not respond in time."
-msgstr "更新源响应超时。"
+msgid "The update source timed out. Please try again later."
+msgstr "更新源响应超时，请稍后重试。"
+
+msgid "Unable to connect to the update source. Please try again later."
+msgstr "无法连接更新源，请稍后重试。"
+
+msgid "An update check is already in progress. Try again shortly."
+msgstr "正在检查更新，请稍后重试。"
 
 msgid "The update source returned invalid release information."
 msgstr "更新源返回的发布信息无效。"
@@ -481,14 +523,11 @@ msgstr "更新日志"
 msgid "Release notes have been shortened."
 msgstr "更新日志过长，已截取显示。"
 
-msgid "No release notes were provided."
-msgstr "此版本暂无更新日志。"
+msgid "This release does not support the currently installed version."
+msgstr "此版本不支持从当前版本升级。"
 
-msgid "Confirm update"
-msgstr "确认更新"
-
-msgid "Install the preceding version before updating to this release."
-msgstr "请先升级到此版本的上一修订。"
+msgid "Update to %s first, then install this release."
+msgstr "请先升级到 %s，再安装此版本。"
 
 msgid "The release signing key is unavailable."
 msgstr "缺少可信的发布签名公钥。"
@@ -538,8 +577,11 @@ msgstr "签名清单与确认的更新版本不匹配。"
 msgid "The update archive is incomplete or invalid."
 msgstr "更新归档不完整或格式无效。"
 
-msgid "Unable to save the plugin update URL"
-msgstr "无法保存插件更新地址"
+msgid "Enter a valid HTTP or HTTPS update URL."
+msgstr "请输入有效的 HTTP 或 HTTPS 更新地址。"
+
+msgid "Log settings saved. The update URL is waiting to be applied."
+msgstr "日志设置已保存，更新地址待应用。"
 
 msgid "The HomeGate project is licensed under the MIT License. The LuCI interface and shared configuration controller retain the Apache License 2.0. Third-party components are subject to their respective licenses. When using, copying, modifying or distributing the source code, follow the applicable license and retain the required copyright and license notices. The software is provided as is."
 msgstr "HomeGate 项目采用 MIT 许可。LuCI 界面和共享配置控制器沿用 Apache 2.0 许可，第三方组件适用各自的许可证。使用、复制、修改或分发源码时，请遵循相应许可，并按要求保留版权和许可声明。软件按现状提供。"
@@ -1045,8 +1087,8 @@ msgstr "提示"
 msgid "Certificate %d days"
 msgstr "证书剩余 %d 天"
 
-msgid "Renewal Failed · %d days"
-msgstr "续期失败 · %d 天"
+msgid "Renewal Failed"
+msgstr "续期失败"
 
 msgid "Certificate Error"
 msgstr "证书异常"

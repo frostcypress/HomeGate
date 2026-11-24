@@ -102,7 +102,6 @@ case "${1:-}" in
    apply_maintenance) message='保存并应用维护设置';;
    config_reset) message='恢复默认配置';;
    config_import) message='导入插件配置';;
-   update_url_save) message='保存插件更新地址';;
    *) exit 0;;
   esac
   case "$3" in

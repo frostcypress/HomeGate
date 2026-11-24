@@ -216,6 +216,7 @@ def web_payload(root):
         text=text.replace("'homegate'","'homegate_engineering'")
         text=text.replace('luci.model.homegate.','luci.model.homegate_engineering.')
         text=text.replace('homegate/ddns','homegate_engineering/ddns')
+        text=text.replace('homegate/common','homegate_engineering/common')
         text=text.replace('admin/services/homegate/','admin/services/homegate_engineering/')
         text=text.replace("local root='/usr/libexec/homegate'","local root='/usr/libexec/homegate-engineering/project/core/prototype'")
         text=text.replace('/ddns-ui ', '/homegate-ddns-ui.sh ')
@@ -226,6 +227,7 @@ def web_payload(root):
             text=text.replace("local h=require('luci.http');local d=", "local h=require('luci.http');local length=tonumber(h.getenv('CONTENT_LENGTH') or '0');if not length or length<0 or length>4096 then h.status(413,'Request Entity Too Large');return end;local d=")
         files[dest]=text.encode('utf-8')
     files['www/luci-static/resources/homegate-engineering/ddns-ui.js']=(root/'project/luci/prototype/js/ddns-ui.js').read_bytes()
+    files['usr/lib/lua/luci/view/homegate_engineering/common.htm']=(root/'project/luci/lua/luasrc/view/homegate/common.htm').read_bytes()
     files['usr/lib/lua/luci/model/homegate_engineering/backup.lua']=(root/'project/luci/lua/luasrc/model/homegate/backup.lua').read_bytes()
     for name,dest in [('config-model.lua','usr/lib/lua/luci/model/homegate_engineering/configuration.lua'),
       ('configuration.htm','usr/lib/lua/luci/view/homegate_engineering/configuration.htm'),

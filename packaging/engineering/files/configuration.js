@@ -24,6 +24,10 @@ function request(action,form,done){
  xhr.onerror=xhr.ontimeout=function(){end();show({ok:false,error:'请求未完成，请刷新检查已保留状态。'});};
  xhr.send(write?body.join('&'):null);
 }
+function confirmedRequest(action,fields,message,done){
+ if(busy)return;
+ hgActionDialog('确认操作',message,function(){fields.consent='1';request(action,fields,done);});
+}
 function table(target,rows,form,columns){
  var mount=el(target);while(mount.firstChild)mount.removeChild(mount.firstChild);
  var t=document.createElement('table');t.className='table';
@@ -39,23 +43,36 @@ function bind(formId,action,names){var form=el(formId);form.onsubmit=function(e)
  request(action,fields);
 };}
 bind('hg-access-policy','preview_access',['allow','deny','region']);
-['update','refresh','status','recent','clear','clear_denied','stop','reap'].forEach(function(op){el('hg-access-'+op).onclick=function(){var fields={};if(['status','recent'].indexOf(op)<0){if(!window.confirm(op==='clear'||op==='clear_denied'?'清理本插件最近访问观察？这不会改变访问规则。':op==='stop'?'停止本次地址库下载？保留原有效库。':'执行本次 CN 地址库操作？已有代理继续使用其启动时快照。'))return;fields.consent='1';}request('access_'+op,fields,function(d){if(op==='recent'){var mount=el('hg-access-recent');while(mount.firstChild)mount.removeChild(mount.firstChild);var t=document.createElement('table');t.className='table';(d.report.entries||[]).forEach(function(row){var tr=document.createElement('tr');[row.ip,row.host,row.allowed?'允许':'拒绝',row.reason,row.count,row.time].forEach(function(v){var td=document.createElement('td');td.textContent=String(v);tr.appendChild(td);});t.appendChild(tr);});mount.appendChild(t);}});};});
+['update','refresh','status','recent','clear','clear_denied','stop','reap'].forEach(function(op){el('hg-access-'+op).onclick=function(){
+ if(op!=='status'&&op!=='recent'){
+  confirmedRequest('access_'+op,{},op==='clear'||op==='clear_denied'?'清理本插件最近访问观察？这不会改变访问规则。':op==='stop'?'停止本次地址库下载？保留原有效库。':'执行本次 CN 地址库操作？已有代理继续使用其启动时快照。');return;
+ }
+ request('access_'+op,{},op==='recent'?function(d){var mount=el('hg-access-recent');while(mount.firstChild)mount.removeChild(mount.firstChild);var t=document.createElement('table');t.className='table';(d.report.entries||[]).forEach(function(row){var tr=document.createElement('tr');[row.ip,row.host,row.allowed?'允许':'拒绝',row.reason,row.count,row.time].forEach(function(v){var td=document.createElement('td');td.textContent=String(v);tr.appendChild(td);});t.appendChild(tr);});mount.appendChild(t);}:null);
+};});
 bind('hg-web-rule','preview_web_rule',['id','domain','https','certificate']);
 bind('hg-web-target','web_target_put',['id','value']);
-['start','status','stop','reap'].forEach(function(op){el('hg-proxy-'+op).onclick=function(){var fields={};if(op==='start'){fields.selection=el('hg-proxy-run').elements.selection.value;fields.policy=el('hg-proxy-run').elements.policy.value;}if(op!=='status'){if(!window.confirm(op==='start'?'启动所选规则的工程代理？这会监听工程端口；防火墙需另行明确应用。':op==='stop'?'停止工程代理？现有连接将断开。':'收起已停止代理会话？'))return;fields.consent='1';}request('proxy_'+op,fields);};});
+['start','status','stop','reap'].forEach(function(op){el('hg-proxy-'+op).onclick=function(){
+ var fields={};if(op==='start'){fields.selection=el('hg-proxy-run').elements.selection.value;fields.policy=el('hg-proxy-run').elements.policy.value;}
+ if(op==='status')request('proxy_status',fields);
+ else confirmedRequest('proxy_'+op,fields,op==='start'?'启动所选规则的工程代理？这会监听工程端口；防火墙需另行明确应用。':op==='stop'?'停止工程代理？现有连接将断开。':'收起已停止代理会话？');
+};});
 bind('hg-acme-certificate','preview_acme_certificate',['id','name','account','zone','domains','email','environment']);
 bind('hg-local-certificate','preview_local_certificate',['id','name','domains']);
 bind('hg-config-account','preview_account',['id','name','provider']);bind('hg-config-rule','preview_rule',['id','account','zone','host','source','interface']);bind('hg-config-secret','secret_put',['id','provider','slot','value']);
-['start','status','stop','reap'].forEach(function(op){el('hg-acme-schedule-'+op).onclick=function(){var fields={};if(op==='start')fields.id=el('hg-acme-task').elements.id.value;if(op!=='status'){if(!window.confirm(op==='start'?'启动此证书的定时续签会话？每小时检查；退出页面后继续，重启后需重新明确启动。':op==='stop'?'停止定时续签及本会话已接纳的任务？':'收起已结束会话？未决挑战仍须先明确处理。'))return;fields.consent='1';}request('acme_schedule_'+op,fields);};});
+['start','status','stop','reap'].forEach(function(op){el('hg-acme-schedule-'+op).onclick=function(){
+ var fields={};if(op==='start')fields.id=el('hg-acme-task').elements.id.value;
+ if(op==='status')request('acme_schedule_status',fields);
+ else confirmedRequest('acme_schedule_'+op,fields,op==='start'?'启动此证书的定时续签会话？每小时检查；退出页面后继续，重启后需重新明确启动。':op==='stop'?'停止定时续签及本会话已接纳的任务？':'收起已结束会话？未决挑战仍须先明确处理。');
+};});
 ['issue','renew','status','stop','cleanup'].forEach(function(op){el('hg-acme-'+op).onclick=function(){var form=el('hg-acme-task'),fields={};
  if(op==='issue'||op==='renew'){
   if(!window.crypto||!window.crypto.getRandomValues){show({ok:false,error:'浏览器缺少安全任务标识支持。'});return;}
   var bytes=new Uint8Array(16);window.crypto.getRandomValues(bytes);var job='';for(var i=0;i<bytes.length;i++)job+=('0'+bytes[i].toString(16)).slice(-2);
   form.elements.job.value=job;fields.id=form.elements.id.value;
  }
- fields.job=form.elements.job.value;if(op!=='status')fields.consent='1';
- if((op==='stop'||op==='cleanup')&&!window.confirm(op==='stop'?'停止本次签发？未决 TXT 会保留供明确核对。':'仅清理本任务已确认拥有的挑战 TXT？未知写入将拒绝清理。'))return;
- request('acme_'+op,fields);
+ fields.job=form.elements.job.value;
+ if(op==='stop'||op==='cleanup')confirmedRequest('acme_'+op,fields,op==='stop'?'停止本次签发？未决 TXT 会保留供明确核对。':'仅清理本任务已确认拥有的挑战 TXT？未知写入将拒绝清理。');
+ else {if(op!=='status')fields.consent='1';request('acme_'+op,fields);}
 };});
 el('hg-certificate-import').onsubmit=function(e){e.preventDefault();var form=e.target;
  var fields={id:form.elements.id.value,certificate_pem:form.elements.certificate_pem.value,private_key_pem:form.elements.private_key_pem.value,consent:'1'};
@@ -63,11 +80,11 @@ el('hg-certificate-import').onsubmit=function(e){e.preventDefault();var form=e.t
 };
 ['status','resume','cancel'].forEach(function(op){el('hg-certificate-'+op).onclick=function(){var fields={id:el('hg-certificate-import').elements.id.value};if(op!=='status')fields.consent='1';request('cert_'+op,fields);};});
 el('hg-delete-rule').onsubmit=function(e){e.preventDefault();var form=e.target;
- if(!form.elements.confirm_all.checked||!window.confirm('删除该规则受管主机的全部 AAAA 记录？其他主机和 TXT 不受影响。'))return;
- request('delete_rule',{id:form.elements.id.value,consent:'1'});
+ if(!form.elements.confirm_all.checked)return;
+ confirmedRequest('delete_rule',{id:form.elements.id.value},'删除该规则受管主机的全部 AAAA 记录？其他主机和 TXT 不受影响。');
 };
 el('hg-config-refresh').onclick=refresh;el('hg-config-prepare').onclick=function(){request('prepare',{},refresh);};
-el('hg-config-recover').onclick=function(){if(window.confirm('恢复上一次未完成应用之前的工程配置？已保留的 DNS 恢复记录不会被清除。'))request('recover',{consent:'1'},refresh);};
+el('hg-config-recover').onclick=function(){confirmedRequest('recover',{},'恢复上一次未完成应用之前的工程配置？已保留的 DNS 恢复记录不会被清除。',refresh);};
 el('hg-production-copy-preview').onclick=function(){request('production_copy_preview');};
 el('hg-config-activate').onclick=function(){request('activate_preview');};
 el('hg-config-apply').onclick=function(){request(pendingAction,{confirmation:pending,consent:'1'},refresh);};
@@ -75,11 +92,17 @@ el('hg-config-finish').onclick=function(){request('finish',{confirmation:finish,
 el('hg-config-cancel').onclick=function(){request('cancel');};refresh();
 ['enable','disable','status'].forEach(function(op){el('hg-lifecycle-'+op).onclick=function(){request('lifecycle_'+op,op==='status'?{}:{consent:'1'});};});
 ['serve','start','status','stop','reap'].forEach(function(op){el('hg-schedule-'+op).onclick=function(){request('schedule_'+op,op==='status'?{}:{consent:'1'});};});
-['apply','status','cleanup'].forEach(function(op){el('hg-firewall-'+op).onclick=function(){var fields={};if(op!=='status'){if(!window.confirm(op==='apply'?'将当前代理的 IPv6 公网入口映射到工程端口？规则只绑定本次代理会话，停止时清理。':'清理工程代理的专属 IPv6 防火墙规则？'))return;fields.consent='1';}request('firewall_'+op,fields);};});
+['apply','status','cleanup'].forEach(function(op){el('hg-firewall-'+op).onclick=function(){
+ if(op==='status')request('firewall_status',{});
+ else confirmedRequest('firewall_'+op,{},op==='apply'?'将当前代理的 IPv6 公网入口映射到工程端口？规则只绑定本次代理会话，停止时清理。':'清理工程代理的专属 IPv6 防火墙规则？');
+};});
 bind('hg-wol-host','preview_wol_host',['id','name','mac']);
 bind('hg-wol-settings','preview_wol_settings',['interface','selected_host']);
 el('hg-wol-status').onclick=function(){request('wol_status',{},function(d){var r=d.report;table('hg-wol-hosts',r.hosts||[],el('hg-wol-host'),['id','name','mac']);el('hg-wol-settings').elements.interface.value=r.interface;el('hg-wol-settings').elements.selected_host.value=r.selected_host||'';});};
-[['hg-wol-send','wol_send',['id']],['hg-wol-direct','wol_direct',['interface','mac']]].forEach(function(spec){el(spec[0]).onsubmit=function(e){e.preventDefault();if(!window.confirm('发送唤醒报文？发送计数不代表设备已经启动。'))return;var fields={consent:'1'};spec[2].forEach(function(k){fields[k]=el(spec[0]).elements[k].value;});request(spec[1],fields);};});
+[['hg-wol-send','wol_send',['id']],['hg-wol-direct','wol_direct',['interface','mac']]].forEach(function(spec){el(spec[0]).onsubmit=function(e){
+ e.preventDefault();var fields={};spec[2].forEach(function(k){fields[k]=el(spec[0]).elements[k].value;});
+ confirmedRequest(spec[1],fields,'发送唤醒报文？发送计数不代表设备已经启动。');
+};});
 el('hg-backup-export').onclick=function(){request('backup_export',{},function(d){el('hg-backup-text').value=d.backup;});};
 el('hg-backup-preview').onclick=function(){request('backup_preview',{backup:el('hg-backup-text').value});};
 bind('hg-backup-rollback','rollback_preview',['generation']);

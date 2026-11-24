@@ -4,16 +4,24 @@ local json = require('luci.jsonc')
 require('nixio.util')
 
 local M = {}
-local base = assert(arg[0]:match('^(.*)/[^/]+$'))
+local mode, library_base = ...
+local base = (mode == 'library' and library_base) or assert(arg[0]:match('^(.*)/[^/]+$'))
 local proto = base .. '/project/core/prototype'
 local cache_root = '/tmp/homegate-update-check'
+local last_check_day = '/etc/homegate/update-check-day'
 local interval = 86400
-local retry_interval = 900
 local response_limit = 262144
 local notes_limit = 16384
 local cache_limit = 6 * notes_limit + 24576
 local default_source = 'https://github.com/frostcypress/HomeGate/releases'
+local archive_limit = 32 * 1024 * 1024
 M.source_path = '/etc/homegate/plugin-update-url'
+
+local function quote(value) return "'" .. value:gsub("'", "'\\''") .. "'" end
+
+function M.digest(value)
+    return type(value) == 'string' and #value == 64 and not value:find('[^0-9a-f]')
+end
 
 local function private_dir(path)
     local info = fs.lstat(path)
@@ -62,11 +70,17 @@ local function is_newer(remote, installed)
     return false
 end
 
-function M.next_release(current, target)
+function M.upgrade_path(current, target, minimum)
+    if minimum == nil then minimum = current end
     local a, normalized = release_version(current)
     local b, next_version = release_version(target)
-    if not a or not b or normalized ~= current or next_version ~= target then return false end
-    return a[1] == b[1] and a[2] == b[2] and a[3] == b[3] and b[4] == a[4] + 1
+    local floor, floor_version = release_version(minimum)
+    if not a or not b or not floor or normalized ~= current or next_version ~= target or
+       floor_version ~= minimum or floor[4] < 1 then return false end
+    for i = 1, 3 do
+        if a[i] ~= b[i] or floor[i] ~= b[i] then return false end
+    end
+    return floor[4] <= a[4] and a[4] < b[4]
 end
 
 local function release_assets(release, revision)
@@ -159,52 +173,73 @@ local function cached(path, source, now)
     if not private_file(path, cache_limit) then return end
     local raw = fs.readfile(path, cache_limit + 1)
     local entry = raw and json.parse(raw)
-    if type(entry) ~= 'table' or entry.format ~= 2 or entry.source ~= source or type(entry.checked_at) ~= 'number' or
-        entry.checked_at > now or now - entry.checked_at >=
-        (entry.state == 'error' and retry_interval or interval) then return end
-    if entry.state == 'release' and not release_version(entry.version) then return end
+    if type(entry) ~= 'table' or entry.format ~= 4 or entry.source ~= source or type(entry.checked_at) ~= 'number' or
+        entry.checked_at > now then return end
+    if entry.state == 'release' and (now - entry.checked_at >= interval or not release_version(entry.version)) then return end
     if entry.state == 'release' or entry.state == 'unpublished' or entry.state == 'error' then return entry end
 end
 
-local function store(path, entry)
+local function replace_private(path, raw)
     local next_path = path .. '.next'
-    if not write_private(next_path, json.stringify(entry)) then return false end
+    fs.unlink(next_path)
+    if not write_private(next_path, raw) then return false end
     if fs.rename(next_path, path) then return true end
     fs.unlink(next_path)
     return false
 end
 
-local function get_entry(source, parse)
-    local now = os.time()
-    if not fs.lstat(cache_root) then fs.mkdir(cache_root, '700') end
-    if not private_dir(cache_root) then
-        return {state='error', reason='cache'}
+local function claim_day(day)
+    if not private_dir('/etc/homegate') then return false end
+    if fs.lstat(last_check_day) then
+        if not private_file(last_check_day, 9) then return false end
+        local raw = fs.readfile(last_check_day, 9)
+        local previous = raw and raw:match('^(%d%d%d%d%d%d%d%d)\n$')
+        if not previous or previous >= day then return false end
     end
-    local path = cache_root .. '/result.json'
-    local entry = cached(path, source, now)
-    if entry then return entry end
+    return replace_private(last_check_day, day .. '\n')
+end
+
+local function current_source()
+    local source = M.read_source()
+    if source == '' then source = default_source end
+    if M.valid_source(source) then return source end
+end
+
+function M.check(day)
+    local source = current_source()
+    if not source then return false, 'source' end
+    if not fs.lstat(cache_root) then fs.mkdir(cache_root, '700') end
+    if not private_dir(cache_root) then return false, 'cache' end
     local lock_path = cache_root .. '/check.lock'
     if not fs.lstat(lock_path) then
         local created = nx.open(lock_path, nx.open_flags('wronly', 'creat', 'excl'), '600')
         if created then created:close() end
     end
-    if not private_file(lock_path, 0) then return {state='error', reason='cache'} end
+    if not private_file(lock_path, 0) then return false, 'cache' end
     local lock = nx.open(lock_path, nx.open_flags('rdwr'))
-    if not lock then return {state='error', reason='cache'} end
-    if not lock:lock('tlock') then
-        lock:close()
-        return {state='checking'}
+    if not lock then return false, 'cache' end
+    if not lock:lock('tlock') then lock:close(); return false, 'busy' end
+    -- Only the automatic check records its attempt for the day.
+    if day and not claim_day(day) then lock:close(); return false end
+    local parse = assert(loadfile(base .. '/strict-web-json.lua'))()
+    local entry = collect(source, parse)
+    entry.format, entry.source = 4, source
+    local current = M.installed()
+    if entry.state == 'release' and entry.assets and current and is_newer(release_version(entry.version), current) then
+        entry.manifest, entry.install_blocked = M.signed_release(entry, cache_root, parse)
     end
-    entry = cached(path, source, now)
-    if not entry then
-        entry = collect(source, parse)
-        entry.format, entry.source, entry.checked_at = 2, source, os.time()
-        -- A killed check can leave an uncommitted sibling. The lease owns it.
-        fs.unlink(path .. '.next')
-        if not store(path, entry) then entry = {state='error', reason='cache'} end
-    end
+    entry.checked_at = os.time()
+    local saved = replace_private(cache_root .. '/result.json', json.stringify(entry))
     lock:close()
-    return entry
+    return saved, not saved and 'cache' or nil
+end
+
+local function check_at_two()
+    local tz = fs.readfile('/etc/TZ', 256)
+    nx.setenv('TZ', tz and tz:match('^([^%c]+)%s*$') or nil)
+    local now = os.time()
+    local clock = os.date('*t', now)
+    if clock.hour == 2 and clock.min == 0 then M.check(os.date('%Y%m%d', now)) end
 end
 
 function M.installed()
@@ -225,10 +260,11 @@ end
 function M.status()
     local current, current_version = M.installed()
     if not current then return {ok=true,state='error',reason='installed'} end
-    local source = M.read_source()
-    if source == '' then source = default_source end
-    if not M.valid_source(source) then return {ok=true,state='error',reason='source'} end
-    local entry = get_entry(source, assert(loadfile(base .. '/strict-web-json.lua'))())
+    local source = current_source()
+    if not source then return {ok=true,state='error',reason='source'} end
+    if fs.lstat(cache_root) and not private_dir(cache_root) then return {ok=true,state='error',reason='cache'} end
+    local entry = cached(cache_root .. '/result.json', source, os.time())
+    if not entry then return {ok=true,state='scheduled',current=current_version} end
     local output = {ok=true,state=entry.state,current=current_version,checked_at=entry.checked_at,
                     reason=entry.reason,http_status=entry.http_status}
     if entry.state == 'release' then
@@ -236,9 +272,13 @@ function M.status()
         output.state = is_newer(release_version(entry.version), current) and 'available' or 'latest'
         if output.state == 'available' then
             output.notes, output.truncated = entry.notes, entry.truncated
-            if not M.next_release(current_version, entry.version) then output.install_blocked='version'
-            elseif not M.trust_key() then output.install_blocked='trust'
+            if not M.trust_key() then output.install_blocked='trust'
             elseif not entry.assets then output.install_blocked='assets'
+            elseif type(entry.manifest) ~= 'table' or not M.upgrade_path(entry.manifest.minimum, entry.version) then
+                output.install_blocked=entry.install_blocked or 'manifest'
+            elseif not M.upgrade_path(current_version, entry.version, entry.manifest.minimum) then
+                output.install_blocked='version'
+                output.minimum_version=entry.manifest.minimum
             else output.offer = entry.offer end
         end
     end
@@ -259,10 +299,84 @@ function M.asset_url(entry, name)
     if origin and value:match('^(https?://[^/?]+)') == origin then return value, false end
 end
 
-if ... == 'library' then return M end
+function M.capture(command, limit)
+    local pipe = io.popen(command .. " 2>/dev/null; printf '\\nHGEXIT:%s\\n' \"$?\"", 'r')
+    if not pipe then return end
+    local raw = pipe:read(limit + 32)
+    pipe:close()
+    local text, code
+    if raw then text, code = raw:match('^(.*)\nHGEXIT:(%d+)\n$') end
+    if code == '0' and #text <= limit then return text end
+end
+
+function M.download(entry, name, path, limit, timeout)
+    local url, github = M.asset_url(entry, name)
+    if not url then return false end
+    local network = github and "--location --max-redirs 3 --proto '=https' --proto-redir '=https'" or
+        "--proto '=http,https'"
+    local request = path .. '.request'
+    fs.unlink(request)
+    local config = 'url = "' .. url:gsub('"', '\\"') .. '"\n'
+    if not write_private(request, config) then return false end
+    local cmd = "/usr/bin/curl --disable --silent --noproxy '*' --globoff " .. network ..
+        " --connect-timeout 5 --max-time " .. (timeout or 90) .. " --max-filesize " .. limit ..
+        " --output " .. quote(path) .. " --write-out '%{http_code}' --config - < " .. quote(request)
+    local status = M.capture("(umask 077 && ulimit -f " .. math.ceil(limit / 512) .. " && " .. cmd .. ")", 3)
+    fs.unlink(request)
+    local info = private_file(path, limit)
+    return status == '200' and info and info.size > 0 and info
+end
+
+function M.signed_release(entry, dir, parse)
+    local key = M.trust_key()
+    if not key then return nil, 'trust' end
+    local manifest, signature = dir .. '/manifest.json', dir .. '/manifest.sig'
+    fs.unlink(manifest)
+    fs.unlink(signature)
+    local signed, reason
+    if not M.download(entry, 'manifest.json', manifest, 16384, 8) or
+       not M.download(entry, 'manifest.sig', signature, 1024, 8) then
+        reason = 'download'
+    else
+        signed, reason = M.verify_manifest(dir, parse, entry.version)
+    end
+    fs.unlink(manifest)
+    fs.unlink(signature)
+    return signed, reason
+end
+
+function M.verify_manifest(dir, parse, expected)
+    local key = M.trust_key()
+    if not key then return nil, 'trust' end
+    local manifest, signature = dir .. '/manifest.json', dir .. '/manifest.sig'
+    if not private_file(manifest, 16384) or not private_file(signature, 1024) then return nil, 'archive' end
+    if os.execute('openssl dgst -sha256 -verify ' .. quote(key) .. ' -signature ' .. quote(signature) .. ' ' ..
+                  quote(manifest) .. ' >/dev/null 2>&1') ~= 0 then return nil, 'signature' end
+    local raw = fs.readfile(manifest, 16385)
+    local signed = raw and parse(raw)
+    local target, version
+    if type(signed) == 'table' then target, version = release_version(signed.version) end
+    if not target or version ~= signed.version or expected and version ~= expected then return nil, 'manifest' end
+    local previous = string.format('%d.%d.%d-r%d', target[1], target[2], target[3], target[4] - 1)
+    local artifact = 'homegate-r' .. target[4] .. '-offline-three.tar'
+    if signed.from_version ~= previous or signed.artifact ~= artifact or not M.digest(signed.sha256) or type(signed.size) ~= 'number' or
+       signed.size < 1 or signed.size > archive_limit or signed.size ~= math.floor(signed.size) or
+       type(signed.architecture) ~= 'string' or #signed.architecture > 64 or signed.architecture == 'all' or
+       not signed.architecture:match('^[a-z0-9_%-]+$') then return nil, 'manifest' end
+    local minimum = signed.minimum_version
+    if minimum == nil then minimum = previous end
+    if not M.upgrade_path(minimum, version) then return nil, 'manifest' end
+    return {minimum=minimum, declared_minimum=signed.minimum_version, architecture=signed.architecture,
+            artifact=artifact, sha256=signed.sha256, size=signed.size, version=version}
+end
+
+if mode == 'library' then return M end
 if arg[1] ~= 'schedule' or arg[2] or nx.getuid() ~= 0 then os.exit(2) end
-nx.nanosleep(15)
 while true do
-    M.status()
-    nx.nanosleep(retry_interval)
+    check_at_two()
+    local pending = fs.lstat('/tmp/homegate-offline-update/release.tar') or fs.lstat('/tmp/homegate-offline-update/upload.tar')
+    if pending and os.time() - pending.mtime > 900 then
+        assert(loadfile(base .. '/native-online-update.lua'))('library', base).expire_staging()
+    end
+    nx.nanosleep(15)
 end

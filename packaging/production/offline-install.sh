@@ -5,7 +5,9 @@ export LC_ALL=C
 unset IPKG_INSTROOT OFFLINE_ROOT IPKG_NO_SCRIPT
 
 version=@VERSION@
-previous_release=@PREVIOUS_RELEASE@
+minimum_release=@MINIMUM_RELEASE@
+target_release=@RELEASE@
+series=${version%-r*}
 architecture=@ARCHITECTURE@
 nginx_version=@NGINX_VERSION@
 wol_version=@WOL_VERSION@
@@ -13,7 +15,7 @@ core=homegate-core
 web=luci-app-homegate
 language=luci-i18n-homegate-zh-cn
 store=/etc/homegate/transactions
-checkpoint=/etc/.homegate-r@PREVIOUS_RELEASE@-before-r@RELEASE@
+checkpoint=
 upgrade_from=
 upgrade_stage=precheck
 
@@ -87,6 +89,31 @@ export OPKG_CONF_DIR="$work/empty-conf"
 pkg() { opkg -f "$work/opkg.conf" -l "$work/empty-lists" -t "$work" "$@"; }
 read_packages() { pkg list-installed > "$work/installed" || fail package_query; }
 installed() { awk -v package="$1" '$1==package && $2=="-" {print $3}' "$work/installed"; }
+
+supported_source() {
+    local source_release
+    case "$1" in
+        1.3.0-r240|1.3.0-r265) return 0;;
+        "$series"-r*) source_release=${1##*-r};;
+        *) return 1;;
+    esac
+    case "$source_release" in ''|0*|*[!0-9]*) return 1;; esac
+    [ "${#source_release}" -le 9 ] && [ "$source_release" -ge "$minimum_release" ] &&
+        [ "$source_release" -lt "$target_release" ]
+}
+
+find_checkpoint() {
+    local path source_release
+    for path in /etc/.homegate-r*-before-r"$target_release"; do
+        [ -e "$path" ] || [ -L "$path" ] || continue
+        source_release=${path##*/.homegate-r}
+        source_release=${source_release%-before-r"$target_release"}
+        supported_source "$series-r$source_release" || continue
+        [ -z "$checkpoint" ] || fail ambiguous_checkpoint
+        checkpoint=$path
+    done
+    [ -n "$checkpoint" ] || fail checkpoint_missing
+}
 observe_procd() {
     sample=$(lua /usr/libexec/homegate/project/core/prototype/homegate-service-observer.lua 3>&1 >/dev/null) ||
         return 1
@@ -144,6 +171,16 @@ observe_with_retry() {
     done
     printf '%s\n' 'runtime_state_check=procd_and_native_unconfirmed' >&2
     return 1
+}
+
+wait_for_service_stop() {
+    /usr/bin/homegate service-stop --confirm >/dev/null || fail service_stop_request
+    remaining=60
+    until /usr/bin/homegate service-quiescent >/dev/null; do
+        [ "$remaining" -gt 0 ] || fail service_stop_timeout
+        sleep 1
+        remaining=$((remaining - 1))
+    done
 }
 
 config_state() {
@@ -224,7 +261,7 @@ finish_migration() {
     if [ -z "$upgrade_from" ]; then
         # The checkpoint identifies the previous release when resuming after installation.
         from_release=${checkpoint##*/.homegate-r}
-        upgrade_from="1.3.0-r${from_release%%-before-r*}"
+        upgrade_from="$series-r${from_release%%-before-r*}"
     fi
     revision=$(config_state) || fail configuration_recovery_required
     retire_legacy
@@ -265,11 +302,8 @@ if [ "$mode" = fresh ]; then
         [ ! -e "$path" ] && [ ! -L "$path" ] || fail "existing_homegate_state:$path"
     done
 else
-    case "$current" in
-        1.3.0-r240|1.3.0-r265|1.3.0-r"$previous_release"|"$version") ;;
-        *) fail unsupported_migration_version;;
-    esac
     if [ "$current" != "$version" ]; then
+        supported_source "$current" || fail unsupported_migration_version
         if check_dns_migration /etc/config/homegate && check_dns_migration "${store%/*}/package-config"; then
             :
         else
@@ -291,13 +325,8 @@ else
         *) fail unknown_legacy_component_versions;;
     esac
     if [ "$current" = "$version" ]; then
-        if [ ! -e "$checkpoint" ] && [ ! -L "$checkpoint" ]; then
-            for legacy_release in 265 240; do
-                checkpoint=/etc/.homegate-r$legacy_release-before-r@RELEASE@
-                if [ -e "$checkpoint" ] || [ -L "$checkpoint" ]; then break; fi
-            done
-        fi
         upgrade_stage=verify
+        find_checkpoint
         finish_migration
         exit 0
     fi
@@ -310,7 +339,7 @@ else
     else
         [ -z "$nginx$wol" ] || fail unexpected_legacy_components
     fi
-    checkpoint=/etc/.homegate-r${current##*-r}-before-r@RELEASE@
+    checkpoint=/etc/.homegate-r${current##*-r}-before-r$target_release
 fi
 
 set -- "$bundle/${core}_${version}_${architecture}.ipk" \
@@ -335,6 +364,8 @@ if [ "$mode" = migrate ]; then
     else
         upgrade_stage=stop
         before=$(observe_with_retry) || fail unknown_runtime_state
+        # Keep the running baseline, then let the coordinator finish before init unregisters it.
+        if [ "${before#*:}" = 1 ]; then wait_for_service_stop; fi
         /etc/init.d/homegate stop || fail service_stop
         /usr/bin/homegate service-quiescent >/dev/null || fail service_not_quiescent
         # An active worker can prevent this read. Check the persisted state

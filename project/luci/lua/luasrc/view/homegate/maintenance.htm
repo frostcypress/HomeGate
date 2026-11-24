@@ -10,6 +10,8 @@
 <form method="post" action="<%=url('admin/services/homegate/maintenance_apply')%>" id="homegate-maintenance-form">
 <input type="hidden" name="mode" value="apply" />
 <input type="hidden" name="token" value="<%=pcdata(token)%>" />
+<input type="hidden" name="plugin_update_url" value="<%=pcdata(plugin_update_url or '')%>" />
+<input type="hidden" name="plugin_update_url_base" value="<%=pcdata(plugin_update_url or '')%>" />
 <div class="cbi-section hg-section hg-form-fields">
   <h3><%:Runtime Logs%></h3>
   <div class="hg-form-row"><label class="hg-form-label"><%:Log Level%></label><div class="hg-form-field"><select class="hg-control" name="log_level"><option value="info" <%= (main.log_level ~= 'warn' and main.log_level ~= 'error') and 'selected="selected"' or ''%>><%:Info%></option><option value="warn" <%=main.log_level == 'warn' and 'selected="selected"' or ''%>><%:Warning%></option><option value="error" <%=main.log_level == 'error' and 'selected="selected"' or ''%>><%:Error%></option></select></div></div>
@@ -45,7 +47,7 @@
 <div class="cbi-section hg-section hg-form-fields">
   <h3><%:About the plugin%></h3>
   <div class="hg-button-row">
-    <button class="cbi-button hg-btn-4" type="button" onclick="hgMaintenanceOpenUpdateUrl()"><%:Update URL%></button>
+    <button class="cbi-button hg-btn-4" type="button" id="hg-plugin-update-open" onclick="hgMaintenanceOpenUpdateUrl()"><%:Update URL%></button>
     <button class="cbi-button hg-btn-4" type="button" onclick="hgSetModalOpen('hg-plugin-license-modal',true)"><%:Plugin license%></button>
   </div>
 </div>
@@ -54,14 +56,13 @@
   <div class="hg-modal" role="dialog" aria-modal="true" aria-labelledby="hg-plugin-update-title">
     <div class="hg-modal-head"><h3 id="hg-plugin-update-title"><%:Update URL%></h3></div>
     <div id="hg-plugin-update-result" class="hg-notice" role="status" hidden="hidden"></div>
-    <form method="post" id="hg-plugin-update-form" action="<%=url('admin/services/homegate/update_url_save')%>" onsubmit="return hgMaintenanceSaveUpdateUrl(this)">
-      <input type="hidden" name="token" value="<%=pcdata(token)%>" />
+    <form id="hg-plugin-update-form" onsubmit="return hgMaintenanceConfirmUpdateUrl()">
       <div class="hg-modal-control-stack">
-        <input class="hg-control" type="url" id="hg-plugin-update-url" name="plugin_update_url" aria-label="<%:Plugin update URL%>" maxlength="2048" value="<%=pcdata(plugin_update_url or '')%>" />
+        <input class="hg-control" type="url" id="hg-plugin-update-url" aria-label="<%:Plugin update URL%>" maxlength="2048" />
       </div>
       <div class="hg-modal-actions hg-modal-actions-compact">
         <button class="cbi-button hg-btn-4" type="button" onclick="hgSetModalOpen('hg-plugin-update-modal',false)"><%:Cancel%></button>
-        <button class="cbi-button cbi-button-save hg-btn-4" type="submit"><%:Save%></button>
+        <button class="cbi-button cbi-button-save hg-btn-4" type="submit"><%:Confirm%></button>
       </div>
     </form>
   </div>
@@ -91,6 +92,7 @@
 <span id="hg-maintenance-preview-only" hidden="hidden"><%:Import check complete.%></span>
 <span id="hg-maintenance-preview-disabled" hidden="hidden"><%:Services and access control are disabled in the restore candidate.%></span>
 <span id="hg-maintenance-preview-omitted" hidden="hidden"><%:Credentials, source URLs, upstream URLs and certificate files must be restored separately.%></span>
+<span id="hg-maintenance-update-pending" hidden="hidden"><%:Log settings saved. The update URL is waiting to be applied.%></span>
 
 <script type="text/javascript">
 var hgMaintenanceDirtyTracker=null;
@@ -99,35 +101,51 @@ var hgMaintenanceImportPayload='',hgMaintenanceImportConfirmation='',hgMaintenan
 function hgMaintenanceMessage(text,state){return hgShowNotice(document.getElementById('hg-maintenance-result'),text,state);}
 function hgMaintenanceOpenUpdateUrl(){
   var input=document.getElementById('hg-plugin-update-url');
-  if(!input.disabled){
-    input.value=input.defaultValue;
-    hgShowNotice(document.getElementById('hg-plugin-update-result'),'');
-  }
+  input.value=document.getElementById('homegate-maintenance-form').elements.plugin_update_url.value;
+  hgShowNotice(document.getElementById('hg-plugin-update-result'),'');
   hgSetModalOpen('hg-plugin-update-modal',true);
-  if(!input.disabled)input.focus();
+  input.focus();
 }
-function hgMaintenanceSaveUpdateUrl(form){
-  var input=form.elements.plugin_update_url,button=form.querySelector('button[type="submit"]');
-  if(input.disabled)return false;
-  var notice=document.getElementById('hg-plugin-update-result'),value=input.value.trim();
-  input.disabled=button.disabled=true;
-  hgShowNotice(notice,'');
-  hgWebAction(form.action,{token:form.elements.token.value,plugin_update_url:value},function(result){
-    input.disabled=button.disabled=false;
-    if(!result.ok||typeof result.plugin_update_url!=='string'){
-      hgShowNotice(notice,result.error||'<%:Unable to save the plugin update URL%>','error');
-      return;
-    }
-    input.defaultValue=input.value=result.plugin_update_url;
-    hgSetModalOpen('hg-plugin-update-modal',false);
-    hgMaintenanceMessage('<%:Update URL saved%>');
-  });
+function hgMaintenanceConfirmUpdateUrl(){
+  var opener=document.getElementById('hg-plugin-update-open'),input=document.getElementById('hg-plugin-update-url');
+  if(opener.disabled)return false;
+  var value=input.value.trim();
+  if(value && (/[#\\]/.test(value) || !/^https?:\/\/[^/?@\s]+(?:[/?]|$)/.test(value))){
+    hgShowNotice(document.getElementById('hg-plugin-update-result'),'<%:Enter a valid HTTP or HTTPS update URL.%>','error');
+    input.focus();
+    return false;
+  }
+  document.getElementById('homegate-maintenance-form').elements.plugin_update_url.value=value;
+  hgMaintenanceDirtyTracker.recompute();
+  hgSetModalOpen('hg-plugin-update-modal',false);
+  opener.focus();
   return false;
+}
+function hgMaintenanceCaptureSaved(result){
+  var form=document.getElementById('homegate-maintenance-form');
+  ['log_level','log_max_lines'].forEach(hgMaintenanceDirtyTracker.captureField);
+  if(result && typeof result.plugin_update_url==='string'){
+    form.elements.plugin_update_url.value=result.plugin_update_url;
+    form.elements.plugin_update_url_base.value=result.plugin_update_url;
+    ['plugin_update_url','plugin_update_url_base'].forEach(hgMaintenanceDirtyTracker.captureField);
+  }
+}
+function hgMaintenanceUpdateUrlPending(){
+  var fields=document.getElementById('homegate-maintenance-form').elements;
+  return fields.plugin_update_url.value!==fields.plugin_update_url_base.value;
 }
 function hgMaintenanceSubmit(form,clear){
   if(form.getAttribute('data-busy')==='1')return false;
   var reset=/\/config_reset$/.test(form.action);
-  if(reset&&!confirm('<%:Restore HomeGate defaults? Managed cloud AAAA records, local settings, certificates and keys, access rules, access history and region data will be removed.%>'))return false;
+  if(reset){
+    hgActionDialog('<%:Restore Default Configuration%>',
+      '<%:Restore HomeGate defaults? Managed cloud AAAA records, local settings, certificates and keys, access rules, access history and region data will be removed.%>',
+      function(){hgMaintenanceSend(form,clear,reset);});
+  }else hgMaintenanceSend(form,clear,reset);
+  return false;
+}
+function hgMaintenanceSend(form,clear,reset){
+  if(!form.isConnected||form.getAttribute('data-busy')==='1')return;
   form.setAttribute('data-busy','1');var button=form.querySelector('button');if(button)button.disabled=true;
   hgMaintenanceMessage('<%:Processing...%>','pending');
   hgWebAction(form.action,{token:form.elements.token.value},function(result){
@@ -145,19 +163,26 @@ function hgMaintenanceSubmit(form,clear){
     document.body.appendChild(a);
     try {a.click();} finally {a.remove();setTimeout(function(){URL.revokeObjectURL(href);},60000);}
     hgMaintenanceMessage('<%:Download started%>');
-  });return false;
+  });
 }
 function hgMaintenanceRestore(){
   if(hgMaintenanceImportBusy||!hgMaintenanceImportPayload||!hgMaintenanceImportConfirmation)return;
-  if(!confirm('<%:Replace the current HomeGate configuration with this file? Services will remain disabled.%>'))return;
+  var sequence=hgMaintenancePreviewSequence,confirmation=hgMaintenanceImportConfirmation;
+  hgActionDialog('<%:Import Configuration%>',
+    '<%:Replace the current HomeGate configuration with this file? Services will remain disabled.%>',function(){
+      if(hgMaintenanceImportBusy||sequence!==hgMaintenancePreviewSequence||confirmation!==hgMaintenanceImportConfirmation)return;
+      hgMaintenanceApplyRestore(sequence,confirmation);
+    });
+}
+function hgMaintenanceApplyRestore(sequence,confirmation){
   var form=document.getElementById('hg-config-import-form'),button=document.getElementById('hg-config-restore-confirm');
-  hgMaintenanceImportBusy=true;button.disabled=true;var sequence=hgMaintenancePreviewSequence;
+  hgMaintenanceImportBusy=true;button.disabled=true;
   hgMaintenanceMessage('<%:Processing...%>','pending');
   hgMaintenanceRequestPreview(form,hgMaintenanceImportPayload,function(result){
     hgMaintenanceImportBusy=false;button.disabled=false;if(sequence!==hgMaintenancePreviewSequence)return;
     if(result&&result.ok&&result.restored){hgMaintenanceClosePreview();hgMaintenanceMessage('<%:Configuration restored. Complete the missing information before enabling services.%>');return;}
     hgMaintenanceImportConfirmation='';button.hidden=true;hgMaintenancePreviewNotice=hgMaintenanceMessage((result&&result.error)||'<%:Unable to restore configuration%>','error');
-  },'restore',hgMaintenanceImportConfirmation);
+  },'restore',confirmation);
 }
 function hgMaintenancePreviewText(id){return document.getElementById(id).textContent;}
 function hgMaintenanceClosePreview(){

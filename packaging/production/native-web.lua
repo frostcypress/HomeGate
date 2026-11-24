@@ -15,7 +15,7 @@ if fixture then
  work='/offline-memory'
 else request=lib.request(arg[2],write);work=arg[2]:match('^(.*)/[^/]+$')end
 local result={api_version=1,ok=false,headers={}};local bytes=0;local private={};local documents={};local files={};local revision
-local needs_config_write=write and not ({config_export=true,diagnostic_download=true,log_clear=true,update_url_save=true,update_confirm=true})[request.route]
+local needs_config_write=write and not ({config_export=true,diagnostic_download=true,log_clear=true,update_check=true,update_confirm=true})[request.route]
 if request.route=='config_import' and request.form.mode~='restore'then needs_config_write=false end
 if request.route=='wol_action' and request.form.op=='wake' then needs_config_write=false end
 local effect_started=false
@@ -70,24 +70,29 @@ local function decoded(args,input)
  local raw,code=core(args,input);return json.parse(raw),code
 end
 local update=not fixture and assert(loadfile(base..'/native-update.lua'))('library')
-local function save_update_url(value)
- if type(value)~='string' or #value>2048 then return '请输入有效的 HTTP 或 HTTPS 更新地址。' end
- if value~='' and not update.valid_source(value) then return '请输入有效的 HTTP 或 HTTPS 更新地址。' end
+local function check_update_url(value,expected)
+ if value~='' and not update.valid_source(value) then return nil,'请输入有效的 HTTP 或 HTTPS 更新地址。' end
  local current=update.read_source()
- if current==nil or not lib.dir('/etc/homegate') then return '无法保存插件更新地址。' end
+ if current==nil or not lib.dir('/etc/homegate') then return nil,'无法保存插件更新地址。' end
+ if current~=value and current~=expected then return nil,'更新地址已被修改，请刷新页面后重试。' end
+ return current
+end
+local function save_update_url(value,expected)
+ local current,err=check_update_url(value,expected)
+ if not current then return err end
  if value~=current then
   local update_url_path=update.source_path
   local job=work:match('/([0-9a-f]+)$')
   if not lib.id(job) then return '无法保存插件更新地址。' end
   local staged=update_url_path..'.'..job
-  lib.write(staged,value..'\n')
+  if not pcall(lib.write,staged,value..'\n') then fs.unlink(staged);return '无法保存插件更新地址。' end
   local _,code=call({'fsync',staged},nil,64)
   if code~=0 or not fs.rename(staged,update_url_path) then
    fs.unlink(staged)
    return '无法保存插件更新地址。'
   end
   local _,synced=call({'fsync','/etc/homegate'},nil,64)
-  if synced~=0 then return '更新地址保存结果待确认，请刷新页面核对。' end
+  if synced~=0 then result.uncertain=true;return '更新地址保存结果待确认，请刷新页面核对。' end
  end
  result.plugin_update_url=value
 end
@@ -208,6 +213,8 @@ local function text(doc)
  return table.concat(rows,'\n')..'\n'
 end
 local changed=false
+local update_url,update_url_base
+local maintenance_settings_changed=false
 local cursor={}
 function cursor:get_all(pkg,name)
  local s=find(pkg,name);if not s then return nil end
@@ -426,6 +433,7 @@ local function preserve_public_order(document, previous)
 end
 function cursor:commit(pkg)
  if not write or pkg~='homegate'then return false end
+ if request.route=='maintenance_apply' then maintenance_settings_changed=changed end
  if not changed then
   if not save_pending_eab() then return false end
   result.configuration_saved=true;return true
@@ -780,6 +788,11 @@ local function shell(command)
   if argv[2]=='reload'then
    local main=find('homegate','main')
    if not main then return '',1 end
+   -- The updater reads its source file directly. Still apply any pending
+   -- maintenance settings or a service state left pending by an earlier Save.
+   if update_url and not maintenance_settings_changed and service_owner()==(main.values.enabled=='1') then
+    return '',0
+   end
    if access_rule_routes[request.route] then
     if not fs.lstat('/var/run/homegate/proxy') then return '',0 end
     local owner=service_owner()
@@ -1035,9 +1048,10 @@ local ok,err=pcall(function()
  if request.route=='certificate_apply' and request.form.certificate_ca=='zerossl' and not zerossl_eab_key_id() then
   result.error='请选择 ZeroSSL 并填写 EAB 绑定 ID 和 HMAC 密钥。';return
  end
- if request.route=='update_url_save' and not fixture then
-  result.error=save_update_url(request.form.plugin_update_url)
-  result.ok=result.error==nil
+ if request.route=='update_check' and not fixture then
+  local checked,reason=update.check()
+  result.ok=true
+  result.update_check=checked and update.status() or {ok=true,state='error',reason=reason}
   return
  end
  if request.route=='update_confirm' then
@@ -1314,11 +1328,25 @@ local ok,err=pcall(function()
    return
   end
  end
+ if not fixture and request.route=='maintenance_apply' and request.form.mode=='apply' then
+  update_url,update_url_base=request.form.plugin_update_url,request.form.plugin_update_url_base
+  if update_url and update_url~=update_url_base then
+   local _,reason=check_update_url(update_url,update_url_base)
+   if reason then result.error=reason;return end
+  else update_url=nil end
+ end
  local fn=assert(loadfile(base..'/legacy-controller.lua'));setfenv(fn,env);fn()
  local handler=env[lib.routes[request.route].handler];if type(handler)~='function'then error('route handler')end;handler()
  if access_rule_routes[request.route] and access_overlay and not result.error and not result.configuration_saved then
   local _,rc=shell('/etc/init.d/homegate reload')
   if rc~=0 then result.error=stage_messages[result.failure_stage] end
+ end
+ if not result.error and update_url then
+  result.error=save_update_url(update_url,update_url_base)
+  if result.error then
+   result.redirect=nil
+   if result.runtime_start then result.runtime_start.restore=true end
+  end
  end
  result.ok=result.error==nil
  local apply_page=({public_apply='public',wol_apply='wol',basic_apply='all'})[request.route]

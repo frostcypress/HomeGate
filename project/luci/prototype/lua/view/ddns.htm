@@ -1,4 +1,6 @@
 <%+header%>
+<% hg_dialog_only = true %>
+<%+homegate/common%>
 <div id="homegate-ddns-native" data-token="<%=pcdata(token)%>" data-endpoint="<%=url('admin/services/homegate/ddns_native')%>"></div>
 <script src="<%=resource%>/homegate/ddns-ui.js"></script>
 <script>

@@ -13,7 +13,7 @@
     <div class="hg-status-row"><div class="hg-status-label">HomeGate</div><div class="hg-status-value" id="hg_service"><%:Loading...%></div></div>
     <div class="hg-status-row"><div class="hg-status-label"><%:Version Information%></div><div class="hg-status-value"><span id="hg-installed-version"><%=pcdata(packages.product or '-')%></span>
       <% if update_check_enabled then %>
-      <button class="hg-update-indicator" id="hg-update-indicator" type="button" aria-haspopup="dialog" aria-label="<%:Checking for updates…%>" title="<%:Checking for updates…%>"></button>
+      <button class="hg-update-indicator" id="hg-update-indicator" type="button" data-state="unknown" aria-haspopup="dialog"><%:No update info%></button>
       <% end %>
     </div></div>
     <div class="hg-status-row"><div class="hg-status-label"><%:System Architecture%></div><div class="hg-status-value"><%=pcdata(packages.arch or '-')%></div></div>
@@ -64,12 +64,14 @@
 </script>
 <% if update_check_enabled then %>
 <style>
-.hg-update-indicator { display:inline-grid; place-items:center; width:24px; height:24px; padding:0; border:0; background:transparent; color:#777; vertical-align:middle; cursor:pointer; }
-.hg-update-indicator::before { content:""; width:8px; height:8px; border-radius:50%; background:currentColor; }
-.hg-update-indicator[data-state="latest"] { color:#238348; }
-.hg-update-indicator[data-state="available"] { color:#b27a05; }
-.hg-update-indicator[data-state="error"] { color:#c73636; }
+.hg-update-indicator { display:inline-block; margin-inline-start:.35em; padding:0 4px; border:1px solid currentColor; border-radius:1em; background:#eee; color:#555; font:inherit; font-size:11px; line-height:16px; vertical-align:middle; white-space:nowrap; cursor:pointer; }
+.hg-update-indicator[data-state="latest"] { background:#e5f5eb; color:#176238; }
+.hg-update-indicator[data-state="available"] { background:#fff3d6; color:#805400; }
+.hg-update-indicator[data-state="error"] { background:#fbe7e7; color:#9b2929; }
 .hg-update-notes { white-space:pre-wrap; overflow-wrap:anywhere; max-height:40vh; overflow:auto; }
+#hg-update-details .hg-modal-actions { justify-content:space-between; flex-wrap:wrap; }
+#hg-update-details .hg-update-buttons { display:flex; gap:var(--hg-modal-actions-gap); }
+#hg-update-details .hg-update-primary { margin-inline-start:auto; }
 #hg-update-details [hidden] { display:none !important; }
 </style>
 <div class="hg-modal-backdrop" id="hg-update-details" aria-hidden="true" onclick="hgModalBackdrop(event)">
@@ -78,27 +80,49 @@
     <p id="hg-update-status" role="status"><%:Checking for updates…%></p>
     <div id="hg-update-release" hidden="hidden">
       <p><strong><%:Available version%></strong> <span id="hg-update-version"></span></p>
-      <strong><%:Release notes%></strong>
-      <div class="hg-update-notes" id="hg-update-notes"></div>
-      <p id="hg-update-truncated" hidden="hidden"><%:Release notes have been shortened.%></p>
+      <div id="hg-update-notes-block" hidden="hidden">
+        <strong><%:Release notes%></strong>
+        <div class="hg-update-notes" id="hg-update-notes"></div>
+        <p id="hg-update-truncated" hidden="hidden"><%:Release notes have been shortened.%></p>
+      </div>
     </div>
+    <p id="hg-update-offline-status" role="status" hidden="hidden"></p>
     <p id="hg-update-install-status" role="status" hidden="hidden"></p>
+    <input id="hg-update-offline-file" type="file" accept=".tar" hidden="hidden" />
     <div class="hg-modal-actions hg-modal-actions-compact">
-      <button class="cbi-button hg-btn-4" id="hg-update-close" type="button"><%:Close%></button>
-      <button class="cbi-button cbi-button-apply" id="hg-update-confirm" type="button" hidden="hidden"><%:Confirm update%></button>
+      <div class="hg-update-buttons">
+        <button class="cbi-button hg-btn-4" id="hg-update-check-now" type="button"><%:Check for updates%></button>
+        <button class="cbi-button hg-btn-4" id="hg-update-offline" type="button"><%:Offline installation%></button>
+      </div>
+      <div class="hg-update-buttons hg-update-primary">
+        <button class="cbi-button cbi-button-apply hg-btn-4" id="hg-update-confirm" type="button" hidden="hidden"><%:Update%></button>
+        <button class="cbi-button hg-btn-4" id="hg-update-close" type="button"><%:Close%></button>
+      </div>
     </div>
   </div>
 </div>
+<span id="hg-update-badge-unknown" hidden="hidden"><%:No update info%></span>
+<span id="hg-update-badge-latest" hidden="hidden"><%:Up to date%></span>
+<span id="hg-update-badge-available" hidden="hidden"><%:New version%></span>
+<span id="hg-update-badge-error" hidden="hidden"><%:Update error%></span>
+<span id="hg-update-online-label" hidden="hidden"><%:Update%></span>
+<span id="hg-update-offline-label" hidden="hidden"><%:Install%></span>
+<span id="hg-update-offline-uploading" hidden="hidden"><%:Uploading and verifying the signed offline package…%></span>
+<span id="hg-update-offline-ready" hidden="hidden"><%:Offline package verified. Install %s?%></span>
+<span id="hg-update-offline-format" hidden="hidden"><%:Choose a signed HomeGate offline package (.tar).%></span>
 <span id="hg-update-checking" hidden="hidden"><%:Checking for updates…%></span>
-<span id="hg-update-latest" hidden="hidden"><%:HomeGate is up to date.%></span>
+<span id="hg-update-scheduled" hidden="hidden"><%:No update check result yet.%></span>
+<span id="hg-update-latest" hidden="hidden"><%:Already up to date.%></span>
 <span id="hg-update-available" hidden="hidden"><%:A new HomeGate version is available.%></span>
 <span id="hg-update-unpublished" hidden="hidden"><%:No stable release is available from this update source.%></span>
 <span id="hg-update-error" hidden="hidden"><%:Unable to check for updates.%></span>
-<span id="hg-update-timeout" hidden="hidden"><%:The update source did not respond in time.%></span>
+<span id="hg-update-timeout" hidden="hidden"><%:The update source timed out. Please try again later.%></span>
+<span id="hg-update-transport" hidden="hidden"><%:Unable to connect to the update source. Please try again later.%></span>
+<span id="hg-update-busy" hidden="hidden"><%:An update check is already in progress. Try again shortly.%></span>
 <span id="hg-update-metadata" hidden="hidden"><%:The update source returned invalid release information.%></span>
 <span id="hg-update-source" hidden="hidden"><%:The saved update URL is invalid.%></span>
-<span id="hg-update-empty-notes" hidden="hidden"><%:No release notes were provided.%></span>
-<span id="hg-update-install-version" hidden="hidden"><%:Install the preceding version before updating to this release.%></span>
+<span id="hg-update-install-version" hidden="hidden"><%:This release does not support the currently installed version.%></span>
+<span id="hg-update-install-minimum" hidden="hidden"><%:Update to %s first, then install this release.%></span>
 <span id="hg-update-install-trust" hidden="hidden"><%:The release signing key is unavailable.%></span>
 <span id="hg-update-install-assets" hidden="hidden"><%:The release is missing the signed update files.%></span>
 <span id="hg-update-install-queued" hidden="hidden"><%:Preparing to update HomeGate…%></span>
@@ -115,43 +139,67 @@
 <span id="hg-update-install-architecture" hidden="hidden"><%:The update package does not match this router architecture.%></span>
 <span id="hg-update-install-manifest" hidden="hidden"><%:The signed release information does not match the requested update.%></span>
 <span id="hg-update-install-archive" hidden="hidden"><%:The update archive is incomplete or invalid.%></span>
+<span id="hg-update-install-cache" hidden="hidden"><%:Unable to save temporary update data. Check the router's available space.%></span>
+<span id="hg-update-install-upload" hidden="hidden"><%:The offline package upload did not complete. Please try again.%></span>
 <script type="text/javascript">
 (function(){
   var indicator = document.getElementById('hg-update-indicator');
   var close = document.getElementById('hg-update-close');
   var modal = document.getElementById('hg-update-details');
+  var checkButton = document.getElementById('hg-update-check-now');
+  var offlineButton = document.getElementById('hg-update-offline');
+  var offlineFile = document.getElementById('hg-update-offline-file');
+  var offlineStatus = document.getElementById('hg-update-offline-status');
+  var checkStatus = document.getElementById('hg-update-status');
   var installButton = document.getElementById('hg-update-confirm');
   var installStatus = document.getElementById('hg-update-install-status');
-  var offer = null, operation = null, submitting = false, pollTimer = 0;
+  var token = document.getElementById('homegate-basic-form').elements.token.value;
+  var offer = null, offlineOffer = null, operation = null, submitting = false, pollTimer = 0;
+  var checking = false, uploading = false, offline = false, checkSequence = 0;
   var checkState = 'checking', checkLabel = hgLabel('hg-update-checking');
   function active(state) { return ['queued','downloading','installing'].indexOf(state) >= 0; }
   function installMessage(key) { return hgLabel('hg-update-install-' + key); }
   function displayInstall() {
     var state = operation && operation.state;
     var appliedOffer = state === 'success' && offer && operation.target === offer.latest;
-    var canInstall = offer && offer.offer && !appliedOffer && state !== 'recovery';
+    var selected = offline ? offlineOffer : offer;
+    var canInstall = selected && selected.offer && (offline || !appliedOffer) && state !== 'recovery';
     var message = state === 'idle' ? '' : installMessage(state);
     if (state === 'failed' && operation.reason) message += ' ' + installMessage(operation.reason);
     if (state === 'success') message += ' ' + operation.target;
-    if (!message && offer && offer.install_blocked) message = installMessage(offer.install_blocked);
+    if (!message && !offline && offer && offer.install_blocked) {
+      message = offer.install_blocked === 'version' && offer.minimum_version ?
+        installMessage('minimum').replace('%s', offer.minimum_version) : installMessage(offer.install_blocked);
+    }
     installStatus.textContent = message;
-    installStatus.hidden = !message;
+    installStatus.hidden = !message || offline && !active(state);
     installButton.hidden = !canInstall;
-    installButton.disabled = !canInstall || submitting || active(state) || operation === null;
-    hgText('hg-update-status', appliedOffer ? hgLabel('hg-update-latest') : checkLabel);
-    document.getElementById('hg-update-release').hidden = checkState !== 'available' || appliedOffer;
-    var badgeState = checkState, badgeLabel = checkLabel;
+    var busy = submitting || active(state);
+    installButton.disabled = !canInstall || busy || operation === null || checking || uploading;
+    installButton.textContent = hgLabel(offline ? 'hg-update-offline-label' : 'hg-update-online-label');
+    offlineButton.disabled = busy || uploading || checking;
+    checkButton.disabled = busy || uploading || checking;
+    offlineStatus.hidden = !offline;
+    var showRelease = !offline && !checking && checkState === 'available' && !appliedOffer && !active(state);
+    checkStatus.hidden = offline || showRelease || active(state) || appliedOffer && !checking;
+    checkStatus.textContent = checking ? hgLabel('hg-update-checking') : checkLabel;
+    document.getElementById('hg-update-release').hidden = !showRelease;
+    var badgeState = ['latest','available','error'].indexOf(checkState) >= 0 ? checkState : 'unknown';
+    var badgeLabel = checkLabel;
     if (state === 'recovery' || state === 'failed' && (!offer || operation.target === offer.latest)) {
       badgeState = 'error';
       badgeLabel = message;
     } else if (appliedOffer) {
       badgeState = 'latest';
       badgeLabel = message;
-      hgText('hg-installed-version', operation.target);
+    } else if (offer && ['signature','manifest','download','trust','assets'].indexOf(offer.install_blocked) >= 0) {
+      badgeState = 'error';
+      badgeLabel = message;
     }
+    if (state === 'success') hgText('hg-installed-version', operation.target);
     indicator.dataset.state = badgeState;
+    indicator.textContent = hgLabel('hg-update-badge-' + badgeState);
     indicator.title = badgeLabel;
-    indicator.setAttribute('aria-label', badgeLabel);
   }
   function pollInstall(retries) {
     window.clearTimeout(pollTimer);
@@ -170,20 +218,24 @@
   }
   indicator.addEventListener('click', function() {
     hgSetModalOpen(modal.id, true);
+    readCheck(8);
     if (!submitting) pollInstall(20);
     close.focus();
   });
   installButton.addEventListener('click', function() {
-    if (!offer || !offer.offer || installButton.disabled || submitting) return;
+    var selected = offline ? offlineOffer : offer;
+    if (!selected || !selected.offer || installButton.disabled || submitting) return;
     submitting = true;
-    installButton.disabled = true;
+    displayInstall();
     installStatus.textContent = installMessage('queued');
     installStatus.hidden = false;
-    var token = document.getElementById('homegate-basic-form').elements.token.value;
-    hgWebAction('<%=url('admin/services/homegate/update_confirm')%>',
-      {token:token,update_target:offer.latest,update_offer:offer.offer}, function(result) {
+    var form = {token:token,update_target:selected.latest,update_offer:selected.offer};
+    if (offline) form.update_mode = 'offline';
+    hgWebAction('<%=url('admin/services/homegate/update_confirm')%>', form, function(result) {
         submitting = false;
         if (result.ok && result.update_queued) {
+          offline = false;
+          offlineOffer = null;
           operation = {state:'queued'};
           displayInstall();
           pollInstall(20);
@@ -196,6 +248,62 @@
         if (!result.update_reason) pollInstall(20);
       });
   });
+  checkButton.addEventListener('click', function() {
+    if (checkButton.disabled) return;
+    offline = false;
+    offlineOffer = null;
+    checking = true;
+    ++checkSequence;
+    displayInstall();
+    hgWebAction('<%=url('admin/services/homegate/update_check')%>', {token:token}, function(result) {
+      checking = false;
+      show(result.ok && result.update_check);
+    });
+  });
+  offlineButton.addEventListener('click', function() {
+    if (!offlineButton.disabled) {
+      offlineFile.value = '';
+      offlineFile.click();
+    }
+  });
+  offlineFile.addEventListener('change', function() {
+    var file = offlineFile.files[0];
+    if (!file || offlineButton.disabled) return;
+    offline = true;
+    offlineOffer = null;
+    if (file.size < 512 || file.size > 33619968 || !/\.tar$/i.test(file.name)) {
+      offlineStatus.textContent = hgLabel('hg-update-offline-format');
+      displayInstall();
+      return;
+    }
+    uploading = true;
+    offlineStatus.textContent = hgLabel('hg-update-offline-uploading');
+    displayInstall();
+    var request = new XMLHttpRequest();
+    request.open('POST','<%=url('admin/services/homegate/update_upload')%>',true);
+    request.timeout = 180000;
+    var form = new FormData();
+    form.append('token',token);
+    form.append('archive_size',file.size);
+    form.append('archive',file);
+    function finish(result) {
+      uploading = false;
+      if (result && result.ok && /^[a-f0-9]{32}$/.test(result.offer || '')) {
+        offlineOffer = result;
+        offlineStatus.textContent = hgLabel('hg-update-offline-ready').replace('%s',result.latest);
+      } else {
+        offlineStatus.textContent = (result && installMessage(result.update_reason)) || hgLabel('hg-update-offline-format');
+      }
+      displayInstall();
+    }
+    request.onload = function() {
+      var response;
+      try { response = JSON.parse(request.responseText); } catch (e) { response = null; }
+      finish(response);
+    };
+    request.onerror = request.ontimeout = function(){finish({update_reason:'upload'});};
+    request.send(form);
+  });
   function dismiss() {
     hgSetModalOpen(modal.id, false);
     indicator.focus();
@@ -206,10 +314,10 @@
   });
   function show(data) {
     var state = data && data.ok && data.state;
-    if (['checking', 'latest', 'available', 'unpublished'].indexOf(state) < 0) state = 'error';
+    if (['checking', 'scheduled', 'latest', 'available', 'unpublished'].indexOf(state) < 0) state = 'error';
     var label = hgLabel('hg-update-' + state);
     if (state === 'error' && data) {
-      if (['timeout', 'metadata', 'source'].indexOf(data.reason) >= 0)
+      if (['timeout', 'transport', 'metadata', 'source', 'busy'].indexOf(data.reason) >= 0)
         label = hgLabel('hg-update-' + data.reason);
       if (data.reason === 'http' && /^[1-5][0-9]{2}$/.test(String(data.http_status)))
         label += ' (HTTP ' + data.http_status + ')';
@@ -218,23 +326,27 @@
     checkLabel = label;
     offer = state === 'available' ? data : null;
     if (state === 'available') {
-      hgText('hg-update-version', data.latest);
-      hgText('hg-update-notes', data.notes || hgLabel('hg-update-empty-notes'));
+      hgText('hg-update-version', data.current ? data.current + ' → ' + data.latest : data.latest);
+      var notes = typeof data.notes === 'string' ? data.notes : '';
+      hgText('hg-update-notes', notes);
+      document.getElementById('hg-update-notes-block').hidden = !notes.trim();
       document.getElementById('hg-update-truncated').hidden = !data.truncated;
     }
     displayInstall();
   }
-  function check(remaining) {
+  function readCheck(remaining) {
+    if (checking) return;
+    var sequence = ++checkSequence;
     hgGet('<%=url('admin/services/homegate/api/overview_update')%>', function(data) {
-      if (!indicator.isConnected) return;
+      if (!indicator.isConnected || sequence !== checkSequence) return;
       if (data && data.state === 'checking' && remaining > 0) {
-        window.setTimeout(function() { check(remaining - 1); }, 1500);
+        window.setTimeout(function() { if (sequence === checkSequence) readCheck(remaining - 1); }, 1500);
         return;
       }
       show(data && data.state === 'checking' ? null : data);
     });
   }
-  check(8);
+  readCheck(8);
   pollInstall(20);
 })();
 </script>

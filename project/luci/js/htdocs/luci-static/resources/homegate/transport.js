@@ -91,6 +91,7 @@ function install(root) {
   if (pending.has(form)) return;
   pending.add(form);
   const originallyDisabled = submitter && submitter.disabled;
+  const controls = [];
   try {
    // Build values before disabling the successful submit control.
    const values = {};
@@ -98,9 +99,24 @@ function install(root) {
    if(submitter && submitter.name)values[submitter.name]=submitter.value;
    const destination=routeURL(form.action);
    if(submitter)submitter.disabled=true;
-   finish(await action(destination.route,Object.assign({},destination.form,values)));
+   const updateDraft=destination.route==='maintenance_apply' && values.plugin_update_url!==values.plugin_update_url_base;
+   if(updateDraft){
+    controls.push(...[form.elements.log_level,form.elements.log_max_lines,document.getElementById('hg-plugin-update-open')]
+     .filter(control=>control && !control.disabled));
+    controls.forEach(control=>{control.disabled=true;});
+   }
+   const result=await action(destination.route,Object.assign({},destination.form,values));
+   if(updateDraft){
+    controls.forEach(control=>{control.disabled=false;});
+    if(result.ok || result.configuration_saved) window.hgMaintenanceCaptureSaved(result);
+    const saved=values.mode==='apply' ? _('Saved and applied') : window.hgLabel('hg-maintenance-update-pending');
+    const message=result.ok ? saved : result.error || _('Action failed');
+    window.hgMaintenanceMessage(message,result.ok ? undefined : 'error');
+    return;
+   }
+   finish(result);
   } catch(e) {ui.addNotification(null,E('p',{},e.message),'error');}
-  finally {pending.delete(form);if(submitter)submitter.disabled=originallyDisabled;}
+  finally {controls.forEach(control=>{control.disabled=false;});pending.delete(form);if(submitter)submitter.disabled=originallyDisabled;}
  }
  // Modal portals and hgSubmitPost append forms directly to document.body.
  // Intercept only validated HomeGate actions; other LuCI forms keep their API.

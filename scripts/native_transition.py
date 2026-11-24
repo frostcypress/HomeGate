@@ -192,9 +192,13 @@ def build_offline_bundle(root, packages, destination, architecture, components, 
     wol=(root/'packaging/components/homegate-wol/Makefile').read_text(encoding='utf-8')
     wol_version=re.search(r'^PKG_VERSION:=([0-9.]+)$',wol,re.M).group(1)
     wol_release=re.search(r'^PKG_RELEASE:=([0-9]+)$',wol,re.M).group(1)
+    series, release=version.rsplit('-r',1)
+    minimum=json.loads((root/'project.json').read_text(encoding='utf-8')).get('minimum_upgrade_release',int(release)-1)
+    if type(minimum) is not int or not 1 <= minimum < int(release) <= 999999999:
+        raise ValueError('Invalid minimum upgrade release')
     fields={'@VERSION@':version, '@ARCHITECTURE@':architecture, '@NGINX_VERSION@':nginx['version'],
             '@WOL_VERSION@':f'{wol_version}-r{wol_release}',
-            '@PREVIOUS_RELEASE@':str(int(version.rsplit('-r',1)[1])-1), '@RELEASE@':version.rsplit('-r',1)[1]}
+            '@MINIMUM_RELEASE@':str(minimum), '@RELEASE@':release}
     if any(not re.fullmatch(r'[a-zA-Z0-9._-]+',value) for value in fields.values()):
         raise ValueError('Unsafe offline installer metadata')
     installer=(root/'packaging/production/offline-install.sh').read_text(encoding='utf-8')
@@ -215,7 +219,7 @@ def build_offline_bundle(root, packages, destination, architecture, components, 
             raise ValueError('Verified package changed before delivery: '+path.name)
         shutil.copyfile(path,destination/path.name)
         package_hashes[path.name]=digest
-    receipt.update(format='homegate-offline-three-v1', sha256=package_hashes)
+    receipt.update(format='homegate-offline-three-v1', minimum_version=f'{series}-r{minimum}', sha256=package_hashes)
     (destination/'install.sh').write_text(installer,encoding='utf-8',newline='\n')
     (destination/'install.sh').chmod(0o755)
     shutil.copyfile(root/'packaging/production/native-log.sh', destination/'upgrade-log.sh')

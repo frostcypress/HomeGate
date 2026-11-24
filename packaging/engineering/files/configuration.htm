@@ -1,4 +1,6 @@
 <%+header%>
+<% hg_dialog_only = true %>
+<%+homegate_engineering/common%>
 <div class="cbi-map" id="homegate-engineering-config" data-token="<%=pcdata(token)%>" data-endpoint="<%=url('admin/services/homegate_engineering/configuration_api')%>">
   <h2><%:Configuration and Credentials%></h2>
   <p>账户、规则与凭据在独立工程环境中保存。保存配置不会授予 DDNS 写入权限；请在“DDNS 授权”页面明确授权并提交任务。</p>

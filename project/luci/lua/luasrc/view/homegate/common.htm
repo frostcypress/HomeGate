@@ -16,6 +16,7 @@
   --hg-mobile-label-min: 112px;
   --hg-mobile-label-share: 36%;
   --hg-mobile-gap: 10px;
+  --hg-scrollbar-gap: 12px;
   --hg-mobile-pair-columns: minmax(var(--hg-mobile-label-min), var(--hg-mobile-label-share)) minmax(0, 1fr);
   --hg-form-columns: var(--hg-label-width) var(--hg-field-width);
   --hg-form-column-gap: var(--hg-field-gap);
@@ -34,7 +35,7 @@
   --hg-status-label-wrap: nowrap;
   --hg-modal-width: 500px;
   --hg-modal-wide-width: 760px;
-  --hg-modal-access-width: 980px;
+  --hg-modal-access-width: 1040px;
   --hg-modal-max-width: 100%;
   --hg-modal-padding: 1.15em 1.25em;
   --hg-modal-radius: 0px;
@@ -211,6 +212,9 @@ textarea.hg-control { box-sizing: border-box; width: var(--hg-control-width); mi
 .hg-section-head h3 { margin: 0; }
 .hg-modal-backdrop { display: none; position: fixed; z-index: 10000; left: 0; top: 0; right: 0; bottom: 0; padding: 1em; background: rgba(0,0,0,.35); box-sizing: border-box; }
 .hg-modal-backdrop.hg-open { display: flex; align-items: center; justify-content: center; }
+#hg-action-dialog { z-index: 10001; }
+#hg-action-dialog [hidden] { display: none !important; }
+#hg-action-message { overflow-wrap: anywhere; }
 /* Modal component geometry is token-driven. Known-theme adapters override values, not component structure. */
 .hg-modal { box-sizing: border-box; width: var(--hg-modal-width); max-width: var(--hg-modal-max-width); min-width: 0; padding: var(--hg-modal-padding); background: var(--hg-surface); border: var(--hg-modal-border); border-radius: var(--hg-modal-radius); box-shadow: var(--hg-modal-shadow); }
 .hg-modal-wide { width: var(--hg-modal-wide-width); }
@@ -224,7 +228,7 @@ textarea.hg-control { box-sizing: border-box; width: var(--hg-control-width); mi
 }
 .hg-public-service-scroll {
   flex: 1 1 auto; min-height: 0; min-width: 0;
-  box-sizing: border-box; padding-right: 12px;
+  box-sizing: border-box;
   overflow-y: auto; overflow-x: hidden; overscroll-behavior: contain;
   -webkit-overflow-scrolling: touch; scrollbar-gutter: stable;
 }
@@ -283,6 +287,9 @@ textarea.hg-control { box-sizing: border-box; width: var(--hg-control-width); mi
   background-color: Highlight; color: HighlightText; outline: none;
 }
 .hg-host-options button:hover span, .hg-host-options button:focus-visible span { color: inherit; }
+.hg-log, .hg-public-service-scroll, .hg-host-options, .hg-update-notes {
+  padding-inline-end: var(--hg-scrollbar-gap);
+}
 .hg-modal-grid [hidden] { display: none; }
 #hg-public-management-url { margin-inline-start: .45em; overflow-wrap: anywhere; }
 .hg-web-enabled-check { float: none !important; margin: 0 !important; vertical-align: middle; }
@@ -376,9 +383,11 @@ html:lang(zh) .hg-log-actions .hg-btn-4, html:lang(zh) .hg-button-row .hg-btn-4 
   white-space: normal !important; overflow: visible !important; text-overflow: clip !important;
   overflow-wrap: anywhere; word-break: break-word; line-height: 1.35;
 }
-.hg-public-address > span { display: block; }
+.hg-public-address > div { min-width: 0; }
+.hg-public-address .hg-public-url { display: block; }
 .hg-public-address .hg-public-url { font-size: 1.06em; }
 .hg-public-address .hg-public-hint { font-size: 1em; line-height: 1.25; color: var(--hg-field-hint); }
+.hg-public-hint > span + span::before { content: ' · '; white-space: pre; }
 .hg-public-table td.hg-public-target { font-size: 1.12em; }
 .hg-public-table td > .hg-web-enabled-check { margin-block: 0; vertical-align: middle; }
 .hg-public-table td[colspan] { grid-column: 1 / -1; }
@@ -418,8 +427,14 @@ html:lang(zh) .hg-log-actions .hg-btn-4, html:lang(zh) .hg-button-row .hg-btn-4 
 .hg-access-rule-input .hg-control { width: 100%; max-width: 100%; min-width: 0; box-sizing: border-box; }
 .hg-access-table-wrap { overflow-x: hidden; box-sizing: border-box; }
 .hg-access-table-scroll { max-height: 306px; overflow-x: hidden; overflow-y: auto; }
+.hg-access-modal > .hg-access-table-scroll { padding-inline-end: var(--hg-scrollbar-gap) !important; }
 .hg-access-table-scroll .hg-access-table thead th { position: sticky; top: 0; z-index: 1; background: var(--hg-surface); }
-.hg-access-table { width: 100%; max-width: 100%; min-width: 0; margin: 0 !important; table-layout: fixed; }
+.hg-access-table {
+  --hg-access-domain-width: 128px;
+  --hg-access-state-width: 120px;
+  --hg-access-time-width: 150px;
+  width: 100%; max-width: 100%; min-width: 0; margin: 0 !important; table-layout: fixed;
+}
 .hg-access-table th, .hg-access-table td { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-weight: 400 !important; }
 .hg-access-table th:first-child, .hg-access-table td:first-child { padding-left: 0 !important; }
 .hg-modal .hg-access-table th.hg-access-action-head, .hg-modal .hg-access-table td.hg-access-action { padding-left: 0 !important; padding-right: 0 !important; }
@@ -432,7 +447,10 @@ html:lang(zh) .hg-log-actions .hg-btn-4, html:lang(zh) .hg-button-row .hg-btn-4 
   text-decoration: underline; cursor: pointer;
 }
 .hg-access-table .hg-access-action { overflow: visible; text-overflow: clip; white-space: nowrap; text-align: left !important; }
-.hg-access-action-group { width: 100%; max-width: 100%; }
+.hg-access-action-group { width: 100%; max-width: 100%; flex-wrap: wrap; }
+.hg-access-domain-col { width: var(--hg-access-domain-width); }
+.hg-access-state-col { width: var(--hg-access-state-width); }
+.hg-access-time-col { width: var(--hg-access-time-width); }
 .hg-access-actions-col { width: var(--hg-access-actions-width); }
 .hg-access-footer { justify-content: space-between; }
 .hg-wol-table { table-layout: fixed; min-width: var(--hg-service-list-min-width); }
@@ -468,7 +486,7 @@ html.hg-theme-design .hg-wrap, html.hg-theme-design .hg-modal {
   --hg-status-label-wrap: normal;
   --hg-modal-width: 560px;
   --hg-modal-wide-width: min(980px, calc(100vw - 48px));
-  --hg-modal-access-width: min(980px, calc(100vw - 48px));
+  --hg-modal-access-width: min(1040px, calc(100vw - 48px));
   --hg-modal-max-width: calc(100vw - 48px);
   --hg-modal-padding: 18px 20px 16px;
   --hg-modal-radius: 10px;
@@ -533,7 +551,12 @@ html.hg-theme-design .hg-maintenance-log-card .hg-log-actions { margin-top: var(
 
 /* Design page actions stay on a white footer surface instead of floating on the grey canvas. */
 
-/* Design modal adapter is data-only: the token block above carries the frozen 560px/10px/spacing visual values. */
+html.hg-theme-design .hg-modal .hg-modal-head h3 {
+  margin-inline: 0 !important;
+  padding-inline: 0 !important;
+  text-indent: 0 !important;
+  text-align: start;
+}
 
 /* Generic host-theme interference protection: constrain HomeGate geometry only. */
 .hg-section-head .cbi-button, .hg-log-actions .cbi-button, .hg-button-row .cbi-button { flex: 0 0 auto; margin-left: 0 !important; margin-right: 0 !important; }
@@ -541,6 +564,14 @@ html.hg-theme-design .hg-maintenance-log-card .hg-log-actions { margin-top: var(
 /* Known-theme adapter: BOOT desktop. The 16px edge inset is a frozen regression contract,
  * not a generic-theme assumption. */
 @media (min-width: 701px) {
+  .hg-table-scroll-wrap { padding-block-end: var(--hg-scrollbar-gap); }
+  .hg-access-table-scroll { overflow-x: auto; padding-block-end: var(--hg-scrollbar-gap); }
+  /* Reserve space for a location label and an IPv6 address or prefix. On a
+   * narrow desktop, the table can scroll without fragmenting the source IP. */
+  .hg-access-table {
+    min-width: calc(31em + var(--hg-access-domain-width) + var(--hg-access-state-width) + var(--hg-access-time-width) + var(--hg-access-actions-width));
+  }
+  .hg-access-table .hg-access-source, .hg-access-ip-edit { white-space: nowrap; }
   html.hg-theme-boot .hg-wrap .hg-section-head { padding-right: 16px; }
   html.hg-theme-boot .hg-wrap .hg-table-scroll-wrap { padding-right: 16px; }
 
@@ -630,6 +661,11 @@ html.hg-theme-design .hg-maintenance-log-card .hg-log-actions { margin-top: var(
   .hg-public-table td:before, .hg-wol-table td:before, .hg-access-table td:before {
     content: attr(data-label); min-width: 0; font-weight: 400 !important; white-space: normal; overflow-wrap: anywhere;
   }
+  .hg-wrap :is(.hg-public-table, .hg-wol-table) td,
+  .hg-wrap :is(.hg-public-table, .hg-wol-table) td::before,
+  .hg-public-address .hg-public-url { font-size: inherit; }
+  .hg-public-hint > span { display: block; }
+  .hg-public-hint > span + span::before { content: none; }
   .hg-public-table td[colspan], .hg-wol-table td[colspan], .hg-access-table td[colspan] { display: block; }
   .hg-public-table td[colspan]:before, .hg-wol-table td[colspan]:before, .hg-access-table td[colspan]:before { content: none; }
   .hg-public-list-wrap { overflow-x: hidden !important; }
@@ -667,9 +703,10 @@ html.hg-theme-design .hg-maintenance-log-card .hg-log-actions { margin-top: var(
   .hg-modal-backdrop { left: var(--hg-modal-vv-left, 0px); top: var(--hg-modal-vv-top, 0px); right: auto; bottom: auto; width: var(--hg-modal-vv-width, 100vw); height: var(--hg-modal-vh, 100vh); padding: 8px; overflow: hidden; }
   html.hg-theme-foundation .hg-modal {
     width: 100%; max-width: 100%; max-height: calc(var(--hg-modal-vh, 100vh) - 16px);
-    padding: 1em; border-radius: var(--hg-modal-mobile-radius);
+    padding: 1em var(--hg-scrollbar-gap); border-radius: var(--hg-modal-mobile-radius);
     overflow-y: auto; overflow-x: hidden; overscroll-behavior: contain; -webkit-overflow-scrolling: touch;
   }
+  .hg-access-modal > .hg-access-table-scroll { padding-inline-end: 0 !important; }
   html.hg-theme-foundation .hg-modal.hg-public-service-modal {
     display: flex; flex-direction: column; overflow: hidden;
   }
@@ -713,6 +750,7 @@ html.hg-theme-design .hg-maintenance-log-card .hg-log-actions { margin-top: var(
     width: 100%; max-width: 100%; min-width: 0;
   }
   .hg-table-scroll-wrap, .hg-access-table-wrap { width: 100%; max-width: 100%; min-width: 0; overflow-x: hidden !important; }
+  .hg-table-scroll-wrap { padding-block-end: 0; }
   .hg-table-stable, .hg-public-table, .hg-wol-table, .hg-access-table { width: 100%; min-width: 0 !important; max-width: 100%; }
   .hg-public-table, .hg-wol-table, .hg-access-table { display: block; table-layout: auto; }
   .hg-public-table thead, .hg-wol-table thead, .hg-access-table thead { display: none; }
@@ -724,6 +762,11 @@ html.hg-theme-design .hg-maintenance-log-card .hg-log-actions { margin-top: var(
     text-overflow: clip !important; overflow-wrap: anywhere; word-break: break-word; border: 0 !important; box-sizing: border-box;
   }
   .hg-public-table td:before, .hg-wol-table td:before, .hg-access-table td:before { content: attr(data-label); white-space: normal; font-weight: 400 !important; }
+  .hg-wrap :is(.hg-public-table, .hg-wol-table) td,
+  .hg-wrap :is(.hg-public-table, .hg-wol-table) td::before,
+  .hg-public-address .hg-public-url { font-size: inherit; }
+  .hg-public-hint > span { display: block; }
+  .hg-public-hint > span + span::before { content: none; }
   .hg-public-table td[colspan], .hg-wol-table td[colspan], .hg-access-table td[colspan] { display: block; }
   .hg-public-table td[colspan]:before, .hg-wol-table td[colspan]:before, .hg-access-table td[colspan]:before { content: none; }
   .hg-public-table td.hg-actions, .hg-wol-table td.hg-actions, .hg-access-table td.hg-access-action { display: flex !important; flex-wrap: wrap; gap: var(--hg-detail-action-gap); }
@@ -741,10 +784,25 @@ html.hg-theme-design .hg-maintenance-log-card .hg-log-actions { margin-top: var(
   .hg-modal { max-height: calc(var(--hg-modal-vh, 100vh) - 12px); padding: .8em; }
 }
 </style>
+<% if not hg_dialog_only then %>
 <div class="hg-plugin-header" id="hg-plugin-header">
   <h2><%:HomeGate%></h2>
   <p class="hg-plugin-subtitle"><%:Home public access, dynamic DNS, HTTPS reverse proxy and Wake-on-LAN service.%></p>
 </div>
+<% end %>
+<div class="hg-modal-backdrop" id="hg-action-dialog" aria-hidden="true">
+  <div class="hg-modal" role="dialog" aria-modal="true" aria-labelledby="hg-action-title" aria-describedby="hg-action-message">
+    <div class="hg-modal-head"><h3 id="hg-action-title"></h3></div>
+    <p id="hg-action-message"></p>
+    <div class="hg-modal-actions hg-modal-actions-compact">
+      <button class="cbi-button hg-btn-4" type="button" id="hg-action-cancel"><%:Cancel%></button>
+      <button class="cbi-button cbi-button-apply hg-btn-4" type="button" id="hg-action-confirm"><%:Confirm%></button>
+    </div>
+  </div>
+</div>
+<span id="hg-action-notice-label" hidden="hidden"><%:Notice%></span>
+<span id="hg-action-cancel-label" hidden="hidden"><%:Cancel%></span>
+<span id="hg-action-close-label" hidden="hidden"><%:Close%></span>
 <script type="text/javascript">
 function hgText(id, value) {
   var e = document.getElementById(id);
@@ -836,6 +894,41 @@ function hgModalBackdrop(event) {
   var e = event || window.event;
   var modal = e && (e.currentTarget || e.target);
   if (e && modal && e.target === modal && modal.id) hgSetModalOpen(modal.id, false);
+}
+function hgActionDialog(title, message, onConfirm) {
+  var modal = document.getElementById('hg-action-dialog');
+  if (!modal || modal.classList.contains('hg-open')) return;
+  var opener = document.activeElement;
+  var cancel = document.getElementById('hg-action-cancel');
+  var confirmButton = document.getElementById('hg-action-confirm');
+  var needsConfirmation = typeof onConfirm === 'function';
+  hgText('hg-action-title', title);
+  hgText('hg-action-message', message);
+  cancel.textContent = hgLabel(needsConfirmation ? 'hg-action-cancel-label' : 'hg-action-close-label');
+  confirmButton.hidden = !needsConfirmation;
+  function dismiss() {
+    cancel.onclick = confirmButton.onclick = modal.onclick = modal.onkeydown = null;
+    hgSetModalOpen(modal.id, false);
+    if (opener && opener.isConnected) opener.focus();
+  }
+  cancel.onclick = dismiss;
+  confirmButton.onclick = needsConfirmation ? function() { dismiss(); onConfirm(); } : null;
+  modal.onclick = function(event) { if (event.target === modal) dismiss(); };
+  modal.onkeydown = function(event) {
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      event.stopPropagation();
+      dismiss();
+    } else if (event.key === 'Tab') {
+      event.preventDefault();
+      (needsConfirmation && document.activeElement === cancel ? confirmButton : cancel).focus();
+    }
+  };
+  hgSetModalOpen(modal.id, true);
+  cancel.focus();
+}
+function hgActionNotice(message) {
+  hgActionDialog(hgLabel('hg-action-notice-label'), message);
 }
 function hgScheduleNoticeDismiss(node) {
   window.clearTimeout(node._hgNoticeTimer);

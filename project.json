@@ -1,6 +1,7 @@
 {
   "schema": 1,
   "display_name": "HomeGate",
+  "minimum_upgrade_release": 281,
   "stage": "migration-draft",
   "core": {
     "implementation": "shell",

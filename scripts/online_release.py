@@ -75,11 +75,22 @@ def describe_bundle(archive, raw):
                 raise ValueError('Bundle checksum mismatch: ' + name)
         if source['sha256'] != {name:hashes[name] for name in packages}:
             raise ValueError('Package hashes differ from the build receipt')
-    return source, {
-        'from_version': version.rsplit('-r', 1)[0] + '-r' + str(previous),
+        series = version.rsplit('-r', 1)[0]
+        minimum = source.get('minimum_version')
+        if 'minimum_version' in source:
+            allowed = re.fullmatch(re.escape(series) + r'-r([1-9][0-9]{0,8})', minimum) if isinstance(minimum, str) else None
+            script = payload.extractfile(members['install.sh']).read()
+            declared = re.findall(rb'(?m)^minimum_release=([^\r\n]*)$', script)
+            if not allowed or int(allowed[1]) > previous or declared != [allowed[1].encode()]:
+                raise ValueError('Offline installer and receipt have different upgrade ranges')
+    manifest = {
+        'from_version': f'{series}-r{previous}',
         'version': version, 'architecture': arch, 'artifact': archive.name,
         'sha256': sha256(raw), 'size': len(raw),
     }
+    if minimum is not None:
+        manifest['minimum_version'] = minimum
+    return source, manifest
 
 
 def sign_bundle(archive, key, destination):
@@ -101,6 +112,12 @@ def sign_bundle(archive, key, destination):
     (destination/'manifest.json').write_bytes(metadata)
     (destination/'manifest.sig').write_bytes(signature)
     (destination/archive.name).write_bytes(raw)
+    offline = destination / archive.name.replace('-offline-three.tar', '-luci-offline.tar')
+    with tarfile.open(offline, 'w', format=tarfile.USTAR_FORMAT) as bundle:
+        for name, body in (('manifest.json', metadata), ('manifest.sig', signature), (archive.name, raw)):
+            member = tarfile.TarInfo(name)
+            member.size = len(body)
+            bundle.addfile(member, io.BytesIO(body))
     return {**manifest, 'public_key_sha256':fingerprint}
 
 

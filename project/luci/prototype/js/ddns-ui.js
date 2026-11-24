@@ -17,8 +17,11 @@ function mount(root,request){
  var body=node('tbody');table.appendChild(body);var wrap=node('div');wrap.style.overflowX='auto';wrap.appendChild(table);root.appendChild(wrap);
  var actions=node('div',undefined,'cbi-page-actions');root.appendChild(actions);
  var refresh=button('刷新状态',function(){read();}),preview=button('预览授权',function(){prepare();}),revoke=button('撤销当前授权',function(){
-  if(busy||!global.confirm('撤销当前全部 DDNS 规则授权？已开始的操作仍需等待结束。'))return;
-  invalidate();perform('revoke',{consent:'1'},function(d){if(d.report.authorized!==false||d.report.revoked!==true)throw new Error();notice.textContent='已撤销授权，请刷新状态。';});
+  if(busy)return;
+  global.hgActionDialog('撤销当前授权','撤销当前全部 DDNS 规则授权？已开始的操作仍需等待结束。',function(){
+   if(busy||!root.isConnected)return;
+   invalidate();perform('revoke',{consent:'1'},function(d){if(d.report.authorized!==false||d.report.revoked!==true)throw new Error();notice.textContent='已撤销授权，请刷新状态。';});
+  });
  });actions.appendChild(refresh);actions.appendChild(preview);actions.appendChild(revoke);
  var run=button('同步所选规则一次',submit);actions.appendChild(run);
  var jobNotice=node('p','正在读取保留任务…');jobNotice.setAttribute('role','status');root.appendChild(jobNotice);
@@ -82,10 +85,17 @@ function mount(root,request){
   }).catch(function(){jobsKnown=false;jobNotice.textContent='任务读取未确认，请刷新读取；不要重复提交。';}).finally(function(){jobBusy=false;controls();});
  }
  function submit(){
-  if(run.disabled||!global.confirm('现在仅同步所选的一条 DDNS 规则？这可能修改 DNS，成功回执仍需另行明确收尾。'))return;
-  var list=selected(),bytes=new Uint8Array(16);if(!global.crypto||!global.crypto.getRandomValues){jobNotice.textContent='安全任务标识不可用，未提交。';return;}global.crypto.getRandomValues(bytes);ticket=Array.from(bytes,function(v){return v.toString(16).padStart(2,'0');}).join('');
+  if(run.disabled)return;
+  var rule=selected()[0];
+  global.hgActionDialog('同步所选规则一次','现在仅同步所选的一条 DDNS 规则？这可能修改 DNS，成功回执仍需另行明确收尾。',function(){
+   if(!root.isConnected||run.disabled||selected()[0]!==rule)return;
+   submitRule(rule);
+  });
+ }
+ function submitRule(rule){
+  var bytes=new Uint8Array(16);if(!global.crypto||!global.crypto.getRandomValues){jobNotice.textContent='安全任务标识不可用，未提交。';return;}global.crypto.getRandomValues(bytes);ticket=Array.from(bytes,function(v){return v.toString(16).padStart(2,'0');}).join('');
   var sent=ticket;uncertain=true;jobBusy=true;invalidate();controls();
-  Promise.resolve().then(function(){return request('submit',{job:sent,rule:list[0],consent:'1'});}).then(function(d){if(!valid(d,'submit')||!jobValid(d.report)||d.report.job!==sent||d.report.rule!==list[0])throw new Error();}).catch(function(){jobNotice.textContent='提交结果未确认，只读取保留任务；请勿重发。';}).finally(function(){jobBusy=false;polls=0;loadJobs();});
+  Promise.resolve().then(function(){return request('submit',{job:sent,rule:rule,consent:'1'});}).then(function(d){if(!valid(d,'submit')||!jobValid(d.report)||d.report.job!==sent||d.report.rule!==rule)throw new Error();}).catch(function(){jobNotice.textContent='提交结果未确认，只读取保留任务；请勿重发。';}).finally(function(){jobBusy=false;polls=0;loadJobs();});
  }
  function perform(action,form,accept){
   if(busy)return;busy=true;controls();var sequence=epoch;

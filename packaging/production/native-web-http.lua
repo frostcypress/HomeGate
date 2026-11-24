@@ -31,6 +31,34 @@ function M.ack(id)
  local c=require('luci.dispatcher').context or {};if h.getenv('REQUEST_METHOD')~='POST' or not c.authtoken or c.authtoken=='' or h.formvalue('token')~=c.authtoken then reply(refused());return end
  reply(job('web-job-ack',id))
 end
+function M.upload_update()
+ local c=require('luci.dispatcher').context or {}
+ if h.getenv('REQUEST_METHOD')~='POST' or not c.authtoken or c.authtoken=='' then reply(refused());return end
+ local base='/usr/libexec/homegate'
+ local online=assert(loadfile(base..'/native-online-update.lua'))('library',base)
+ local length=tonumber(h.getenv('CONTENT_LENGTH') or '')
+ if not (h.getenv('CONTENT_TYPE') or ''):match('^multipart/form%-data%s*;') or
+    not length or length<512 or length>online.upload_limit+4096 then reply({ok=false,update_reason='archive'});return end
+ if h.formvalue('token')~=c.authtoken then reply(refused());return end
+ local size=tonumber(h.formvalue('archive_size'))
+ if not size or size<512 or size>online.upload_limit or size~=math.floor(size) then
+  reply({ok=false,update_reason='archive'});return
+ end
+ if fs.lstat('/etc/homegate/package-state') or fs.lstat('/etc/.homegate-transition/hold') then
+  reply({ok=false,update_reason='busy'});return
+ end
+ reply(online.stage(size,function(fd)
+  local received,finished,valid=0,false,true
+  h.setfilehandler(function(meta,chunk,eof)
+   if meta.name~='archive' or finished then valid=false;return end
+   if eof then finished=true;return end
+   if not valid or type(chunk)~='string' then valid=false;return end
+   received=received+#chunk
+   if received>size or fd:writeall(chunk)~=#chunk then valid=false end
+  end)
+  return valid and finished and received==size
+ end))
+end
 function M.dispatch(route,write)
  if write then local c=require('luci.dispatcher').context or {};if h.getenv('REQUEST_METHOD')~='POST' or not c.authtoken or c.authtoken=='' or h.formvalue('token')~=c.authtoken then reply(refused());return end end
  local size=tonumber(h.getenv('CONTENT_LENGTH') or '0')

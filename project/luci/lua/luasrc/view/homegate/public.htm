@@ -90,7 +90,7 @@
  data-ttl="<%=pcdata(r.ttl or '600')%>"
  data-secret-saved="<%=r.secret_saved and '1' or '0'%>">
 <td data-label="<%:Enabled%>"><input class="cbi-input-checkbox hg-web-enabled-check" type="checkbox" <%=b(r.enabled) and 'checked="checked"' or ''%> aria-label="<%:Enabled%>" /></td>
-<td class="hg-public-address" data-label="<%:External URL%>"><%=pcdata((b(r.https) and 'https://' or 'http://') .. (r.domain or '') .. (r.port_suffix or ''))%></td>
+<td class="hg-public-address" data-label="<%:External URL%>"><div><span class="hg-public-url"><%=pcdata((b(r.https) and 'https://' or 'http://') .. (r.domain or '') .. (r.port_suffix or ''))%></span></div></td>
 <td class="hg-public-target" data-label="<%:LAN URL%>"><%=pcdata((r.target and r.target ~= '') and r.target or '-')%></td>
 <td class="hg-actions hg-action-cell hg-action-group" data-label="<%:Actions%>"><button class="cbi-button hg-btn-4 hg-public-edit" type="button"><%:Edit%></button><button class="cbi-button hg-btn-4 hg-public-sync" type="button" <%=not b(r.enabled) and 'disabled="disabled"' or ''%>><%:Sync%></button><% if b(r.https) and (r.cert_source or 'acme') ~= 'local' then %><button class="cbi-button hg-btn-4 hg-public-renew" type="button"><%:Renew Certificate%></button><% end %><button class="cbi-button hg-btn-4 hg-public-delete" type="button"><%:Delete%></button></td>
 </tr>
@@ -111,7 +111,7 @@
     <div id="hg-public-access-message" class="hg-notice" role="status" hidden></div>
     <div class="hg-access-table-wrap hg-access-table-scroll">
       <table class="hg-table hg-access-table">
-        <colgroup><col/><col style="width:145px"/><col style="width:150px"/><col style="width:170px"/><col class="hg-access-actions-col"/></colgroup>
+        <colgroup><col/><col class="hg-access-domain-col"/><col class="hg-access-state-col"/><col class="hg-access-time-col"/><col class="hg-access-actions-col"/></colgroup>
         <thead><tr><th><%:Source%></th><th><%:Domain%></th><th><%:Access Status%></th><th><%:Access Time%></th><th class="hg-action-head hg-access-action-head"><%:Actions%></th></tr></thead>
         <tbody id="hg-public-access-body"><tr><td colspan="5" class="hg-table-message"><%:Loading...%></td></tr></tbody>
       </table>
@@ -236,7 +236,7 @@
 <span id="hg-public-label-cert-error" style="display:none"><%:Certificate Error%></span>
 <span id="hg-public-label-cert-rate-limited" hidden><%:Certificate request rate limited%></span>
 <span id="hg-public-label-cert-days" style="display:none"><%:Certificate %d days%></span>
-<span id="hg-public-label-renew-failed" style="display:none"><%:Renewal Failed · %d days%></span>
+<span id="hg-public-label-renew-failed" style="display:none"><%:Renewal Failed%></span>
 <span id="hg-public-label-proxy-error" style="display:none"><%:Proxy Error%></span>
 <span id="hg-public-label-proxy-stopped" style="display:none"><%:Stopped%></span>
 <span id="hg-public-label-not-enabled" style="display:none"><%:Not enabled%></span>
@@ -1012,13 +1012,15 @@ async function hgPublicAccessUpdate(button){
     hgPublicRegionBusy=button.disabled=false;
   }
 }
-function hgPublicHintText(r){
-  var parts=[],c=r.https&&r.cert_id?hgPublicCerts[r.cert_id]:null;
-  if(r.https&&r.cert_source!=='local')parts.push(hgLabel(r.cert_environment==='staging'?'hg-public-cert-staging':'hg-public-cert-production'));
+function hgPublicHintLines(r){
+  var certificate=[],status=[],c=r.https&&r.cert_id?hgPublicCerts[r.cert_id]:null;
+  var certDays=c?Number(c.days):NaN,daysFormat=hgLabel('hg-public-label-cert-days');
+  var remaining=isFinite(certDays)?daysFormat.replace('%d',String(certDays)):'';
+  if(r.https&&r.cert_source!=='local')certificate.push(hgLabel(r.cert_environment==='staging'?'hg-public-cert-staging':'hg-public-cert-production'));
   if(!hgPublicMasterEnabled){
-    if(c&&c.valid)parts.push(hgLabel('hg-public-label-cert-days').replace('%d',String(c.days)));
-    parts.push(hgLabel(r.enabled?'hg-public-label-disabled':'hg-public-label-not-enabled'));
-    return parts.join(' · ');
+    if(c&&c.valid&&remaining)certificate.push(remaining);
+    status.push(hgLabel(r.enabled?'hg-public-label-disabled':'hg-public-label-not-enabled'));
+    return [certificate,status];
   }
   // Transient automatic work (first DDNS sync, entering the renewal window,
   // staged edits) is intentionally not shown here. This column is stable by
@@ -1027,44 +1029,44 @@ function hgPublicHintText(r){
   // have not been applied yet; an already-existing certificate may still show
   // its stable remaining lifetime.
   if(r.dirty){
-    if(r.https&&c&&c.exists){var stagedFmt=hgLabel('hg-public-label-cert-days'),stagedDays=Number(c.days);if(isFinite(stagedDays))parts.push(stagedFmt.replace('%d',String(stagedDays)));}
-    if(!r.enabled)parts.push(hgLabel('hg-public-label-not-enabled'));
-    return parts.join(' · ');
+    if(c&&c.exists&&remaining)certificate.push(remaining);
+    if(!r.enabled)status.push(hgLabel('hg-public-label-not-enabled'));
+    return [certificate,status];
   }
   if(r.enabled&&r.ddns_id){
     var d=hgPublicDDNS[r.ddns_id];
     if(d){
       var ds=String(d.status||'').toLowerCase();
-      if(d.error_kind==='record_conflict')parts.push('<%:Cloud DNS record conflict%>');
-      else if(d.error||ds=='error'||ds=='failed')parts.push(hgLabel('hg-public-label-dns-error'));
+      if(d.error_kind==='record_conflict')status.push('<%:Cloud DNS record conflict%>');
+      else if(d.error||ds=='error'||ds=='failed')status.push(hgLabel('hg-public-label-dns-error'));
     }
   }
   if(r.https){
-    var certDays=c?Number(c.days):NaN,identityBad=!!(c&&c.identity_valid===false),expired=isFinite(certDays)&&certDays<0;
+    var identityBad=!!(c&&c.identity_valid===false),expired=isFinite(certDays)&&certDays<0;
     if(c&&Number(c.retry_at)*1000>Date.now()){
-      if(c.valid&&isFinite(certDays))parts.push(hgLabel('hg-public-label-cert-days').replace('%d',String(certDays)));
-      parts.push(hgLabel('hg-public-label-cert-rate-limited'));
+      if(c.valid&&remaining)certificate.push(remaining);
+      status.push(hgLabel('hg-public-label-cert-rate-limited'));
     }else if(c&&c.pending===true){
-      if(c.valid&&isFinite(certDays))parts.push(hgLabel('hg-public-label-cert-days').replace('%d',String(certDays)));
-      parts.push(hgLabel('hg-public-label-issuing'));
+      if(c.valid&&remaining)certificate.push(remaining);
+      status.push(hgLabel('hg-public-label-issuing'));
     }else if(c&&c.retrying===true){
-      if(c.valid&&isFinite(certDays))parts.push(hgLabel('hg-public-label-cert-days').replace('%d',String(certDays)));
-      parts.push(hgLabel('hg-public-label-cert-retry'));
-    }else if(c&&!c.waiting&&(!c.exists||identityBad||expired||c.valid===false))parts.push(hgLabel('hg-public-label-cert-error'));
+      if(c.valid&&remaining)certificate.push(remaining);
+      status.push(hgLabel('hg-public-label-cert-retry'));
+    }else if(c&&!c.waiting&&(!c.exists||identityBad||expired||c.valid===false))status.push(hgLabel('hg-public-label-cert-error'));
     else if(c&&String(c.renew_state||'').toLowerCase()==='failed'){
-      var failedFmt=hgLabel('hg-public-label-renew-failed'),failedDays=Number(c.days);
-      parts.push(failedFmt.replace('%d',String(isFinite(failedDays)?failedDays:0)));
-    }else if(c&&c.exists&&isFinite(certDays))parts.push(hgLabel('hg-public-label-cert-days').replace('%d',String(certDays)));
-    if(!c&&r.cert_id&&hgPublicCertsLoaded)parts.push(hgLabel('hg-public-label-cert-unavailable'));
+      if(remaining)certificate.push(remaining);
+      status.push(hgLabel('hg-public-label-renew-failed'));
+    }else if(c&&c.exists&&remaining)certificate.push(remaining);
+    if(!c&&r.cert_id&&hgPublicCertsLoaded)status.push(hgLabel('hg-public-label-cert-unavailable'));
   }
   if(r.enabled&&hgPublicProxy){
     var proxyBad=(hgPublicProxy.ok===false)||!!hgPublicProxy.error||(r.https?!hgPublicProxy.https_listening:!hgPublicProxy.http_listening);
     var stopped=hgPublicProxy.ok===true&&hgPublicProxy.running===false&&(hgPublicProxy.state==='stopped'||hgPublicProxy.state==='idle');
-    if(stopped)parts.push(hgLabel('hg-public-label-proxy-stopped'));
-    else if(proxyBad)parts.push(hgLabel('hg-public-label-proxy-error'));
+    if(stopped)status.push(hgLabel('hg-public-label-proxy-stopped'));
+    else if(proxyBad)status.push(hgLabel('hg-public-label-proxy-error'));
   }
-  if(!r.enabled)parts.push(hgLabel('hg-public-label-not-enabled'));
-  return parts.join(' · ');
+  if(!r.enabled)status.push(hgLabel('hg-public-label-not-enabled'));
+  return [certificate,status];
 }
 function hgPublicPostAction(op,id){if(!id)return;hgSubmitPost('<%=url('admin/services/homegate/public_action')%>','<%=pcdata(token)%>',{op:op,id:id});}
 function hgPublicHasPendingAdd(){
@@ -1093,17 +1095,23 @@ function hgPublicRender(){
     if(r.web_id&&!hgPublicCustomPort(r.external_port)){ch.disabled=true;ch.title='<%:Choose a port other than 80 or 443%>';}
     ch.onchange=function(){r.enabled=!!ch.checked;hgPublicRecomputeDirty();hgPublicRender();};ec.appendChild(ch);
     var address=hgAppendTableCell(tr,'',hgLabel('hg-public-label-address'),'hg-public-address');
-    var link=document.createElement('span'),hint=hgPublicHintText(r);
+    var value=document.createElement('div'),link=document.createElement('span');
+    var lines=hgPublicHintLines(r).filter(function(line){return line.length;});
     link.className='hg-public-url';
     var port=hgPublicExternalPort(r), standard=r.https?443:80;
     link.textContent=(r.https?'https://':'http://')+(hgPublicTrim(r.domain)||'-')+(r.target&&port!==standard?':'+port:'');
-    address.appendChild(link);
-    if(hint){
-      var details=document.createElement('span');
+    value.appendChild(link);
+    if(lines.length){
+      var details=document.createElement('div');
       details.className='hg-public-hint';
-      details.textContent=hint;
-      address.appendChild(details);
+      lines.forEach(function(line){
+        var item=document.createElement('span');
+        item.textContent=line.join(' · ');
+        details.appendChild(item);
+      });
+      value.appendChild(details);
     }
+    address.appendChild(value);
     hgAppendTableCell(tr,r.target||'-',hgLabel('hg-public-label-target'),'hg-public-target');
     var a=hgAppendTableCell(tr,'',hgLabel('hg-public-label-actions'),'hg-actions hg-action-cell hg-action-group');
     a.appendChild(hgCreateButton(hgLabel('hg-public-label-edit'),'cbi-button hg-btn-4 hg-public-edit',function(){hgPublicOpenIndex(idx);}));
@@ -1228,30 +1236,49 @@ function hgPublicOpenIndex(i){
   hgPublicRefreshCertificates();
 }
 function hgPublicReadTextFile(file,done){var reader=new FileReader();reader.onload=function(){done(null,String(reader.result||''));};reader.onerror=function(){done(hgLabel('hg-public-label-file-read-error'),'');};reader.readAsText(file);}
-function hgPublicReadLocalPair(done){var c=document.getElementById('hg-public-local-cert'),k=document.getElementById('hg-public-local-key'),cf=c&&c.files&&c.files[0],kf=k&&k.files&&k.files[0];if(!cf&&!kf){done({uploaded:false,cert_pem:'',key_pem:''});return;}if(!cf||!kf){alert(hgLabel('hg-public-label-local-pair'));done(null);return;}if(cf.size>524288||kf.size>524288){alert(hgLabel('hg-public-label-local-too-large'));done(null);return;}var out={uploaded:true,cert_pem:'',key_pem:''},left=2,failed=false;function finish(err,name,value){if(failed)return;if(err){failed=true;alert(err);done(null);return;}out[name]=value;left--;if(left===0)done(out);}hgPublicReadTextFile(cf,function(e,v){finish(e,'cert_pem',v);});hgPublicReadTextFile(kf,function(e,v){finish(e,'key_pem',v);});}
+function hgPublicReadLocalPair(done){
+  var cert=document.getElementById('hg-public-local-cert'),key=document.getElementById('hg-public-local-key');
+  var certFile=cert&&cert.files[0],keyFile=key&&key.files[0];
+  if(!certFile&&!keyFile){done({uploaded:false,cert_pem:'',key_pem:''});return;}
+  if(!certFile||!keyFile){done(null,hgLabel('hg-public-label-local-pair'));return;}
+  if(certFile.size>524288||keyFile.size>524288){done(null,hgLabel('hg-public-label-local-too-large'));return;}
+  var out={uploaded:true,cert_pem:'',key_pem:''},left=2,failed=false;
+  function finish(err,name,value){
+    if(failed)return;
+    if(err){failed=true;done(null,err);return;}
+    out[name]=value;
+    if(--left===0)done(out);
+  }
+  hgPublicReadTextFile(certFile,function(err,value){finish(err,'cert_pem',value);});
+  hgPublicReadTextFile(keyFile,function(err,value){finish(err,'key_pem',value);});
+}
 function hgPublicConfirm(){
   var modal=document.getElementById('hg-public-modal'),epoch=modal?modal._hgModalEpoch:0;
   if(hgPublicConfirmPending===epoch)return;
   var idx=document.getElementById('hg-public-edit-index').value,zone=hgPublicTrim((document.getElementById('hg-public-zone')||{}).value).toLowerCase().replace(/\.$/,''),host=hgPublicTrim(document.getElementById('hg-public-host').value).toLowerCase().replace(/\.$/,''),domain=hgPublicFullDomain(zone,host),accountSel=document.getElementById('hg-public-account'),accountId=accountSel&&accountSel.value!='__new__'?accountSel.value:'',accountOpt=accountSel?accountSel.options[accountSel.selectedIndex]:null,provider=accountId?((accountOpt&&accountOpt.getAttribute('data-provider'))||'aliyun'):(document.getElementById('hg-public-provider').value||'aliyun'),key=accountId?((accountOpt&&accountOpt.getAttribute('data-key-id'))||''):'',providerAccountId=accountId?((accountOpt&&accountOpt.getAttribute('data-provider-account-id'))||''):'',endpoint=accountId?((accountOpt&&accountOpt.getAttribute('data-endpoint'))||''):'',target=hgPublicTrim(document.getElementById('hg-public-target').value),https=document.getElementById('hg-public-https').checked,source=https?((document.getElementById('hg-public-cert-source')||{}).value||'auto'):'auto',renew=hgPublicTrim(document.getElementById('hg-public-renew-days').value)||'<%=pcdata(default_renew_days or '5')%>',ca=source==='auto'?hgPublicCurrentCA():'letsencrypt',environment=source==='auto'?hgPublicCurrentEnvironment():'production';
-  if(!accountId){alert(hgLabel('hg-public-label-save-account-first'));return;}if(!zone){alert(hgLabel('hg-public-label-no-zones'));return;}if(/[\s\/]/.test(zone)||/[\s\/]/.test(host)){alert('<%:Valid primary domain and host record are required%>');return;}if(!/^https?:\/\/\S+$/.test(target)){alert('<%:Target must start with http:// or https://%>');return;}if(source==='auto'&&(!/^\d+$/.test(renew)||parseInt(renew,10)<1||parseInt(renew,10)>3650)){alert('<%:Renewal days must be between 1 and 3650%>');return;}
+  if(!accountId){hgActionNotice(hgLabel('hg-public-label-save-account-first'));return;}
+  if(!zone){hgActionNotice(hgLabel('hg-public-label-no-zones'));return;}
+  if(/[\s\/]/.test(zone)||/[\s\/]/.test(host)){hgActionNotice('<%:Valid primary domain and host record are required%>');return;}
+  if(!/^https?:\/\/\S+$/.test(target)){hgActionNotice('<%:Target must start with http:// or https://%>');return;}
+  if(source==='auto'&&(!/^\d+$/.test(renew)||parseInt(renew,10)<1||parseInt(renew,10)>3650)){hgActionNotice('<%:Renewal days must be between 1 and 3650%>');return;}
   var portInput=document.getElementById('hg-public-external-port'),externalPort=portInput.value;
   if(portInput.validity.badInput || !hgPublicCustomPort(externalPort)){
-    alert('<%:Choose a port other than 80 or 443%>');return;
+    hgActionNotice('<%:Choose a port other than 80 or 443%>');return;
   }
   externalPort=externalPort?String(Number(externalPort)):'';
   if(hgPublicRows.some(function(row,index){return String(index)!==idx&&row.target&&Number(row.external_port)===Number(externalPort);})){
-    alert('<%:This public port is already used by another service.%>');return;
+    hgActionNotice('<%:This public port is already used by another service.%>');return;
   }
   var targetKey=hgPublicTargetKey(target);
   if(targetKey&&hgPublicRows.some(function(row,index){return String(index)!==idx&&hgPublicTargetKey(row.target)===targetKey;})){
-    alert('<%:This LAN URL is already used by another service.%>');return;
+    hgActionNotice('<%:This LAN URL is already used by another service.%>');return;
   }
   var original=idx===''?null:hgPublicRows[parseInt(idx,10)];
   var hostChanged=!original||original.domain!==domain||original.zone!==zone||original.account_id!==accountId;
   if(provider==='aliyun'&&hostChanged&&!hgPublicModalRefresh[hgPublicCloudKey(accountId,zone)]){
     hgShowNotice(document.getElementById('hg-public-account-result'),'<%:Refresh the DNS account before confirming a new host record.%>','error');return;
   }
-  if(source==='auto'&&!hgPublicCAMeta(ca)){alert('<%:Unsupported certificate authority%>');return;}
+  if(source==='auto'&&!hgPublicCAMeta(ca)){hgActionNotice('<%:Unsupported certificate authority%>');return;}
   if(https&&source==='auto'&&ca==='zerossl'){
     var kidInput=document.getElementById('hg-public-eab-id'),keyInput=document.getElementById('hg-public-eab-key');
     var kid=hgPublicTrim(kidInput.value),hmac=hgPublicTrim(keyInput.value),keyBody=hmac.replace(/=+$/,'');
@@ -1267,11 +1294,12 @@ function hgPublicConfirm(){
   var draft={externalDns:!!(cloud&&cloud.indexOf(relative)>=0),idx:idx,zone:zone,host:host,domain:domain,management:management.disabled?null:management.checked,accountId:accountId,accountOpt:accountOpt,provider:provider,key:key,provider_account_id:providerAccountId,endpoint:endpoint,target:target,externalPort:externalPort,https:https,source:source,ca:ca,environment:environment,renew:renew};if(https&&source==='local'){
     var originalRow=idx!==''?hgPublicRows[parseInt(idx,10)]:null;
     hgPublicConfirmPending=epoch;
-    hgPublicReadLocalPair(function(pair){
+    hgPublicReadLocalPair(function(pair,error){
       if(hgPublicConfirmPending===epoch)hgPublicConfirmPending=null;
       if(!modal||modal._hgModalEpoch!==epoch||!/(^|\s)hg-open(\s|$)/.test(modal.className))return;
       if(idx!==''&&hgPublicRows[parseInt(idx,10)]!==originalRow)return;
       if(pair)hgPublicConfirmReady(draft,pair);
+      else if(error)hgActionNotice(error);
     });
   }else hgPublicConfirmReady(draft,{uploaded:false,cert_pem:'',key_pem:''});
 }

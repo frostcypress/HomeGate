@@ -106,7 +106,11 @@
       location.assign(redirect.href);
       return;
     }
-    show(result.runtime_applied ? '已保存，HomeGate 已运行。' : (messages[notice] || notice || '操作已完成。'));
+    let message=messages[notice] || notice || '操作已完成。';
+    if (route === 'maintenance_apply' && notice === 'Saved' && hgMaintenanceUpdateUrlPending()) {
+      message=hgLabel('hg-maintenance-update-pending');
+    }
+    show(result.runtime_applied ? '已保存，HomeGate 已运行。' : message);
     if (route === 'basic_apply' && window.hgRefreshService) window.hgRefreshService(true);
   }
 
@@ -115,6 +119,10 @@
     busy = true;
     const route = url.pathname.slice(base.pathname.length + 1);
     const controls = Array.from(form.elements).filter(element => !element.disabled && element.type !== 'hidden');
+    if (route === 'maintenance_apply') {
+      const updateAddress = document.getElementById('hg-plugin-update-open');
+      if (updateAddress && !updateAddress.disabled) controls.push(updateAddress);
+    }
     const toolbar = submitter && submitter.closest('.cbi-page-actions');
     const reset = toolbar && toolbar.querySelector('.cbi-button-reset');
     if (reset && !reset.disabled && !controls.includes(reset)) controls.push(reset);
@@ -123,8 +131,10 @@
       controls.forEach(element => { element.disabled = false; });
       if (label !== null) submitter.value = label;
     };
-    const captureSaved = () => {
-      if ((route === 'basic_apply' || route === 'maintenance_apply') && window.hgOperationTracker) {
+    const captureSaved = result => {
+      if (route === 'maintenance_apply') {
+        hgMaintenanceCaptureSaved(result);
+      } else if (route === 'basic_apply' && window.hgOperationTracker) {
         window.hgOperationTracker.capture();
       }
     };
@@ -140,7 +150,7 @@
       }
       const complete = result => {
         restoreControls();
-        if (result.ok || result.configuration_saved) captureSaved();
+        if (result.ok || result.configuration_saved) captureSaved(result);
         finish(result, route);
       };
       const result = await waitForResult(submitted.job, () => {
@@ -183,58 +193,65 @@
   }
   document.addEventListener('input', showUnsavedChanges);
   document.addEventListener('change', showUnsavedChanges);
+  function migrateConfiguration(form, button) {
+    if (busy || !form.isConnected) return;
+    busy = true;
+    button.disabled = true;
+    show('正在迁移配置…', 'pending');
+    const step = (action, values = {}) => request(form.action + '/' + action,
+      { token: status.dataset.token, ...values }, 60000);
+    (async function () {
+      if (form.dataset.copied !== '1') {
+        await step('prepare');
+        const preview = await step('production_copy_preview');
+        if (!preview.report || !/^[a-f0-9]{32}$/.test(preview.report.confirmation || '')) throw new Error();
+        await step('production_copy_commit', { confirmation: preview.report.confirmation, consent: '1' });
+        form.dataset.copied = '1';
+      }
+      const preview = await step('activate_preview');
+      if (!preview.report || !/^[a-f0-9]{32}$/.test(preview.report.confirmation || '')) throw new Error();
+      await step('apply', { confirmation: preview.report.confirmation, consent: '1' });
+      form.hidden = true;
+      show('配置迁移已完成。');
+    })().catch(() => {
+      show('迁移未确认。请刷新插件维护页面查看状态。', 'error');
+    }).finally(() => {
+      button.disabled = false;
+      busy = false;
+    });
+  }
+
+  function recoverConfiguration(form, button) {
+    if (busy || !form.isConnected) return;
+    busy = true;
+    button.disabled = true;
+    show('正在恢复配置…', 'pending');
+    request(form.action, new FormData(form), 60000).then(() => {
+      form.hidden = true;
+      show('已恢复应用前配置。');
+      location.replace(base.pathname + '/maintenance?notice=' + encodeURIComponent('已恢复应用前配置。'));
+    }).catch(() => {
+      show('恢复未确认。请检查配置状态或查看其他恢复选项。', 'error');
+    }).finally(() => {
+      button.disabled = false;
+      busy = false;
+    });
+  }
+
   document.addEventListener('submit', event => {
     const form = event.target;
-    if (!event.defaultPrevented && form.id === 'hg-migrate-configuration') {
+    if (event.defaultPrevented || !(form instanceof HTMLFormElement)) return;
+    const migration = form.id === 'hg-migrate-configuration';
+    if (migration || form.id === 'hg-recover-application') {
       event.preventDefault();
-      if (busy || !confirm('迁移现有 HomeGate 配置并保留原始备份？')) return;
-      busy = true;
+      if (busy) return;
       const button = form.querySelector('button');
-      button.disabled = true;
-      show('正在迁移配置…', 'pending');
-      const step = (action, values = {}) => request(form.action + '/' + action,
-        { token: status.dataset.token, ...values }, 60000);
-      (async function () {
-        if (form.dataset.copied !== '1') {
-          await step('prepare');
-          const preview = await step('production_copy_preview');
-          if (!preview.report || !/^[a-f0-9]{32}$/.test(preview.report.confirmation || '')) throw new Error();
-          await step('production_copy_commit', { confirmation: preview.report.confirmation, consent: '1' });
-          form.dataset.copied = '1';
-        }
-        const preview = await step('activate_preview');
-        if (!preview.report || !/^[a-f0-9]{32}$/.test(preview.report.confirmation || '')) throw new Error();
-        await step('apply', { confirmation: preview.report.confirmation, consent: '1' });
-        form.hidden = true;
-        show('配置迁移已完成。');
-      })().catch(() => {
-        show('迁移未确认。请刷新插件维护页面查看状态。', 'error');
-      }).finally(() => {
-        button.disabled = false;
-        busy = false;
-      });
+      const message = migration ? '迁移现有 HomeGate 配置并保留原始备份？' : '恢复到上一次应用前的配置？';
+      hgActionDialog(button.textContent, message,
+        () => (migration ? migrateConfiguration : recoverConfiguration)(form, button));
       return;
     }
-    if (!event.defaultPrevented && form.id === 'hg-recover-application') {
-      event.preventDefault();
-      if (busy || !confirm('恢复到上一次应用前的配置？')) return;
-      busy = true;
-      const button = form.querySelector('button');
-      button.disabled = true;
-      show('正在恢复配置…', 'pending');
-      request(form.action, new FormData(form), 60000).then(() => {
-        form.hidden = true;
-        show('已恢复应用前配置。');
-        location.replace(base.pathname + '/maintenance?notice=' + encodeURIComponent('已恢复应用前配置。'));
-      }).catch(() => {
-        show('恢复未确认。请检查配置状态或查看其他恢复选项。', 'error');
-      }).finally(() => {
-        button.disabled = false;
-        busy = false;
-      });
-      return;
-    }
-    if (!event.defaultPrevented && form instanceof HTMLFormElement) intercept(form, event);
+    intercept(form, event);
   });
 
   let pending;

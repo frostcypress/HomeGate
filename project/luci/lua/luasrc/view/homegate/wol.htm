@@ -221,7 +221,7 @@ function hgWolConfirm(){
     if(hgWolHasPendingAdd())return;
     var choice=document.getElementById('hg-wol-mac-choice'),custom=document.getElementById('hg-wol-mac-custom');
     var mac=hgWolNormalizeMac(choice.value==='__custom__'?custom.value:choice.value);
-    if(!mac){alert('<%:Valid MAC address is required%>');return;}
+    if(!mac){hgActionNotice('<%:Valid MAC address is required%>');return;}
     var selected=choice.options[choice.selectedIndex];
     hgWolRows.push({id:'',name:name||(selected&&selected.dataset.name)||mac,mac:mac,committed:false,dirty:true});
   }

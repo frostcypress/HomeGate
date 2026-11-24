@@ -105,7 +105,7 @@ local function web_operation(d)
  elseif route=='config_import' then return form.mode=='restore' and 'config_import' or nil
  end
  return ({access_update=route,access_delete_rule=route,access_delete_entry=route,access_delete_all=route,
-  wol_apply=route,update_url_save=route,config_reset=route,certificate_apply=route})[route]
+  wol_apply=route,config_reset=route,certificate_apply=route})[route]
 end
 if ...=='library'then return {read=read,write=write,dir=dir,id=id,request=request,validate=validate,routes=routes,strict=strict,encode=codec.json,root=root,fail=fail,web_operation=web_operation,pending_add=pending_add,mark_pending_add=mark_pending_add,public_view=public_view,read_public_view=read_public_view,write_public_view=write_public_view}end
 local mode=arg[1]

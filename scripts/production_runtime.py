@@ -180,6 +180,9 @@ fi
     # The engineering editor is only shipped with the engineering package.
     del files['usr/lib/lua/luci/view/homegate/configuration.htm']
     del files['www/luci-static/resources/homegate/configuration.js']
+    del files['usr/lib/lua/luci/view/homegate/common.htm']
+    ddns_view='usr/lib/lua/luci/view/homegate/ddns.htm'
+    files[ddns_view]=files[ddns_view].replace(b'<%+homegate/common%>',b'<%+homegate_legacy/common%>')
     def change(name,old,new):
         raw=files[name];old=old.encode();assert old in raw,(name,old)
         files[name]=raw.replace(old,new.encode())
@@ -254,7 +257,7 @@ def web_runtime(root,files):
     routes.update({'api/overview_status': {'write':False}, 'api/overview_ipv6': {'write':False},
                    'api/management_domains': {'write':False}, 'api/overview_update': {'write':False},
                    'api/update_result': {'write':False}})
-    routes['update_url_save']={'write':True}
+    routes['update_check']={'write':True}
     routes['update_confirm']={'write':True}
     files[BASE+'legacy-routes.json']=(json.dumps(routes,ensure_ascii=False,separators=(',',':'))+'\n').encode()
     files[BASE+'legacy-controller.lua']=(root/'project/luci/lua/luasrc/controller/homegate.lua').read_bytes()
@@ -429,8 +432,9 @@ fi
         files[dest]=(root/'packaging/production'/name).read_bytes()
     controller='usr/lib/lua/luci/controller/homegate.lua'
     # Keep existing advanced configuration actions; register each frozen route.
-    addition=["\nlocal legacy=require('luci.model.homegate.legacy')\nfunction legacy_status(id)legacy.status(id)end\nfunction legacy_ack(id)legacy.ack(id)end\n"]
+    addition=["\nlocal legacy=require('luci.model.homegate.legacy')\nfunction legacy_status(id)legacy.status(id)end\nfunction legacy_ack(id)legacy.ack(id)end\nfunction legacy_upload_update()legacy.upload_update()end\n"]
     entries=["entry({'admin','services','homegate','compat_job'},call('legacy_status')).leaf=true", "entry({'admin','services','homegate','compat_ack'},post('legacy_ack')).leaf=true"]
+    entries.append("entry({'admin','services','homegate','update_upload'},call('legacy_upload_update')).leaf=true")
     for i,(route,spec) in enumerate(routes.items()):
         name='legacy_route_'+str(i)
         addition.append("function "+name+"()legacy.dispatch("+repr(route)+","+str(spec['write']).lower()+")end\n")
@@ -441,7 +445,11 @@ fi
     entries.append("entry({'admin','services','homegate','settings'},alias('admin','services','homegate','public'),nil)")
     marker=b"function index()\n";assert files[controller].count(marker)==1
     files[controller]=files[controller].replace(marker,marker+b'''    local web_http=require('luci.http');local web_size=tonumber(web_http.getenv('CONTENT_LENGTH') or '0')
-    if web_http.getenv('REQUEST_METHOD')=='POST' and (web_http.getenv('PATH_INFO') or ''):match('^/admin/services/homegate/') and web_size and web_size>=0 and web_size<=2097152 then web_http.HTTP_MAX_CONTENT=2097152 end
+    local web_path=web_http.getenv('PATH_INFO') or ''
+    if web_http.getenv('REQUEST_METHOD')=='POST' and web_path:match('^/admin/services/homegate/') and web_size and web_size>=0 then
+        local limit=web_path=='/admin/services/homegate/update_upload' and 33624064 or 2097152
+        if web_size<=limit then web_http.HTTP_MAX_CONTENT=limit end
+    end
 ''',1)
     # Registration after existing routes deliberately replaces its overview only.
     end=files[controller].index(b'\nend\n',files[controller].index(marker))

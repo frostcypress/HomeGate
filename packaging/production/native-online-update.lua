@@ -3,21 +3,24 @@ local nx = require('nixio')
 local json = require('luci.jsonc')
 require('nixio.util')
 
-local base = assert(arg[0]:match('^(.*)/[^/]+$'))
-local update = assert(loadfile(base .. '/native-update.lua'))('library')
+local mode, library_base = ...
+local base = (mode == 'library' and library_base) or assert(arg[0]:match('^(.*)/[^/]+$'))
+local update = assert(loadfile(base .. '/native-update.lua'))('library', base)
 local parse = assert(loadfile(base .. '/strict-web-json.lua'))()
 local M = {}
 local root = '/etc/homegate'
 local receipt = root .. '/online-update.json'
 local lock_path = root .. '/online-update.lock'
 local archive_limit = 32 * 1024 * 1024
+local stage_dir = '/tmp/homegate-offline-update'
+local stage_archive = stage_dir .. '/upload.tar'
+local stage_payload = stage_dir .. '/release.tar'
+local stage_ticket = stage_dir .. '/ticket.json'
+M.upload_limit = archive_limit + 65536
 local states = {queued=true,downloading=true,installing=true,failed=true,recovery=true,success=true}
 local function quote(value) return "'" .. value:gsub("'", "'\\''") .. "'" end
 local function id(value)
     return type(value) == 'string' and #value == 32 and not value:find('[^0-9a-f]')
-end
-local function digest(value)
-    return type(value) == 'string' and #value == 64 and not value:find('[^0-9a-f]')
 end
 local function private(path, limit)
     local info = fs.lstat(path)
@@ -48,8 +51,9 @@ local function read()
     if not private(receipt, 4096) then return false end
     local raw = fs.readfile(receipt, 4097)
     local value = raw and parse(raw)
-    if value and id(value.job) and id(value.offer) and update.next_release(value.current, value.target) and
-        type(value.updated_at) == 'number' and states[value.state] then return value end
+    if value and id(value.job) and id(value.offer) and update.upgrade_path(value.current, value.target) and
+        type(value.updated_at) == 'number' and states[value.state] and
+        (value.offline == nil or value.offline == true) then return value end
     return false
 end
 local function store(job, state, reason)
@@ -100,21 +104,25 @@ function M.status()
     return {ok=true,state=state,reason=reason,target=job.target,job=job.job}
 end
 
+local function queue_blocker()
+    local previous = read()
+    if previous == false or previous and (previous.state == 'installing' or previous.state == 'recovery') and
+        not verified_after_recovery(previous) then return 'recovery' end
+    if previous and previous.state == 'queued' and os.time() - previous.updated_at <= 30 then return 'busy' end
+end
+
 function M.prepare(form, job)
     if not id(job) or not id(form.update_offer) or type(form.update_target) ~= 'string' then return false, 'offer' end
     local lease = lock()
     if not lease then return false, 'busy' end
-    local previous = read()
-    local result, reason
-    if previous == false or previous and (previous.state == 'installing' or previous.state == 'recovery') and
-        not verified_after_recovery(previous) then
-        result, reason = false, 'recovery'
-    elseif previous and previous.state == 'queued' and os.time() - previous.updated_at <= 30 then
-        result, reason = false, 'busy'
-    else
-        local current = update.status()
-        if current.offer == form.update_offer and current.latest == form.update_target then
-            result = store({job=job,offer=current.offer,current=current.current,target=current.latest}, 'queued')
+    local result, reason = false, queue_blocker()
+    if not reason then
+        local current
+        if form.update_mode == 'offline' then current = M.staged()
+        elseif not form.update_mode then current = update.status() end
+        if current and current.offer == form.update_offer and current.latest == form.update_target then
+            result = store({job=job,offer=current.offer,current=current.current,target=current.latest,
+                            offline=form.update_mode == 'offline' or nil}, 'queued')
             if not result then reason = 'receipt' end
         else
             result, reason = false, 'offer'
@@ -124,39 +132,116 @@ function M.prepare(form, job)
     return result, reason
 end
 
-local function capture(command, limit)
-    local pipe = io.popen(command .. " 2>/dev/null; printf '\\nHGEXIT:%s\\n' \"$?\"", 'r')
-    if not pipe then return end
-    local raw = pipe:read(limit + 32)
-    pipe:close()
-    local text, code
-    if raw then text, code = raw:match('^(.*)\nHGEXIT:(%d+)\n$') end
-    if code == '0' and #text <= limit then return text end
-end
-
-local function download(entry, name, path, limit)
-    local url, github = update.asset_url(entry, name)
-    if not url then return false end
-    local network = github and "--location --max-redirs 3 --proto '=https' --proto-redir '=https'" or
-        "--proto '=http,https'"
-    local request = path .. '.request'
-    local config = 'url = "' .. url:gsub('"', '\\"') .. '"\n'
-    if not write(request, config) then return false end
-    local cmd = "(/usr/bin/curl --disable --silent --noproxy '*' --globoff " .. network ..
-        " --connect-timeout 5 --max-time 90 --max-filesize " .. limit ..
-        " --output " .. quote(path) .. " --write-out '%{http_code}' --config - < " .. quote(request) .. ")"
-    local status = capture("(ulimit -f " .. math.ceil(limit / 512) .. " && " .. cmd .. ")", 3)
-    fs.unlink(request)
-    local info = private(path, limit)
-    return status == '200' and info and info.size > 0 and info
-end
-
 local function hash(path)
-    local text = capture('sha256sum ' .. quote(path), 256)
+    local text = update.capture('sha256sum ' .. quote(path), 256)
     return text and text:match('^([0-9a-f]+)  ')
 end
+
+local function installed_architecture()
+    local arch = update.capture('opkg status homegate-core', 16384)
+    arch = arch and arch:match('\nArchitecture: ([a-z0-9_%-]+)\n')
+    if not arch or arch == 'all' or #arch > 64 then return end
+    local architectures = update.capture('opkg print-architecture', 8192)
+    if not architectures then return end
+    for value in architectures:gmatch('arch ([a-z0-9_%-]+) %d+\n') do
+        if value == arch then return arch end
+    end
+end
+
+local function stage_directory(create)
+    if create and not fs.lstat(stage_dir) then fs.mkdir(stage_dir, '700') end
+    local info = fs.lstat(stage_dir)
+    return info and info.type == 'dir' and info.uid == 0 and info.modedec == 700
+end
+
+local function clear_stage()
+    for _, name in ipairs({'upload.tar','release.tar','ticket.json','manifest.json','manifest.sig'}) do
+        fs.unlink(stage_dir .. '/' .. name)
+    end
+end
+
+function M.staged()
+    if not stage_directory() or not private(stage_ticket, 4096) or not private(stage_payload, archive_limit) then return end
+    local value = parse(fs.readfile(stage_ticket, 4097) or '')
+    local _, current = update.installed()
+    if value and id(value.offer) and value.current == current and type(value.expires) == 'number' and
+       value.expires >= os.time() and update.upgrade_path(current, value.latest) then return value end
+end
+
+function M.expire_staging()
+    local lease = lock()
+    if not lease then return end
+    local upload = stage_directory() and (private(stage_payload, archive_limit) or private(stage_archive, M.upload_limit))
+    if upload and os.time() - upload.mtime > 900 and not M.staged() then clear_stage() end
+    lease:close()
+end
+
+local function member_command(archive, name)
+    return 'tar -xOf ' .. quote(archive) .. ' ' .. quote(name)
+end
+
+local function extract_member(archive, name, output, limit)
+    local cmd = member_command(archive, name)
+    local code = os.execute('(umask 077; ulimit -f ' .. math.ceil(limit / 512) .. ' && ' ..
+        cmd .. ' > ' .. quote(output) .. ') 2>/dev/null')
+    return code == 0 and private(output, limit)
+end
+
+local function offline_manifest(archive, dir, expected)
+    local header = fs.readfile(archive, 512)
+    if not header or header:sub(258, 263) ~= 'ustar\0' then return nil, 'archive' end
+    local listing = update.capture('tar -tf ' .. quote(archive), 1024)
+    if not listing then return nil, 'archive' end
+    local entries, count = {}, 0
+    for name in listing:gmatch('[^\n]+') do
+        if entries[name] then return nil, 'archive' end
+        entries[name], count = true, count + 1
+    end
+    if count ~= 3 or not entries['manifest.json'] or not entries['manifest.sig'] or
+       not extract_member(archive, 'manifest.json', dir .. '/manifest.json', 16384) or
+       not extract_member(archive, 'manifest.sig', dir .. '/manifest.sig', 1024) then return nil, 'archive' end
+    local signed, reason = update.verify_manifest(dir, parse, expected)
+    if not signed then return nil, reason end
+    if not entries[signed.artifact] then return nil, 'archive' end
+    return signed
+end
+
+local function stage_verified_upload()
+    local signed, reason = offline_manifest(stage_archive, stage_dir)
+    if not signed then return nil, reason end
+    local _, current = update.installed()
+    if not update.upgrade_path(current, signed.version, signed.minimum) then return nil, 'version' end
+    if signed.architecture ~= installed_architecture() then return nil, 'architecture' end
+    local payload = extract_member(stage_archive, signed.artifact, stage_payload, signed.size)
+    if not payload or payload.size ~= signed.size or hash(stage_payload) ~= signed.sha256 then return nil, 'checksum' end
+    local uuid = fs.readfile('/proc/sys/kernel/random/uuid', 38)
+    local offer = uuid and uuid:gsub('[-\n]', '')
+    if not id(offer) or not write(stage_ticket, json.stringify({offer=offer, current=current,
+        latest=signed.version, expires=os.time() + 900})) then return nil, 'cache' end
+    return {ok=true,offer=offer,current=current,latest=signed.version}
+end
+
+function M.stage(size, receive)
+    local lease = lock()
+    if not lease then return {ok=false,update_reason='busy'} end
+    local blocked = queue_blocker()
+    if blocked then lease:close(); return {ok=false,update_reason=blocked} end
+    if not stage_directory(true) then lease:close(); return {ok=false,update_reason='cache'} end
+    clear_stage()
+    local fd = nx.open(stage_archive, nx.open_flags('wronly', 'creat', 'excl'), '600')
+    if not fd then lease:close(); return {ok=false,update_reason='cache'} end
+    local ok, complete = pcall(receive, fd)
+    local closed = fd:close()
+    local info = ok and complete and closed and private(stage_archive, M.upload_limit)
+    local result, reason
+    if info and info.size == size then result, reason = stage_verified_upload() end
+    fs.unlink(stage_archive)
+    if not result then clear_stage() end
+    lease:close()
+    return result or {ok=false,update_reason=reason or 'archive'}
+end
 local function extract(archive, dir, folder, files)
-    local listing = capture('tar -tf ' .. quote(archive), 4096)
+    local listing = update.capture('tar -tf ' .. quote(archive), 4096)
     if not listing then return false end
     local count, seen = 0, {}
     for line in listing:gmatch('[^\n]+') do
@@ -182,31 +267,26 @@ end
 local function install(job, entry, dir, files)
     local version, rev = job.target, job.target:match('%-r(%d+)$')
     local folder = 'homegate-r' .. rev .. '-offline-three'
-    local arch = capture('opkg status homegate-core', 16384)
-    arch = arch and arch:match('\nArchitecture: ([a-z0-9_%-]+)\n')
-    if not arch or arch == 'all' or #arch > 64 then return false, 'architecture' end
-    local key = update.trust_key()
-    if not key then return false, 'trust' end
-    local manifest, signature, archive = dir .. '/manifest.json', dir .. '/manifest.sig', dir .. '/release.tar'
-    if not download(entry, 'manifest.json', manifest, 16384) or not download(entry, 'manifest.sig', signature, 1024) then
-        return false, 'download'
+    local arch = installed_architecture()
+    if not arch then return false, 'architecture' end
+    local signed, reason
+    if job.offline then signed, reason = update.verify_manifest(stage_dir, parse, version)
+    else signed, reason = update.signed_release(entry, dir, parse) end
+    if not signed then return false, reason end
+    if not update.upgrade_path(job.current, version, signed.minimum) then return false, 'version' end
+    if signed.architecture ~= arch then return false, 'architecture' end
+    local archive = dir .. '/release.tar'
+    if job.offline then
+        local payload = private(stage_payload, signed.size)
+        if not payload or payload.size ~= signed.size or not fs.rename(stage_payload, archive) then return false, 'archive' end
+    else
+        local offered = entry.manifest
+        if signed.sha256 ~= offered.sha256 or signed.size ~= offered.size or
+           signed.architecture ~= offered.architecture or signed.minimum ~= offered.minimum or
+           signed.declared_minimum ~= offered.declared_minimum then return false, 'offer' end
+        local downloaded = update.download(entry, signed.artifact, archive, signed.size)
+        if not downloaded or downloaded.size ~= signed.size then return false, 'download' end
     end
-    if os.execute('openssl dgst -sha256 -verify ' .. quote(key) .. ' -signature ' .. quote(signature) .. ' ' ..
-                  quote(manifest) .. ' >/dev/null 2>&1') ~= 0 then return false, 'signature' end
-    local signed = parse(fs.readfile(manifest, 16385))
-    if not signed or signed.version ~= version or signed.from_version ~= job.current or
-       signed.architecture ~= arch or signed.artifact ~= folder .. '.tar' or not digest(signed.sha256) or
-       type(signed.size) ~= 'number' or signed.size < 1 or signed.size > archive_limit or
-       signed.size ~= math.floor(signed.size) then return false, 'manifest' end
-    local architectures = capture('opkg print-architecture', 8192)
-    if not architectures then return false, 'architecture' end
-    local compatible = false
-    for value in architectures:gmatch('arch ([a-z0-9_%-]+) %d+\n') do
-        if value == arch then compatible = true; break end
-    end
-    if not compatible then return false, 'architecture' end
-    local downloaded = download(entry, signed.artifact, archive, signed.size)
-    if not downloaded or downloaded.size ~= signed.size then return false, 'download' end
     if hash(archive) ~= signed.sha256 then return false, 'checksum' end
     local core = 'homegate-core_' .. version .. '_' .. arch .. '.ipk'
     local web = 'luci-app-homegate_' .. version .. '_all.ipk'
@@ -218,15 +298,15 @@ local function install(job, entry, dir, files)
     local source_file = dir .. '/SOURCE.json'
     if not private(source_file, 65536) then return false, 'archive' end
     local source = parse(fs.readfile(source_file, 65537))
-    if not source or source.version ~= version or source.architecture ~= arch or type(source.sha256) ~= 'table' then
+    if not source or source.version ~= version or source.architecture ~= arch or
+       source.minimum_version ~= signed.declared_minimum or type(source.sha256) ~= 'table' then
         return false, 'archive'
     end
     for _, name in ipairs({core, web, language}) do
-        if not digest(source.sha256[name]) or hash(dir .. '/' .. name) ~= source.sha256[name] then return false, 'checksum' end
+        if not update.digest(source.sha256[name]) or hash(dir .. '/' .. name) ~= source.sha256[name] then return false, 'checksum' end
     end
     local _, installed = update.installed()
-    local status = update.status()
-    if installed ~= job.current or status.offer ~= job.offer then return false, 'offer' end
+    if installed ~= job.current or not job.offline and update.status().offer ~= job.offer then return false, 'offer' end
     if not store(job, 'installing') then return false, 'receipt' end
     local log = dir .. '/install.log'
     local code = os.execute('/bin/ash ' .. quote(dir .. '/install.sh') .. ' --migrate > ' .. quote(log) .. ' 2>&1')
@@ -243,8 +323,9 @@ local function run(id_value)
     if not lease then return end
     local job = read()
     if not job or job.job ~= id_value or job.state ~= 'queued' then lease:close(); return end
-    local status, entry = update.status()
-    if status.offer ~= job.offer or status.current ~= job.current or status.latest ~= job.target then
+    local status, entry
+    if job.offline then status = M.staged() else status, entry = update.status() end
+    if not status or status.offer ~= job.offer or status.current ~= job.current or status.latest ~= job.target then
         store(job, 'failed', 'offer'); lease:close(); return
     end
     local dir = '/tmp/homegate-online-' .. id_value
@@ -255,6 +336,7 @@ local function run(id_value)
         if ok and succeeded then store(job, 'success')
         else store(job, job.state == 'installing' and 'recovery' or 'failed', ok and reason or 'installer') end
     end
+    if job.offline then clear_stage() end
     for name in pairs(files) do fs.unlink(dir .. '/' .. name) end
     for _, name in ipairs({'manifest.json','manifest.sig','release.tar','install.log'}) do
         fs.unlink(dir .. '/' .. name)
@@ -264,7 +346,7 @@ local function run(id_value)
     lease:close()
 end
 
-if ... == 'library' then return M end
+if mode == 'library' then return M end
 if nx.getuid() ~= 0 then os.exit(2) end
 if arg[1] == 'web-write' and not arg[2] then
     local state = M.status().state

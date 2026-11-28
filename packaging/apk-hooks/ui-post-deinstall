@@ -1,0 +1,12 @@
+#!/bin/sh
+set -eu
+[ -n "${IPKG_INSTROOT:-}" ] && exit 0
+rm -f /tmp/luci-indexcache
+rm -rf /tmp/luci-modulecache
+killall -HUP rpcd 2>/dev/null || true
+marker=/tmp/.homegate-purge-request
+if [ -x /usr/sbin/homegate-purge ] && [ ! -f "$marker" ]; then
+ umask 077
+ printf 'purge=1\n' >"$marker"
+ (sleep 2; /usr/sbin/homegate-purge >>/tmp/homegate-uninstall.log 2>&1) </dev/null >/dev/null 2>&1 &
+fi

@@ -1,0 +1,8 @@
+#!/bin/sh
+# QWRT compatibility: some builds lack the named LuCI "languages" section.
+# Standard luci-i18n packages expect it to exist before registering a language.
+if ! uci -q get luci.languages >/dev/null 2>&1; then
+	uci set luci.languages='internal' || exit 1
+	uci commit luci || exit 1
+fi
+exit 0

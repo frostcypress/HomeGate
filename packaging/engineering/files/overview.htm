@@ -1,0 +1,22 @@
+<%+header%>
+<p><a class="cbi-button" href="<%=url('admin/services/homegate_engineering/configuration')%>">账户、规则与凭据</a>
+<a class="cbi-button" href="<%=url('admin/services/homegate_engineering/settings/ddns')%>">DDNS 授权与任务</a></p>
+<h2 name="content"><%:HomeGate Engineering%></h2>
+<div class="cbi-section">
+  <p><%:Engineering validation only. Configuration and services remain unchanged.%></p>
+  <% if not backend_available then %>
+    <p class="alert-message warning"><%:Engineering backend unavailable%></p>
+  <% else %>
+    <p><%:Version%>: <%=pcdata(version)%></p>
+    <h3><%:DNS providers%></h3>
+    <table class="table cbi-section-table">
+      <tr class="tr table-titles"><th class="th"><%:Provider%></th><th class="th"><%:Identifier%></th></tr>
+      <% for _,p in ipairs(providers) do %>
+      <tr class="tr"><td class="td"><%=pcdata(p.display_name)%></td><td class="td"><%=pcdata(p.name)%></td></tr>
+      <% end %>
+    </table>
+    <h3><%:Certificate authorities%></h3>
+    <ul><% for _,ca in ipairs(cas) do %><li><%=pcdata(ca.display_name)%></li><% end %></ul>
+  <% end %>
+</div>
+<%+footer%>

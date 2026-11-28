@@ -1,0 +1,78 @@
+{
+  "admin/services/homegate": {
+    "title": "HomeGate",
+    "order": 56,
+    "action": {
+      "type": "firstchild"
+    },
+    "depends": {
+      "acl": [
+        "luci-app-homegate"
+      ]
+    }
+  },
+  "admin/services/homegate/basic": {
+    "order": 10,
+    "action": {
+      "type": "alias",
+      "path": "admin/services/homegate/overview"
+    }
+  },
+  "admin/services/homegate/public": {
+    "order": 20,
+    "action": {
+      "type": "view",
+      "path": "homegate/public"
+    },
+    "title": "Public Services"
+  },
+  "admin/services/homegate/wol": {
+    "order": 30,
+    "action": {
+      "type": "view",
+      "path": "homegate/wol"
+    },
+    "title": "Wake-on-LAN"
+  },
+  "admin/services/homegate/maintenance": {
+    "title": "Plugin Maintenance",
+    "order": 40,
+    "action": {
+      "type": "view",
+      "path": "homegate/maintenance"
+    }
+  },
+  "admin/services/homegate/overview": {
+    "title": "Service Overview",
+    "order": 10,
+    "action": {
+      "type": "view",
+      "path": "homegate/overview"
+    }
+  },
+  "admin/services/homegate/settings": {
+    "action": {
+      "type": "alias",
+      "path": "admin/services/homegate/public"
+    }
+  },
+  "admin/services/homegate/settings/basic": {
+    "order": 10,
+    "action": {
+      "type": "alias",
+      "path": "admin/services/homegate/overview"
+    }
+  },
+  "admin/services/homegate/settings/public": {
+    "action": {
+      "type": "alias",
+      "path": "admin/services/homegate/public"
+    }
+  },
+  "admin/services/homegate/settings/wol": {
+    "action": {
+      "type": "alias",
+      "path": "admin/services/homegate/wol"
+    }
+  }
+}

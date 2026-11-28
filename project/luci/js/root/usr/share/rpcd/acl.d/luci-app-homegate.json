@@ -1,0 +1,7 @@
+{
+ "luci-app-homegate": {
+  "description": "HomeGate configuration and status",
+  "read": { "ubus": { "homegate": ["read"] } },
+  "write": { "ubus": { "homegate": ["write", "poll", "ack"] } }
+ }
+}

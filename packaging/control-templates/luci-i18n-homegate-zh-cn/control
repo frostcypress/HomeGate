@@ -1,0 +1,12 @@
+Package: luci-i18n-homegate-zh-cn
+Version: @VERSION@
+Depends: libc, homegate
+Source: project/luci
+SourceName: luci-i18n-homegate-zh-cn
+License: Apache-2.0
+Section: luci
+SourceDateEpoch: 1693809628
+Maintainer: HomeGate contributors
+Architecture: all
+Installed-Size: @SIZE@
+Description:  Simplified Chinese translation for luci-app-homegate.

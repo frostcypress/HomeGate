@@ -1,0 +1,26 @@
+{
+  "verified_on": "2026-10-11",
+  "original_manifest_matches": true,
+  "files": [
+    {
+      "file": "HomeGate_1.3.0-10_最终归档_2026-10-10.zip",
+      "sha256": "4ead504c497ba1c339ec0ccfdc61ed3ddfd7b11afa07e7011f73753d20091166"
+    },
+    {
+      "file": "开发规范.zip",
+      "sha256": "cc32b23fec8fd782b92a5a6da015a2f03776490aad4ece23a0a5a9b2921833cc"
+    },
+    {
+      "file": "原始归档/HomeGate_1.3.0-10_最终归档_2026-10-10/HomeGate_1.3.0-10_source.zip",
+      "sha256": "33966bbb713b92bd113a086800bae15cda7af487365f6460af7d94f61ce38e1b"
+    },
+    {
+      "file": "原始归档/HomeGate_1.3.0-10_最终归档_2026-10-10/累计接续.md",
+      "sha256": "63a047cab5b735f667441dc152b9c34040910d9f582d5528d1f9b78414005753"
+    },
+    {
+      "file": "原始归档/HomeGate_1.3.0-10_最终归档_2026-10-10/使用说明.md",
+      "sha256": "fd271f7762cfab7013b47f14429fcfbc51a0448d71bc14995a1c463640cb953e"
+    }
+  ]
+}

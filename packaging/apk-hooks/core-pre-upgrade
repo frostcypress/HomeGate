@@ -1,0 +1,17 @@
+#!/bin/sh
+set -eu
+[ -n "${IPKG_INSTROOT:-}" ] && exit 0
+umask 077
+init=${HOMEGATE_PACKAGE_INIT:-/etc/init.d/homegate}
+state=${HOMEGATE_PACKAGE_UPGRADE_STATE:-/tmp/.homegate-apk-upgrade-state}
+running=0
+enabled=0
+for cmdline in "${HOMEGATE_PACKAGE_PROC:-/proc}"/[0-9]*/cmdline; do
+ [ -r "$cmdline" ] || continue
+ if tr '\000' ' ' <"$cmdline" | grep -Eq '^([^ ]*/)?homegate daemon $'; then running=1; break; fi
+done
+"$init" enabled >/dev/null 2>&1 && enabled=1
+temporary=$(mktemp "${state}.XXXXXX")
+printf 'running=%s\nenabled=%s\n' "$running" "$enabled" >"$temporary"
+mv -f "$temporary" "$state"
+"$init" stop

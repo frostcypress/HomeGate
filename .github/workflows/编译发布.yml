@@ -29,9 +29,9 @@ permissions:
   contents: read
 jobs:
   source:
-    name: 构建源码核对
+    name: 源码规范与回归检查
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    timeout-minutes: 35
     steps:
       - name: 检出源码
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -42,7 +42,215 @@ jobs:
           make check
           python3 scripts/frontend-source-regressions.py
           git diff --exit-code -- project/luci/js/htdocs
-          python3 scripts/生成接续包.py --target pending --stage 源码检查 --public-source --check-public-tree
+      - name: 核实版本、路径和发布门禁
+        run: |
+          python3 scripts/native-target-audit-regressions.py
+          python3 scripts/native-component-probe-regressions.py
+          python3 scripts/native-install-plan-regressions.py
+          python3 scripts/重构回归.py
+          python3 scripts/CI依赖归档回归.py
+      - name: 验证宿主专项分组与失败阻断
+        run: |
+          python3 scripts/ci-native-groups-regressions.py
+          python3 scripts/engineering-ci-regressions.py
+      - name: 检查 Shell 语法
+        run: |
+          find scripts project/core/prototype packaging -type f -name '*.sh' -print0 | xargs -0 -r -n1 sh -n
+          sh -n packaging/production/homegate.init
+          sh -n packaging/production/95-homegate
+      - name: 安装 BusyBox、语法解析与页面回归依赖
+        if: inputs.mode != '仅检查源码'
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y build-essential lua5.1 liblua5.1-0-dev libjson-c-dev libssl-dev cmake pkg-config libcrypt-dev bubblewrap zstd
+          mkdir -p build/busybox-runtime
+          python3 scripts/准备BusyBox归档.py
+          printf '%s  %s\n' 6843ba7977081e735fa0fdb05893e3c002c8c5ad7c9c80da206e603cc0ac47e7 \
+            build/busybox-runtime/busybox-1.33.2.tar.bz2 | sha256sum -c -
+          tar -xjf build/busybox-runtime/busybox-1.33.2.tar.bz2 -C build/busybox-runtime
+          make -C build/busybox-runtime/busybox-1.33.2 allnoconfig
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+          file = Path('build/busybox-runtime/busybox-1.33.2/.config')
+          body = file.read_text()
+          required = ['BUSYBOX', 'ASH', 'ASH_OPTIMIZE_FOR_SIZE', 'ASH_PRINTF', 'ASH_TEST',
+                      'FEATURE_SH_MATH', 'EXPR', 'STAT', 'FEATURE_STAT_FORMAT', 'FLOCK',
+                      'TR', 'MKDIR', 'MV', 'RM', 'ID', 'DIRNAME', 'CAT', 'CP',
+                      'RMDIR', 'SHA256SUM', 'HEAD', 'FEATURE_FANCY_HEAD', 'FSYNC',
+                      'SETSID', 'SLEEP', 'FEATURE_FANCY_SLEEP', 'FLOAT_DURATION', 'MKFIFO', 'LS', 'KILL']
+          for name in required:
+              pattern = r'^# CONFIG_' + name + r' is not set$'
+              body, count = re.subn(pattern, 'CONFIG_' + name + '=y', body, flags=re.M)
+              if count == 0:
+                  assert re.search(r'^CONFIG_' + name + r'=y$', body, re.M), 'Unknown or unavailable BusyBox option: ' + name
+          file.write_text(body)
+          PY
+          make -C build/busybox-runtime/busybox-1.33.2 oldconfig < /dev/null
+          make -C build/busybox-runtime/busybox-1.33.2 -j2
+          build/busybox-runtime/busybox-1.33.2/busybox --list
+          build/busybox-runtime/busybox-1.33.2/busybox sleep 0.001
+          echo "$PWD/build/busybox-runtime/busybox-1.33.2" >> "$GITHUB_PATH"
+          python3 -m venv build/verify-venv
+          build/verify-venv/bin/python -m pip install 'lupa==2.8' 'playwright==1.63.0' 'tree-sitter==0.25.2' 'tree-sitter-bash==0.25.1'
+          build/verify-venv/bin/python -m playwright install --with-deps chromium
+          python3 scripts/准备UCI解析回归.py
+          python3 scripts/准备服务采样回归.py
+          python3 scripts/准备curl回归.py
+      - name: 核实扩展分组覆盖与失败阻断
+        if: inputs.mode != '仅检查源码'
+        run: build/verify-venv/bin/python scripts/ci-extended-groups-regressions.py
+      - name: 核实私有隔离并补齐官方bwrap配置
+        if: inputs.mode != '仅检查源码'
+        run: python3 scripts/prepare-ci-isolation.py
+      - name: 验证宿主ucode与DDNS候选关闭门禁
+        if: inputs.mode != '仅检查源码'
+        run: sh scripts/check-ucode.sh
+      - name: 验证隔离rpcd参数与DDNS会话ACL
+        if: inputs.mode != '仅检查源码'
+        run: sh scripts/check-rpcd.sh
+      - name: 验证真实HTTP会话授权与拒绝路径
+        if: inputs.mode != '仅检查源码'
+        run: sh scripts/check-http.sh
+      - name: 验证Lua会话CSRF及Lua与RPC的Shell只读链路
+        if: inputs.mode != '仅检查源码'
+        run: sh scripts/check-luci.sh
+      - name: 验证固定来源持久旧配置迁移
+        if: inputs.mode != '仅检查源码'
+        run: |
+          build/verify-venv/bin/python scripts/持久旧配置迁移回归.py
+          build/verify-venv/bin/python scripts/持久旧配置迁移回归.py --runtime
+      - name: 验证工程DDNS固定部署范围与语法
+        if: inputs.mode != '仅检查源码'
+        run: |
+          build/verify-venv/bin/python scripts/工程DDNS部署回归.py
+          build/verify-venv/bin/python scripts/访问地址库回归.py
+      - name: 验证生命周期运行锁与持久准备
+        if: inputs.mode != '仅检查源码'
+        run: |
+          build/verify-venv/bin/python scripts/生命周期准备回归.py
+          build/verify-venv/bin/python scripts/生命周期准备回归.py --runtime
+      - name: 验证迁移后同代 Cloudflare 只读业务
+        if: inputs.mode != '仅检查源码'
+        run: |
+          build/verify-venv/bin/python scripts/生命周期业务集成回归.py
+          build/verify-venv/bin/python scripts/生命周期业务集成回归.py --runtime
+      - name: 验证 DNS 检查点准备残留的受控发布
+        if: inputs.mode != '仅检查源码'
+        run: |
+          build/verify-venv/bin/python scripts/DNS检查点修复回归.py
+          build/verify-venv/bin/python scripts/DNS检查点修复回归.py --runtime
+      - name: 验证已确认 DNS 原孤立目录的收集
+        if: inputs.mode != '仅检查源码'
+        run: |
+          build/verify-venv/bin/python scripts/DNS孤立收集回归.py
+          build/verify-venv/bin/python scripts/DNS孤立收集回归.py --runtime
+      - name: 验证 DNS 中断终态发布的明确恢复
+        if: inputs.mode != '仅检查源码'
+        run: |
+          build/verify-venv/bin/python scripts/DNS终态修复回归.py
+          build/verify-venv/bin/python scripts/DNS终态修复回归.py --runtime
+      - name: 验证 DNS 归档容量回收与中断续做
+        if: inputs.mode != '仅检查源码'
+        run: |
+          build/verify-venv/bin/python scripts/DNS归档保留回归.py
+          build/verify-venv/bin/python scripts/DNS归档保留回归.py --runtime
+      - name: 验证 DNS 终态回执收集与跨启动只读恢复
+        if: inputs.mode != '仅检查源码'
+        run: |
+          build/verify-venv/bin/python scripts/DNS回执恢复回归.py
+          build/verify-venv/bin/python scripts/DNS回执恢复回归.py --runtime
+      - name: 验证 DNS 变更前持久回执与写入屏障
+        if: inputs.mode != '仅检查源码'
+        run: |
+          build/verify-venv/bin/python scripts/DNS持久回执回归.py
+          build/verify-venv/bin/python scripts/DNS持久回执回归.py --runtime
+      - name: 验证 Cloudflare 未知操作的确认只读核对
+        if: inputs.mode != '仅检查源码'
+        run: |
+          build/verify-venv/bin/python scripts/Cloudflare核对回归.py
+          build/verify-venv/bin/python scripts/Cloudflare核对回归.py --runtime
+      - name: 验证 Cloudflare 配置绑定记录写入与未知结果
+        if: inputs.mode != '仅检查源码'
+        run: |
+          build/verify-venv/bin/python scripts/Cloudflare记录回归.py
+          build/verify-venv/bin/python scripts/Cloudflare记录回归.py --runtime
+      - name: 验证 Cloudflare 完整区域分页与失败隔离
+        if: inputs.mode != '仅检查源码'
+        run: |
+          build/verify-venv/bin/python scripts/Cloudflare区域回归.py
+          build/verify-venv/bin/python scripts/Cloudflare区域回归.py --runtime
+      - name: 验证 Cloudflare 私有凭据与受限 HTTPS 请求
+        if: inputs.mode != '仅检查源码'
+        run: |
+          build/verify-venv/bin/python scripts/Cloudflare只读回归.py
+          build/verify-venv/bin/python scripts/Cloudflare只读回归.py --runtime
+      - name: 验证固定服务预检启停与观察恢复
+        if: inputs.mode != '仅检查源码'
+        run: |
+          build/verify-venv/bin/python scripts/固定服务动作回归.py
+          build/verify-venv/bin/python scripts/固定服务动作回归.py --runtime
+      - name: 验证持久独立监督与孤立凭据恢复
+        if: inputs.mode != '仅检查源码'
+        run: |
+          build/verify-venv/bin/python scripts/持久监督恢复回归.py
+          build/verify-venv/bin/python scripts/持久监督恢复回归.py --runtime
+      - name: 验证持久初始化与显式恢复
+        if: inputs.mode != '仅检查源码'
+        run: |
+          build/verify-venv/bin/python scripts/持久初始化回归.py
+          build/verify-venv/bin/python scripts/持久初始化回归.py --runtime
+      - name: 验证持久事务屏障与异常退出
+        if: inputs.mode != '仅检查源码'
+        run: |
+          build/verify-venv/bin/python scripts/持久事务屏障回归.py
+          build/verify-venv/bin/python scripts/持久事务屏障回归.py --runtime
+      - name: 验证原生写入协调
+        if: inputs.mode != '仅检查源码'
+        run: |
+          build/verify-venv/bin/python scripts/原生写入协调回归.py
+          build/verify-venv/bin/python scripts/原生写入协调回归.py --runtime
+      - name: 定位固定服务四状态采样
+        if: inputs.mode != '仅检查源码'
+        run: build/verify-venv/bin/python scripts/服务采样回归.py --runtime --case test_four_independent_states_sample_real_processes_and_bind_journal
+      - name: 验证源配置发布与恢复
+        if: inputs.mode != '仅检查源码'
+        run: |
+          build/verify-venv/bin/python scripts/源配置发布回归.py --static
+          build/verify-venv/bin/python scripts/源配置发布回归.py --runtime
+      - name: 验证 Shell 原型语法与真实 BusyBox 执行
+        if: inputs.mode != '仅检查源码'
+        run: |
+          for file in project/core/prototype/*.sh; do busybox ash -n "$file"; done
+          build/verify-venv/bin/python scripts/Shell原型回归.py --static
+          build/verify-venv/bin/python scripts/Shell原型回归.py --runtime
+          build/verify-venv/bin/python scripts/配置事务原型回归.py --static
+          build/verify-venv/bin/python scripts/配置事务原型回归.py --runtime
+          build/verify-venv/bin/python scripts/完整配置事务回归.py
+          build/verify-venv/bin/python scripts/完整配置事务回归.py --runtime
+          build/verify-venv/bin/python scripts/旧配置迁移回归.py
+          build/verify-venv/bin/python scripts/旧配置迁移回归.py --runtime
+          build/verify-venv/bin/python scripts/私有配置读取回归.py
+          build/verify-venv/bin/python scripts/私有配置读取回归.py --runtime
+          build/verify-venv/bin/python scripts/配置应用恢复回归.py --runtime
+          build/verify-venv/bin/python scripts/工作监督回归.py --static
+          build/verify-venv/bin/python scripts/工作监督回归.py --runtime
+          build/verify-venv/bin/python scripts/服务意图回归.py --runtime
+          build/verify-venv/bin/python scripts/服务采样回归.py --static
+          build/verify-venv/bin/python scripts/服务采样回归.py --runtime
+      - name: 验证安全导出、导航与页面行为
+        if: inputs.mode != '仅检查源码'
+        run: |
+          build/verify-venv/bin/python scripts/导航安全回归.py
+          build/verify-venv/bin/python scripts/配置预览回归.py
+          build/verify-venv/bin/python scripts/native-ui-regressions.py
+          build/verify-venv/bin/python scripts/配置预览页面回归.py
+          build/verify-venv/bin/python scripts/DDNS原生传输回归.py
+          build/verify-venv/bin/python scripts/DDNS授权页面回归.py
+          build/verify-venv/bin/python scripts/legacy-footer-regressions.py
+          build/verify-venv/bin/python scripts/luci-loader-regressions.py
+      - name: 按公开清单生成源码包
+        run: python3 scripts/生成接续包.py --target pending --stage 源码检查 --public-source --check-public-tree
       - name: 上传经核对的源码
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
@@ -96,9 +304,98 @@ jobs:
       - name: 验证组件探测与超时收尾
         if: matrix.group == 'component'
         run: python3 scripts/native-component-probe-regressions.py
+  extended:
+    name: 本批集中回归 · ${{ matrix.group }}
+    if: inputs.mode != '仅检查源码'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        group: [Aliyun, DNSPod, DDNS执行, DDNS授权状态, DDNS状态退避, DDNS授权收尾, DDNS全批, DDNS混合全批, DDNS批次收尾, DDNS有界调度, DDNS调度边界与持续, DDNS混合调度, DDNS生命周期CLI, 核心DNS只读CLI, 核心网络配置CLI, 核心健康恢复CLI, DDNS恢复摘要CLI, DDNS原生授权UI, DDNS异步任务, DDNS明确维护]
+    steps:
+      - name: 检出相同源码
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: 准备固定版本的隔离回归依赖
+        run: sh scripts/准备扩展CI环境.sh
+      - name: 串行执行本组必要专项
+        run: build/verify-venv/bin/python scripts/扩展集中回归.py '${{ matrix.group }}'
+  native:
+    name: 宿主接合回归 · ${{ matrix.group }}
+    if: inputs.mode != '仅检查源码'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        group: [authority, tasks, receipts-cloudflare, receipts-aliyun, receipts-dnspod]
+    steps:
+      - name: 检出相同源码
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: 准备固定版本的隔离回归依赖
+        run: sh scripts/准备扩展CI环境.sh
+      - name: 准备宿主运行时构建依赖
+        run: sudo apt-get install --no-install-recommends -y cmake pkg-config libcrypt-dev bubblewrap zstd
+      - name: 核实宿主私有隔离前置
+        run: python3 scripts/prepare-ci-isolation.py
+      - name: 串行验证其他组Lua及RPC接合
+        if: matrix.group != 'receipts-cloudflare'
+        run: sh scripts/check-ddns-authority.sh --group '${{ matrix.group }}'
+      - name: 准备Cloudflare组固定宿主运行时
+        if: matrix.group == 'receipts-cloudflare'
+        timeout-minutes: 10
+        run: |
+          python3 scripts/prepare-ucode.py
+          python3 scripts/prepare-rpcd.py
+          python3 scripts/prepare-uhttpd.py
+          python3 scripts/prepare-luci.py
+      - name: 验证Cloudflare原生任务与回执
+        if: matrix.group == 'receipts-cloudflare'
+        timeout-minutes: 10
+        run: python3 scripts/luci-ddns-provider-jobs-regressions.py
+      - name: 验证Cloudflare RPC任务与批量权限
+        if: matrix.group == 'receipts-cloudflare'
+        timeout-minutes: 10
+        run: python3 scripts/rpc-ddns-provider-jobs-regressions.py
+      - name: 验证Cloudflare原生归档与恢复
+        if: matrix.group == 'receipts-cloudflare'
+        timeout-minutes: 10
+        run: python3 scripts/luci-ddns-archive-regressions.py
+      - name: 验证Cloudflare RPC归档与权限
+        if: matrix.group == 'receipts-cloudflare'
+        timeout-minutes: 10
+        run: python3 scripts/rpc-ddns-archive-regressions.py
+  engineering:
+    name: 工程完整接合回归 · ${{ matrix.group }}
+    if: inputs.mode != '仅检查源码'
+    runs-on: ubuntu-24.04
+    timeout-minutes: ${{ matrix.group == 'native-production' && 40 || 25 }}
+    strategy:
+      fail-fast: false
+      matrix:
+        group: [native-production, engineering-core, engineering-copy, engineering-certificate, engineering-acme-providers, engineering-acme-failure, engineering-acme-schedule, engineering-proxy, engineering-proxy-reload, engineering-access, engineering-wol]
+    steps:
+      - name: 检出相同源码
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: 准备固定隔离测试依赖
+        run: sh scripts/准备扩展CI环境.sh
+      - name: 准备原生组件构建依赖
+        run: sudo apt-get install --no-install-recommends -y cmake pkg-config libcrypt-dev bubblewrap zstd
+      - name: 核实私有隔离前置
+        run: python3 scripts/prepare-ci-isolation.py
+      - name: 准备固定宿主运行时
+        run: build/verify-venv/bin/python scripts/engineering-ci.py '${{ matrix.group }}' --prepare
+      - name: 验证本组真实接合与失败路径
+        run: build/verify-venv/bin/python scripts/engineering-ci.py '${{ matrix.group }}'
   build:
     name: SDK 三包构建
-    needs: [source, regression]
+    needs: [source, regression, extended, native, engineering]
     if: github.event_name == 'workflow_dispatch' && inputs.mode != '仅检查源码'
     runs-on: ubuntu-24.04
     timeout-minutes: 60

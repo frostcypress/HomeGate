@@ -1,0 +1,46 @@
+'use strict';
+import { mkdtemp, open, chmod, unlink, rmdir, popen } from 'fs';
+
+// rpcd checks the separate read/write ACLs before dispatch. Never accept shell
+// commands, filenames, executable paths or an ACL override from the browser.
+function execute(command) {
+ const fd = popen(command);
+ if (!fd) return { ok: false, error: 'Unable to start HomeGate bridge' };
+ const body = fd.read('all');
+ fd.close();
+ try { return json(body); }
+ catch (e) { return { ok: false, error: 'Invalid HomeGate bridge response' }; }
+}
+function requestFile(args, write) {
+ if (type(args.route) != 'string' || type(args.form) != 'object')
+  return { ok: false, error: 'Invalid request' };
+ const body = sprintf('%J', { route: args.route, form: args.form, write });
+ if (length(body) > 2097152) return { ok: false, error: 'Request exceeds size limit' };
+ const dir = mkdtemp('/tmp/homegate-rpc-XXXXXX');
+ if (!dir) return { ok: false, error: 'Unable to allocate private request' };
+ const path = dir + '/request';
+ let result;
+ try {
+  const fd = open(path, 'w', 0600);
+  if (!fd) die('open');
+  fd.write(body);
+  fd.close();
+  if (!chmod(path, 0600)) die('chmod');
+  result = execute('/usr/bin/homegate ' + (write ? 'web-submit' : 'web-read') + " '" + path + "'");
+ }
+ catch (e) { result = { ok: false, error: 'Unable to prepare private request' }; }
+ unlink(path);
+ rmdir(dir);
+ return result;
+}
+function poll(args, ack) {
+ if (!match(args.job || '', /^[a-f0-9]{32}$/)) return { ok: false, error: 'Invalid job ID' };
+ return execute('/usr/bin/homegate ' + (ack ? 'web-job-ack' : 'web-job-status') + ' ' + args.job);
+}
+return { homegate: {
+ read: { args: { route: '', form: {} }, call: request => requestFile(request.args, false) },
+ write: { args: { route: '', form: {} }, call: request => requestFile(request.args, true) },
+ poll: { args: { job: '' }, call: request => poll(request.args, false) },
+ ack: { args: { job: '' }, call: request => poll(request.args, true) }
+} };
+

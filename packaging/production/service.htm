@@ -1,0 +1,11 @@
+  <div class="cbi-section"><h3>运行服务</h3>
+    <p>先保存要持续运行的任务并确认启用意图。DDNS 任务还需在授权页确认相同的规则范围；没有授权时不会运行。修改任务前先停止服务。证书续期与 DDNS 由同一服务协调。</p>
+    <form id="hg-service-plan"><label>DDNS 规则 <input name="service_ddns" value="-" maxlength="2111" /></label>
+      <label>ACME 证书 <input name="service_certs" value="-" maxlength="2111" /></label>
+      <label>代理规则 <input name="service_web" value="-" maxlength="1039" /></label>
+      <label>访问策略 <select name="policy"><option value="open">开放</option><option value="allow">仅允许名单</option></select></label>
+      <p>多个标识用逗号分隔，横线表示不选择该类任务。</p><button class="cbi-button" type="submit">确认保存运行任务</button></form>
+    <p><button type="button" id="hg-service-start" class="cbi-button">启动服务</button>
+      <button type="button" id="hg-service-stop" class="cbi-button">停止服务</button>
+      <button type="button" id="hg-service-status" class="cbi-button">服务状态</button></p>
+  </div>

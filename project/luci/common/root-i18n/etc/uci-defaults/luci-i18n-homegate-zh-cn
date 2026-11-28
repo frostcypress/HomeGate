@@ -1,0 +1,4 @@
+#!/bin/sh
+uci set luci.languages.zh_cn='简体中文 (Chinese Simplified)' || exit 1
+uci commit luci || exit 1
+exit 0

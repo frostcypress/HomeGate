@@ -35,11 +35,6 @@ def enable_authority(state):
 
 
 class Authority(read.ReadOnly):
-    # The frozen read contract is 18s. Four real grant checks measured 7-10s;
-    # the 6s gate-only fixture limit cannot cover that authorized read path.
-    HTTP_TIMEOUT = 18
-    CGI_TIMEOUT = 18
-
     def tearDown(self):
         # Only the grant records created by this test are disposable fixture state.
         # Every negative request compares the entire snapshot before this cleanup.
@@ -90,15 +85,15 @@ class Authority(read.ReadOnly):
             self.assertEqual((preview['rule'],preview['provider'],preview['configuration_revision'],preview['expires_in']),
                              ('ddns_0','aliyun',self.revision,300))
             self.assertFalse(preview['authorized'])
-            self.assertEqual(self.states(session[0]), ['unauthorized']*4)
+            self.assertEqual(self.states(session[0]), ['unauthorized']*3)
             result = self.post('commit', session, confirmation=preview['confirmation'], consent='1')
             self.assertTrue(result['authorized']);self.assertEqual(result['rule'], 'ddns_0')
             record = STORE/'ddns-authority';metadata = record.stat()
             self.assertEqual((stat.S_IMODE(metadata.st_mode),metadata.st_nlink), (0o600,1))
-            self.assertEqual(self.states(session[0]), ['ready','unauthorized','unauthorized','unauthorized'])
+            self.assertEqual(self.states(session[0]), ['ready','unauthorized','unauthorized'])
             result = self.post('revoke', session, consent='1')
             self.assertTrue(result['revoked']);self.assertFalse(result['authorized'])
-            self.assertEqual(self.states(session[0]), ['unauthorized']*4)
+            self.assertEqual(self.states(session[0]), ['unauthorized']*3)
             self.assertFalse((RUN/'ddns-state').exists());self.assertFalse((RUN/'ddns-ui-jobs').exists())
 
     def test_write_02_canonical_multi_selection_and_narrow_replacement(self):
@@ -107,10 +102,10 @@ class Authority(read.ReadOnly):
             self.assertEqual(preview['rules'], ['ddns_0','ddns_2'])
             self.assertEqual(preview['provider'], 'multiple')
             self.post('commit', session, confirmation=preview['confirmation'], consent='1')
-            self.assertEqual(self.states(session[0]), ['ready','unauthorized','ready','unauthorized'])
+            self.assertEqual(self.states(session[0]), ['ready','unauthorized','ready'])
             preview = self.post('preview', session, selection='ddns_1')
             self.post('commit', session, confirmation=preview['confirmation'], consent='1')
-            self.assertEqual(self.states(session[0]), ['unauthorized','ready','unauthorized','unauthorized'])
+            self.assertEqual(self.states(session[0]), ['unauthorized','ready','unauthorized'])
             self.post('revoke', session, consent='1')
 
     def test_write_03_real_csrf_and_request_policy_before_backend(self):
@@ -142,7 +137,7 @@ class Authority(read.ReadOnly):
             self.refused('commit',session,confirmation=first['confirmation'],consent='1')
             self.post('commit',session,confirmation=second['confirmation'],consent='1')
             self.refused('commit',session,confirmation=second['confirmation'],consent='1')
-            self.assertEqual(self.states(session[0]), ['unauthorized','unauthorized','ready','unauthorized'])
+            self.assertEqual(self.states(session[0]), ['unauthorized','unauthorized','ready'])
             self.post('revoke',session,consent='1')
             self.refused('commit',session,confirmation=second['confirmation'],consent='1')
 

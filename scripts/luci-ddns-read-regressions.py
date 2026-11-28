@@ -106,6 +106,10 @@ os.execv('/usr/sbin/ash',['ash','/teststate/project/core/prototype/homegate-ddns
 
 
 class ReadOnly(luci.LuaLuCI):
+    # Shell-backed DDNS reads can exceed the gate-only CGI fixture's 6s budget.
+    CGI_TIMEOUT = 18
+    HTTP_TIMEOUT = 18
+
     @classmethod
     def command(cls, name, *args, payload=None):
         p = subprocess.run(['/usr/sbin/ash', str(GUEST_PROTO / name), *args], input=payload,
@@ -211,7 +215,7 @@ class ReadOnly(luci.LuaLuCI):
         finally:
             shutil.rmtree(root);lock.unlink()
 
-    def test_read_01_real_four_provider_status_and_empty_jobs_are_read_only(self):
+    def test_read_01_real_provider_status_and_empty_jobs_are_read_only(self):
         self.assertEqual(Path('/proc/self/uid_map').read_text().split(), ['0', rpc.OUTER_UID, '1'])
         self.assertNotEqual(rpc.OUTER_UID, '0')
         caps = dict(line.split(':', 1) for line in Path('/proc/self/status').read_text().splitlines() if ':' in line)

@@ -106,7 +106,7 @@ class HTTPRead(BaseReadOnly):
         return result['report']
 
     # Same real Shell scenarios through RPC, not duplicate claims of new backend business.
-    test_rpc_read_01_status_and_empty_jobs=BaseReadOnly.test_read_01_real_four_provider_status_and_empty_jobs_are_read_only
+    test_rpc_read_01_status_and_empty_jobs=BaseReadOnly.test_read_01_real_provider_status_and_empty_jobs_are_read_only
     test_rpc_read_02_pending_and_interrupted=BaseReadOnly.test_read_02_real_job_pending_and_interrupted_preserve_unknown
     test_rpc_read_03_business_lock_busy=BaseReadOnly.test_read_03_shared_locks_busy_fail_closed_without_partial_rows
     test_rpc_read_04_config_drift=BaseReadOnly.test_read_04_config_drift_and_unsafe_permissions_refuse
@@ -167,7 +167,7 @@ class HTTPRead(BaseReadOnly):
                 self.request(sid,'homegate_ddns','jobs',{},4)])
             self.assertTrue(isinstance(data,list) and len(data)==4,'Unexpected batch; body suppressed')
             status=self.check_reply(data[0],identity=1)
-            self.assertTrue(status.get('ok') is True and len(status['report']['rules'])==4)
+            self.assertTrue(status.get('ok') is True and len(status['report']['rules'])==len(read.PROVIDERS))
             self.check_reply(data[1],identity=2,error=-32002);self.check_reply(data[2],identity=3,error=-32002)
             jobs=self.check_reply(data[3],identity=4)
             self.assertTrue(jobs.get('ok') is True and jobs['report']['jobs']==[])

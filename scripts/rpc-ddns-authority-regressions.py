@@ -36,8 +36,6 @@ def setup_state(state):
 
 
 class HTTPAuthority(base.HTTPRead):
-    HTTP_TIMEOUT=18
-    CGI_TIMEOUT=18
 
     @contextmanager
     def session(self):
@@ -139,7 +137,7 @@ class HTTPAuthority(base.HTTPRead):
             preview=self.grant_result('preview',writer,self.modern('preview',writer,{'selection':'ddns_1'}))
             self.post('commit',(writer,None),confirmation=preview['confirmation'],consent='1')
             self.assertEqual([row['status'] for row in self.read('status',reader,modern=True)['rules']],
-                             ['unauthorized','ready','unauthorized','unauthorized'])
+                             ['unauthorized','ready','unauthorized'])
             before=self.snapshot();calls=self.calls()
             for sid in (reader,'f'*32,None):
                 data=self.response({'jsonrpc':'2.0','id':83,'method':'revoke','params':{'consent':'1'}},

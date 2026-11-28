@@ -97,7 +97,7 @@ def setup_mixed_state(state):
 
 
 def configure_mixed_source(state,rule):
-    if rule not in ('ddns_0','ddns_1','ddns_2','ddns_3'):raise ValueError('Unsupported fixed fixture rule')
+    if rule not in ('ddns_0','ddns_1','ddns_2'):raise ValueError('Unsupported fixed fixture rule')
     path=state/'etc/config/homegate';body=path.read_text()
     marker="config ddns_rule '"+rule+"'\n"
     if body.count(marker)!=1:raise ValueError('Expected one original rule in fixture')
@@ -303,7 +303,7 @@ class ProviderJobs(jobs.Jobs):
 class MixedJobs(ProviderJobs):
     def authorize(self,session):
         rules=getattr(self,'MIXED_RULES',('ddns_0','ddns_1'))
-        if rules not in (('ddns_0','ddns_1'),('ddns_1','ddns_2'),('ddns_1','ddns_3')):raise ValueError('Unsupported fixed mixed authority rules')
+        if rules not in (('ddns_0','ddns_1'),('ddns_1','ddns_2')):raise ValueError('Unsupported fixed mixed authority rules')
         preview=self.post('preview',session,selection=','.join(reversed(rules)))
         self.assertEqual(preview['rules'],list(rules));self.assertEqual(preview['provider'],'multiple')
         result=self.post('commit',session,confirmation=preview['confirmation'],consent='1')

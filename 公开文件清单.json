@@ -236,6 +236,7 @@
     "project/luci/prototype/lua/view/ddns.htm",
     "scripts/DDNS原生传输回归.py",
     "scripts/build-js-views.py",
+    "scripts/ddns_wan_regressions.py",
     "scripts/engineering_runtime.py",
     "scripts/fixtures/legacy-bootstrap/LICENSE",
     "scripts/fixtures/legacy-bootstrap/NOTICE",

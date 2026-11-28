@@ -86,11 +86,12 @@ jobs:
           build/verify-venv/bin/python scripts/native-ui-regressions.py
           build/verify-venv/bin/python scripts/native-theme-regressions.py
           build/verify-venv/bin/python scripts/配置预览页面回归.py
-      - name: 验证配置预览、DDNS 传输和地区数据
+      - name: 验证配置预览、DDNS 换址与地区数据
         if: matrix.group == 'configuration'
         run: |
           build/verify-venv/bin/python scripts/配置预览回归.py
           build/verify-venv/bin/python scripts/DDNS原生传输回归.py
+          build/verify-venv/bin/python scripts/ddns_wan_regressions.py
           build/verify-venv/bin/python scripts/访问地址库回归.py
       - name: 验证组件探测与超时收尾
         if: matrix.group == 'component'

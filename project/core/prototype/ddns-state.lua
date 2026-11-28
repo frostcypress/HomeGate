@@ -6,17 +6,24 @@ local outcomes={inflight=true,created=true,updated=true,unchanged=true,retry_wai
 local function integer(v,a,b)return type(v)=='number' and v==math.floor(v) and v>=a and v<=b end
 local function id(s)return type(s)=='string' and #s>0 and #s<=64 and s:match('^[a-zA-Z0-9_-]+$') end
 local function hex(s)return type(s)=='string' and #s==64 and s:match('^[0-9a-f]+$') end
+local function aliyun_conflict(d)
+    return d.provider=='aliyun' and d.outcome=='paused' and d.error_kind=='record_conflict'
+end
 function M.valid(d)
     if type(d)~='table' or d.schema~='HGDDNSSTATE1' or not id(d.rule) or not providers[d.provider] or
         not integer(d.revision,1,999999999) or not hex(d.identity) or not hex(d.generation) or type(d.boot)~='string' or
         #d.boot~=36 or not d.boot:match('^[0-9a-f-]+$') or not integer(d.interval,60,999999999) or
         not integer(d.updated,0,999999999) or not integer(d.failures,0,8) or not integer(d.delay,0,999999999) or
         not outcomes[d.outcome] or not kinds[d.error_kind] or (d.event_epoch~=nil and not integer(d.event_epoch,1,253402300799)) or
+        (d.wan_sample~=nil and not hex(d.wan_sample)) or
         (d.last_effect~='none' and d.last_effect~='confirmed' and d.last_effect~='unknown') then return false end
+    if d.ownership_policy~=nil and (d.ownership_policy~=1 or not aliyun_conflict(d)) then return false end
+    if d.wan_unavailable~=nil and (d.wan_unavailable~=true or d.outcome~='retry_wait' or
+        d.error_kind~='network_unavailable' or d.wan_sample~=nil) then return false end
     local n=0;for k in pairs(d) do
-        if k~='schema' and k~='rule' and k~='provider' and k~='revision' and k~='identity' and k~='generation' and k~='boot' and k~='interval' and k~='updated' and k~='failures' and k~='delay' and k~='outcome' and k~='error_kind' and k~='last_effect' and k~='event_epoch' then return false end;n=n+1
+        if k~='schema' and k~='rule' and k~='provider' and k~='revision' and k~='identity' and k~='generation' and k~='boot' and k~='interval' and k~='updated' and k~='failures' and k~='delay' and k~='outcome' and k~='error_kind' and k~='last_effect' and k~='event_epoch' and k~='ownership_policy' and k~='wan_sample' and k~='wan_unavailable' then return false end;n=n+1
     end
-    if n~=(d.event_epoch and 15 or 14) then return false end
+    if n~=14+(d.event_epoch and 1 or 0)+(d.ownership_policy and 1 or 0)+(d.wan_sample and 1 or 0)+(d.wan_unavailable and 1 or 0) then return false end
     if d.outcome=='inflight' then return d.last_effect=='unknown' and d.error_kind=='' and d.delay==0 end
     if d.outcome=='unknown' then return d.last_effect=='unknown' and d.delay==0 and d.failures>=1 end
     if d.outcome=='created' or d.outcome=='updated' or d.outcome=='unchanged' then
@@ -30,23 +37,31 @@ end
 function M.same(d,c)
     return d.rule==c.rule and d.provider==c.provider and d.revision==c.revision and d.identity==c.identity and d.generation==c.generation and d.boot==c.boot and d.interval==c.interval
 end
-function M.decision(d,c,now,blocked,authorized,incomplete)
+function M.decision(d,c,now,blocked,authorized,incomplete,network_check)
     if blocked or incomplete then return 'blocked',0 end
     if d and (d.outcome=='inflight' or d.outcome=='unknown') then return 'reconciliation_required',0 end
     if not authorized then return 'unauthorized',0 end
     if not d then return 'ready',0 end
     if not M.same(d,c) then return 'stale',0 end
     if now<d.updated then return 'clock_invalid',0 end
+    -- Recheck a pre-enrollment pause once. A conflict seen under this policy
+    -- still requires review, and uncertain writes retain the existing fence.
+    if aliyun_conflict(d) and d.ownership_policy==nil then return 'stale',0 end
     if d.outcome=='paused' then return 'paused',0 end
     local wait=math.max(0,d.updated+d.delay-now)
     if wait==0 then return 'ready',0 end
+    if network_check and hex(c.wan_sample) and c.wan_sample~=d.wan_sample then
+        -- A new sample can supersede a recorded WAN outage or a failed attempt on the old address.
+        local recovered=d.error_kind=='network_unavailable' and (d.wan_unavailable or hex(d.wan_sample))
+        if d.outcome~='retry_wait' or recovered then return 'ready',0 end
+    end
     return d.outcome=='retry_wait' and 'retry_wait' or 'waiting',wait
 end
 function M.begin(c,old,now)
     return {schema='HGDDNSSTATE1',rule=c.rule,provider=c.provider,revision=c.revision,identity=c.identity,generation=c.generation,boot=c.boot,interval=c.interval,updated=now,
-        failures=old and M.same(old,c) and old.failures or 0,delay=0,outcome='inflight',error_kind='',last_effect='unknown'}
+        failures=old and M.same(old,c) and old.failures or 0,delay=0,outcome='inflight',error_kind='',last_effect='unknown',wan_sample=c.wan_sample}
 end
-function M.finish(d,now,result,kind,effect,retryable)
+function M.finish(d,now,result,kind,effect,retryable,wan_unavailable)
     if not M.valid(d) or d.outcome~='inflight' or now<d.updated then return nil end
     local out={};for k,v in pairs(d) do out[k]=v end;out.updated=now
     if result=='created' or result=='updated' or result=='unchanged' then
@@ -62,6 +77,8 @@ function M.finish(d,now,result,kind,effect,retryable)
         else out.outcome='paused';out.delay=0 end
     else return nil end
     out.error_kind=kind;out.last_effect=effect
+    if aliyun_conflict(out) then out.ownership_policy=1 end
+    if wan_unavailable then out.wan_unavailable=true end
     return M.valid(out) and out or nil
 end
 function M.report(d,c,now,blocked,authorized,incomplete)

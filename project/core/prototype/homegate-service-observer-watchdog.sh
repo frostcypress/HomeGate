@@ -42,12 +42,12 @@ if [ "${1:-}" = --cloudflare-check ] || [ "${1:-}" = --aliyun-check ] || [ "${1:
     [ "$dns_read_enabled" = true ] && { [ "$#" -eq 4 ] || [ "$#" -eq 5 ]; } || exit 2
     action=cloudflare-check; budget=30
     dns_account=$2; dns_revision=$3; dns_job=$4
-    dns_mode=${5:-check}; case "$dns_mode" in check|zones) ;; hosts:*) [ "$dns_provider" = aliyun ] || exit 2;; records) [ "$dns_records_enabled" = true ] || exit 2;; reconcile) [ "$dns_records_enabled" = true ] && [ "$dns_reconcile_enabled" = true ] || exit 2;; *) exit 2;; esac
+    dns_mode=${5:-check}; case "$dns_mode" in check|zones) ;; hosts:*) [ "$dns_provider" = aliyun ] || exit 2;; records) [ "$dns_records_enabled" = true ] || exit 2;; reconcile) [ "$dns_records_enabled" = true ] && [ "$dns_reconcile_enabled" = true ] || exit 2;; records-runtime) [ "$dns_provider:$dns_records_enabled:$aliyun_receipt_enabled" = aliyun:true:true ] || exit 2;; *) exit 2;; esac
     [ "$dns_provider" != dnspod ] || { [ "$dns_mode" = check ] || [ "$dns_mode" = zones ] || { { [ "$dns_mode" = records ] || { [ "$dns_mode" = reconcile ] && [ "$dnspod_reconcile_enabled" = true ]; }; } && [ "$dnspod_records_enabled" = true ] && [ "$dns_receipt_enabled" = false ]; }; } || exit 2
     if [ "$dns_provider" = aliyun ]; then
         case "$dns_mode" in
             check|zones|hosts:*) ;;
-            records) [ "$aliyun_records_enabled" = true ] && [ "$dns_receipt_enabled" = false ] || exit 2;;
+            records|records-runtime) [ "$aliyun_records_enabled" = true ] && [ "$dns_receipt_enabled" = false ] || exit 2;;
             reconcile) [ "$aliyun_reconcile_enabled" = true ] && [ "$aliyun_records_enabled" = true ] && [ "$dns_receipt_enabled" = false ] || exit 2;;
         esac
     fi

@@ -13,7 +13,8 @@ mode=run
 [ "$action" != serve ] || mode=serve
 case "$action" in serve) [ "$ddns_schedule_enabled" = true ] && [ "$ddns_schedule_continuous_enabled" = true ] && [ "$#" -eq 2 ] && [ "$2" = --confirm ] || fail 2;;
     run) [ "$ddns_schedule_enabled" = true ] && [ "$#" -eq 2 ] && [ "$2" = --confirm ] || fail 2;;
-    status|quiescent) [ "$#" -eq 1 ] || fail 2;; stop|reap) [ "$#" -eq 2 ] && [ "$2" = --confirm ] || fail 2;;
+    status) [ "$#" -eq 1 ] || fail 2;; stop|reap) [ "$#" -eq 2 ] && [ "$2" = --confirm ] || fail 2;;
+    quiescent) case "$#:${2:-}" in 1:|2:--startup-read) ;;*) fail 2;;esac;;
     acme-compatible) [ "$ddns_schedule_closeout_enabled" = true ] && [ "$#" -eq 1 ] || fail 2;;
     event) [ "$ddns_schedule_events_enabled" = true ] && [ "$#" -eq 4 ] || fail 2
         event_action=$2;event_interface=$3;event_device=$4
@@ -196,7 +197,12 @@ if [ "$action" = quiescent ]; then
         read_lease && alive && stop_read && validate_control || fail
         [ "$live" = false ] || fail 4
     fi
-    business_lock && ash "$dir/homegate-config-prototype.sh" --persistent writer-check >/dev/null 2>/dev/null || fail 4
+    business_lock;lock_result=$?
+    if [ "$lock_result" != 0 ];then
+        [ "$lock_result" = 3 ] && [ "${2:-}" = --startup-read ] && fail 8
+        fail 4
+    fi
+    ash "$dir/homegate-config-prototype.sh" --persistent writer-check >/dev/null 2>/dev/null || fail 4
     for p in "$run/".dns-check-* "$run/".ddns-plan-*; do ! exists "$p" || fail 4;done
     if exists "$run/ddns-ui-jobs";then ash "$dir/homegate-ddns-job.sh" check-quiescent >/dev/null 2>/dev/null || fail 4;fi
     printf '{"api_version":1,"prototype":true,"ok":true,"phase":"ddns-quiescent","quiescent":true,"point_in_time":true,"effect":"none","write_ready":false,"production_ready":false}\n'
@@ -281,6 +287,7 @@ poll_delay=0.05
 if ! sleep 0.001 >/dev/null 2>&1;then sleep 0 >/dev/null 2>&1 || finish false failed 7;poll_delay=1;fi
 emit true running '' || fail
 last_now=$started
+network_check=false
 while :; do
     now && [ "$moment" -ge "$last_now" ] || finish false clock_invalid 7;last_now=$moment
     stop_read || finish false failed 7
@@ -310,7 +317,7 @@ while :; do
     decision=$(lua "$dir/homegate-ddns-schedule.lua" decision $states 9>&- 2>/dev/null) || finish false failed 7
     wait_for=${decision#*:};decision=${decision%%:*}
     case "$decision" in ready|wait) ;; idle) finish true idle 0;; blocked) finish false blocked 4;; *) finish false failed 7;; esac
-    if [ "$decision" = wait ]; then
+    if [ "$decision" = wait ] && [ "$network_check" = false ]; then
         emit true waiting '' || fail;business_unlock
         now || finish false clock_invalid 7;[ "$mode" != serve ] || [ "$wait_for" -le 60 ] || wait_for=60;wake=$((moment+wait_for));[ "$mode" = serve ] || [ "$wake" -le "$deadline" ] || wake=$deadline
         while :; do
@@ -320,7 +327,10 @@ while :; do
             [ "$moment" -lt "$wake" ] || break
             if [ "$control_busy" = false ];then
                 wake_take || finish false failed 7
-                [ "$woke" = false ] || break
+                if [ "$woke" = true ];then
+                    [ "$mode:$ddns_schedule_closeout_enabled" != serve:true ] || network_check=true
+                    break
+                fi
             fi
             sleep 1 || { [ "$interrupted" = true ] || finish false failed 7; }
         done
@@ -341,6 +351,7 @@ while :; do
             ash "$dir/homegate-ddns-batch-results.sh" forget --confirm 4>&- 9>&- >/dev/null || finish false blocked 4
         fi
         confirm=--confirm-closeouts;closed=retired
+        [ "$network_check" = false ] || confirm=--confirm-network-change
     fi
     ash "$dir/homegate-ddns-batch.sh" sync "$confirm" 4>&- 9>&- > "$work/batch" 2>/dev/null & child=$!
     child_info=$(lua "$dir/worker-process.lua" info "$child" none 2>/dev/null) || fail
@@ -373,5 +384,6 @@ while :; do
         *) last_effect=unknown;finish false failed 7;;
     esac
     case "$rc" in 0|1|4) ;; *) finish false failed 7;; esac
+    network_check=false
     business_unlock
 done

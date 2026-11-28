@@ -20,7 +20,7 @@ on:
         default: ipk
         required: true
       mode:
-        description: 仅构建会先核对源码，再编译三包
+        description: 核对源码、运行回归及编译三包，发布模式另行核对发布条件和审批
         type: choice
         options: [仅检查源码, 仅构建, 测试预发布, 正式发布]
         default: 仅构建
@@ -40,7 +40,7 @@ jobs:
       - name: 校验版本并生成原生构建输入
         run: |
           make check
-          make frontend
+          python3 scripts/frontend-source-regressions.py
           git diff --exit-code -- project/luci/js/htdocs
           python3 scripts/生成接续包.py --target pending --stage 源码检查 --public-source --check-public-tree
       - name: 上传经核对的源码
@@ -49,12 +49,62 @@ jobs:
           name: HomeGate-公开源码-${{ github.run_id }}
           path: dist/*_公开源码.zip
           if-no-files-found: error
-  build:
-    name: SDK 三包构建
+  regression:
+    name: 功能回归 · ${{ matrix.label }}
     needs: source
     if: github.event_name == 'workflow_dispatch' && inputs.mode != '仅检查源码'
     runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - group: luci
+            label: LuCI 更新、配置与双主题
+          - group: configuration
+            label: 配置、DDNS 与访问地区
+          - group: component
+            label: nginx 与网络唤醒组件监督
+    steps:
+      - name: 检出源码
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: 安装 Lua 5.1 测试依赖
+        if: matrix.group != 'component'
+        run: |
+          python3 -m venv build/verify-venv
+          build/verify-venv/bin/python -m pip install 'lupa==2.8'
+      - name: 安装固定浏览器测试工具
+        if: matrix.group == 'luci'
+        run: |
+          build/verify-venv/bin/python -m pip install 'playwright==1.63.0'
+          build/verify-venv/bin/python -m playwright install --with-deps chromium
+      - name: 验证 LuCI 交互、更新和主题
+        if: matrix.group == 'luci'
+        run: |
+          build/verify-venv/bin/python scripts/native-ui-regressions.py
+          build/verify-venv/bin/python scripts/native-theme-regressions.py
+          build/verify-venv/bin/python scripts/配置预览页面回归.py
+      - name: 验证配置预览、DDNS 传输和地区数据
+        if: matrix.group == 'configuration'
+        run: |
+          build/verify-venv/bin/python scripts/配置预览回归.py
+          build/verify-venv/bin/python scripts/DDNS原生传输回归.py
+          build/verify-venv/bin/python scripts/访问地址库回归.py
+      - name: 验证组件探测与超时收尾
+        if: matrix.group == 'component'
+        run: python3 scripts/native-component-probe-regressions.py
+  build:
+    name: SDK 三包构建
+    needs: [source, regression]
+    if: github.event_name == 'workflow_dispatch' && inputs.mode != '仅检查源码'
+    runs-on: ubuntu-24.04
     timeout-minutes: 60
+    outputs:
+      offline_archive: ${{ steps.sdk.outputs.offline_archive }}
+      archive_sha256: ${{ steps.sdk.outputs.archive_sha256 }}
+      public_key_sha256: ${{ steps.sdk.outputs.public_key_sha256 }}
     steps:
       - name: 检出源码
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -68,19 +118,33 @@ jobs:
           PACKAGE_FORMAT: ${{ inputs.package_format }}
         run: python3 scripts/检查发布条件.py --target "$TARGET_MANIFEST" --luci "$LUCI" --format "$PACKAGE_FORMAT"
       - name: 安装 SDK 构建依赖
-        run: sudo apt-get update && sudo apt-get install --no-install-recommends -y zstd gawk libncurses-dev rsync xxd python3-setuptools
+        run: sudo apt-get update && sudo apt-get install --no-install-recommends -y zstd gawk libncurses-dev rsync xxd openssl python3-setuptools
       - name: 使用目标 SDK 构建并验证真实三包
+        id: sdk
         env:
           TARGET_MANIFEST: ${{ inputs.target_manifest }}
           LUCI: ${{ inputs.luci }}
           PACKAGE_FORMAT: ${{ inputs.package_format }}
           BUILD_MODE: ${{ inputs.mode }}
         run: |
-          args=(--target "$TARGET_MANIFEST" --luci "$LUCI" --format "$PACKAGE_FORMAT")
+          args=(--target "$TARGET_MANIFEST" --luci "$LUCI" --format "$PACKAGE_FORMAT"
+                --update-public-key packaging/production/update-public.pem)
           if [ "$BUILD_MODE" = '仅构建' ] && [ "$TARGET_MANIFEST" = 'targets/qwrt-r26.3.8-ipq807x.json' ]; then
             args+=(--candidate)
           fi
           python3 scripts/目标SDK构建.py "${args[@]}"
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          evidence = json.loads(Path('dist/target/build-evidence.json').read_text(encoding='utf-8'))
+          archive = evidence['offline_archive']
+          with open(os.environ['GITHUB_OUTPUT'], 'a', encoding='utf-8') as outputs:
+              print('offline_archive=' + archive['file'], file=outputs)
+              print('archive_sha256=' + archive['sha256'], file=outputs)
+              print('public_key_sha256=' + evidence['update_public_key_sha256'], file=outputs)
+          PY
       - name: 上传当前目标三包及来源信息
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
@@ -88,7 +152,7 @@ jobs:
           path: dist/target/
           if-no-files-found: error
   release:
-    name: 受保护的发布审批
+    name: 受保护的发布准备
     needs: build
     if: github.event_name == 'workflow_dispatch' && (inputs.mode == '测试预发布' || inputs.mode == '正式发布')
     runs-on: ubuntu-24.04
@@ -96,7 +160,28 @@ jobs:
     permissions:
       contents: read
     steps:
-      - name: 核心迁移完成前禁止自动发布
+      - name: 检出待发布源码
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: 核对正式发布条件
+        env:
+          TARGET_MANIFEST: ${{ inputs.target_manifest }}
+          LUCI: ${{ inputs.luci }}
+          PACKAGE_FORMAT: ${{ inputs.package_format }}
+        run: python3 scripts/检查发布条件.py --target "$TARGET_MANIFEST" --luci "$LUCI" --format "$PACKAGE_FORMAT" --release
+      - name: 登记本地签名输入
+        env:
+          OFFLINE_ARCHIVE: ${{ needs.build.outputs.offline_archive }}
+          ARCHIVE_SHA256: ${{ needs.build.outputs.archive_sha256 }}
+          PUBLIC_KEY_SHA256: ${{ needs.build.outputs.public_key_sha256 }}
         run: |
-          echo '发布适配和实机验收尚未完成，当前阶段不执行 GitHub Release。' >&2
-          exit 1
+          [[ $OFFLINE_ARCHIVE =~ ^homegate-r[0-9]+-offline-three\.tar$ ]]
+          [[ $ARCHIVE_SHA256 =~ ^[0-9a-f]{64}$ ]]
+          [[ $PUBLIC_KEY_SHA256 =~ ^[0-9a-f]{64}$ ]]
+          {
+            printf '### 本地签名输入\n\n'
+            printf -- '- 离线归档 %s\n' "$OFFLINE_ARCHIVE"
+            printf -- '- 归档 SHA-256 %s\n' "$ARCHIVE_SHA256"
+            printf -- '- 公钥 SHA-256 %s\n' "$PUBLIC_KEY_SHA256"
+          } >> "$GITHUB_STEP_SUMMARY"

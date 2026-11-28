@@ -34,8 +34,15 @@ elseif mode=='import'then
  if not arg[2] or not arg[3] or arg[4] then fail()end
  emit({certificate_pem=read(arg[2],65536,'public'),private_key_pem=read(arg[3],16384)});return
 elseif mode=='ids'then
- local raw=io.stdin:read(262145);local doc=raw and #raw<=262144 and codec.parse(raw);if not doc then fail()end
  if arg[3] or (arg[2]~='certificate' and arg[2]~='ddns_rule') then fail()end
+ local raw=io.stdin:read(262145)
+ if not raw or #raw>262144 then fail()end
+ local doc=codec.parse(raw)
+ if not doc then
+  -- An untouched installation still uses the packaged UCI template.
+  if arg[2]=='ddns_rule' and raw==read(base..'/factory.config',262144,'public') then return end
+  fail()
+ end
  for _,s in ipairs(doc)do
   if s.kind==arg[2] and (s.kind~='ddns_rule' or (s.values.type=='AAAA' and s.values.external_dns~='1')) then io.write(s.name,'\n')end
  end

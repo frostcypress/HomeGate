@@ -14,7 +14,8 @@ import tempfile
 import urllib.request
 from project import ROOT, identity, selected_sdk_series, verify_generated
 from production_runtime import stage_sdk
-from native_transition import build_offline_bundle
+from native_transition import build_offline_bundle, write_offline_archive
+from online_release import PUBLIC_KEY_PATH, describe_bundle, public_key
 
 CANDIDATE_TARGET = ROOT / 'targets/qwrt-r26.3.8-ipq807x.json'
 CANDIDATE_INPUTS = ROOT / 'targets/native-candidate-24.10.6-ipq807x.json'
@@ -100,7 +101,7 @@ def unpack_sdk(archive, destination):
     return sdk
 
 
-def build(target_file, frontend, fmt, *, candidate=False, cache=None):
+def build(target_file, frontend, fmt, *, candidate=False, cache=None, update_public_key=None):
     target = json.loads(target_file.read_text(encoding='utf-8'))
     if candidate:
         if os.name != 'posix' or os.getuid() == 0:
@@ -117,6 +118,10 @@ def build(target_file, frontend, fmt, *, candidate=False, cache=None):
         raise ValueError('Output exists; use a clean build workspace')
     with tempfile.TemporaryDirectory(prefix='homegate-sdk-') as directory:
         work = Path(directory)
+        if update_public_key is not None:
+            key_bytes = public_key(update_public_key)
+            update_public_key = work / 'update-public.pem'
+            update_public_key.write_bytes(key_bytes)
         archive = checked_input(work, 'sdk.tar', target['sdk']['url'], target['sdk']['sha256'], cache)
         extracted = work / 'sdk'
         extracted.mkdir()
@@ -128,7 +133,7 @@ def build(target_file, frontend, fmt, *, candidate=False, cache=None):
                 subprocess.run(['zstd', '-d', '-c', str(archive)], stdout=stream, check=True, timeout=120)
             archive = tar_path
         sdk = unpack_sdk(archive, extracted)
-        stage_sdk(ROOT, sdk, bundled=True)
+        stage_sdk(ROOT, sdk, bundled=True, update_public_key=update_public_key)
         if candidate:
             configure_candidate_feeds(work, sdk, feeds, cache)
         names = (item['slug'] + '-core', 'luci-app-' + item['slug'], 'luci-i18n-' + item['slug'] + '-zh-cn')
@@ -171,10 +176,17 @@ def build(target_file, frontend, fmt, *, candidate=False, cache=None):
             if len(candidates)!=1:
                 raise ValueError(f'Expected one built target component: {name}')
             shutil.copy2(candidates[0],component_tree/candidates[0].name)
-        build_offline_bundle(ROOT,staged,destination,architecture,component_tree)
+        receipt = build_offline_bundle(ROOT, staged, destination, architecture, component_tree,
+                                       update_public_key=update_public_key)
+        offline_archive = destination / f"homegate-r{item['release']}-offline-three.tar"
+        write_offline_archive(destination, offline_archive, receipt)
+        _, signed_input = describe_bundle(offline_archive, offline_archive.read_bytes())
         evidence = {'target': target, 'identity': item, 'luci': frontend, 'format': actual,
                     'source_commit': os.environ.get('GITHUB_SHA'), 'run_id': os.environ.get('GITHUB_RUN_ID'),
                     'packages': report, 'status': 'compiled-metadata-verified-not-device-tested'}
+        evidence['offline_archive'] = {'file': offline_archive.name, 'sha256': signed_input['sha256'],
+                                       'bytes': signed_input['size']}
+        evidence['update_public_key_sha256'] = receipt['installed_files_sha256'].get(PUBLIC_KEY_PATH)
         if candidate:
             evidence.update(scope='pinned-sdk-candidate-build', feeds=feeds, release_authorized=False)
         (destination / 'build-evidence.json').write_text(json.dumps(evidence, ensure_ascii=False, indent=2), encoding='utf-8')
@@ -187,7 +199,9 @@ if __name__ == '__main__':
     parser.add_argument('--format', choices=('auto', 'ipk', 'apk'), default='auto')
     parser.add_argument('--candidate', action='store_true', help='使用固定 SDK 和 feed 构建候选三包')
     parser.add_argument('--input-cache', type=Path, help='含 sdk.tar 和固定 feed 归档的候选构建缓存')
+    parser.add_argument('--update-public-key', type=Path, help='要嵌入 Core 的 PEM 公钥')
     args = parser.parse_args()
     if args.input_cache and not args.candidate:
         parser.error('--input-cache requires --candidate')
-    build(args.target, args.luci, args.format, candidate=args.candidate, cache=args.input_cache)
+    build(args.target, args.luci, args.format, candidate=args.candidate, cache=args.input_cache,
+          update_public_key=args.update_public_key)

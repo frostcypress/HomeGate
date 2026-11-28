@@ -16,8 +16,10 @@ web=luci-app-homegate
 language=luci-i18n-homegate-zh-cn
 store=/etc/homegate/transactions
 checkpoint=
+checkpoint_source=
 upgrade_from=
 upgrade_stage=precheck
+resume_mixed=false
 
 fail() {
     printf 'homegate_offline_failed=%s\n' "$1" >&2
@@ -35,6 +37,19 @@ esac
 cd -P "$(dirname "$0")"
 bundle=$PWD
 sha256sum -c SHA256SUMS || fail bundle_checksum
+bundle_digest=$(sha256sum SHA256SUMS) || fail bundle_checksum
+bundle_digest=${bundle_digest%% *}
+
+installer_lock=/tmp/homegate-offline-install.lock
+if [ ! -e "$installer_lock" ] && [ ! -L "$installer_lock" ];then
+    (set -C; : > "$installer_lock") 2>/dev/null || :
+fi
+[ -f "$installer_lock" ] && [ ! -L "$installer_lock" ] &&
+    [ "$(stat -c '%u:%a:%h:%s' "$installer_lock")" = 0:600:1:0 ] || fail installer_lock
+exec 8<>"$installer_lock"
+flock -n 8 || fail installer_busy
+[ "$(stat -Lc '%d:%i:%u:%a:%h:%s' /proc/self/fd/8)" = "$(stat -c '%d:%i:%u:%a:%h:%s' "$installer_lock")" ] ||
+    fail installer_lock
 
 write_upgrade_log() {
     for attempt in 1 2 3; do
@@ -72,7 +87,7 @@ cleanup() {
     if [ "$status" -ne 0 ] && [ -n "$upgrade_from" ] && [ -n "$upgrade_stage" ]; then
         write_upgrade_log failed "$upgrade_stage" || :
     fi
-    rm -f "$work/architectures" "$work/opkg.conf" "$work/installed" "$work/plan" || :
+    rm -f "$work/architectures" "$work/opkg.conf" "$work/installed" "$work/plan" "$work/package-status" || :
     rmdir "$work/empty-conf" "$work/empty-lists" "$work" 2>/dev/null || :
     exit "$status"
 }
@@ -86,9 +101,25 @@ awk -v arch="$architecture" '$1=="arch" && $2==arch && $3~/^[0-9]+$/ {ok=1} END 
     cat "$work/architectures"
 } > "$work/opkg.conf"
 export OPKG_CONF_DIR="$work/empty-conf"
-pkg() { opkg -f "$work/opkg.conf" -l "$work/empty-lists" -t "$work" "$@"; }
+pkg() { opkg -f "$work/opkg.conf" -l "$work/empty-lists" -t "$work" "$@" 8>&-; }
 read_packages() { pkg list-installed > "$work/installed" || fail package_query; }
 installed() { awk -v package="$1" '$1==package && $2=="-" {print $3}' "$work/installed"; }
+homegate_versions() {
+    local name value
+    for name in "$core" "$web" "$language";do
+        value=$(installed "$name") || return 1
+        printf '%s=%s\n' "$name" "$value"
+    done
+}
+package_fully_installed() {
+    pkg status "$1" > "$work/package-status" || return 1
+    awk -v name="$1" -v version="$2" '
+        /^Package: / {packages++; package_ok=($2==name && NF==2)}
+        /^Version: / {versions++; version_ok=($2==version && NF==2)}
+        /^Status: / {statuses++; installed=($4=="installed" && NF==4)}
+        END {exit !(packages==1 && package_ok && versions==1 && version_ok && statuses==1 && installed)}
+    ' "$work/package-status"
+}
 
 supported_source() {
     local source_release
@@ -111,6 +142,7 @@ find_checkpoint() {
         supported_source "$series-r$source_release" || continue
         [ -z "$checkpoint" ] || fail ambiguous_checkpoint
         checkpoint=$path
+        checkpoint_source="$series-r$source_release"
     done
     [ -n "$checkpoint" ] || fail checkpoint_missing
 }
@@ -208,14 +240,49 @@ config_state() {
     '
 }
 checked_checkpoint() {
+    local file bound_bundle=false
     [ -d "$checkpoint" ] && [ ! -L "$checkpoint" ] &&
         [ "$(stat -c '%u:%a' "$checkpoint")" = 0:700 ] || return 1
     for file in state.tar SHA256SUMS live.sha256 observed; do
         [ -f "$checkpoint/$file" ] && [ ! -L "$checkpoint/$file" ] &&
             [ "$(stat -c '%u:%a:%h' "$checkpoint/$file")" = 0:600:1 ] || return 1
     done
-    (cd "$checkpoint" && sha256sum -c SHA256SUMS >/dev/null) &&
+    if [ -e "$checkpoint/bundle.sha256" ] || [ -L "$checkpoint/bundle.sha256" ];then
+        [ -f "$checkpoint/bundle.sha256" ] && [ ! -L "$checkpoint/bundle.sha256" ] &&
+            [ "$(stat -c '%u:%a:%h:%s' "$checkpoint/bundle.sha256")" = 0:600:1:65 ] &&
+            [ "$(cat "$checkpoint/bundle.sha256")" = "$bundle_digest" ] || return 1
+        bound_bundle=true
+    elif [ "$resume_mixed" = true ];then
+        return 1
+    fi
+    awk -v bound="$bound_bundle" '
+        $1 !~ /^[0-9a-f]+$/ || length($1)!=64 || NF!=2 {exit 1}
+        $2!="state.tar" && $2!="live.sha256" && $2!="observed" && $2!="bundle.sha256" {exit 1}
+        seen[$2]++ {exit 1}
+        END {if (!seen["state.tar"] || !seen["live.sha256"] || !seen["observed"] ||
+            ((bound=="true") != (seen["bundle.sha256"]==1))) exit 1}
+    ' "$checkpoint/SHA256SUMS" &&
+        (cd "$checkpoint" && sha256sum -c SHA256SUMS >/dev/null) &&
         sha256sum -c "$checkpoint/live.sha256" >/dev/null
+}
+verify_mixed_resume() {
+    find_checkpoint
+    case "$checkpoint_source" in 1.3.0-r240|1.3.0-r265) fail mixed_homegate_versions;;esac
+    checked_checkpoint || fail checkpoint
+    prior=$(cat "$checkpoint/observed")
+    case "$prior" in [01]:[01]) ;;*) fail unknown_previous_state;;esac
+    for name in "$core" "$web" "$language";do
+        detected=$(installed "$name")
+        case "$detected" in "$checkpoint_source"|"$version") ;;*) fail mixed_homegate_versions;;esac
+        package_fully_installed "$name" "$detected" || fail mixed_package_unconfigured
+    done
+    actual=$(observe_with_retry) || fail unknown_runtime_state
+    [ "$actual" = "${prior%%:*}:0" ] || fail mixed_runtime_not_stopped
+    revision=$(config_state) || fail configuration_recovery_required
+    live_hashes=$(sha256sum /etc/config/homegate "$store/current" "$store/gen-$revision/manifest") ||
+        fail configuration_recovery_required
+    [ "$live_hashes" = "$(cat "$checkpoint/live.sha256")" ] || fail checkpoint
+    upgrade_from=$checkpoint_source
 }
 check_expected_packages() {
     read_packages
@@ -258,11 +325,7 @@ retire_legacy() {
 finish_migration() {
     check_expected_packages
     checked_checkpoint || fail retained_configuration
-    if [ -z "$upgrade_from" ]; then
-        # The checkpoint identifies the previous release when resuming after installation.
-        from_release=${checkpoint##*/.homegate-r}
-        upgrade_from="$series-r${from_release%%-before-r*}"
-    fi
+    [ -n "$upgrade_from" ] || upgrade_from=$checkpoint_source
     revision=$(config_state) || fail configuration_recovery_required
     retire_legacy
     checked_checkpoint || fail retained_configuration
@@ -274,7 +337,7 @@ finish_migration() {
     actual=$(observe_with_retry) || fail unknown_runtime_state
     [ "${actual%%:*}" = "${prior%%:*}" ] || fail boot_state_changed
     if [ "${prior#*:}:${actual#*:}" = 1:0 ]; then
-        /etc/init.d/homegate start || fail previous_service_restart
+        /etc/init.d/homegate start 8>&- || fail previous_service_restart
         n=0
         while [ "$n" -lt 30 ]; do
             if current=$(observe) && [ "$current" = "$prior" ]; then break; fi
@@ -291,18 +354,30 @@ finish_migration() {
 }
 
 read_packages
+starting_versions=$(homegate_versions) || fail package_query
 [ -z "$(installed homegate)" ] && [ -z "$(installed homegate-engineering-core)" ] || fail unsupported_other_homegate
 current=$(installed "$core")
 if [ "$mode" = fresh ]; then
     for name in "$core" "$web" "$language" homegate-nginx homegate-wol; do
         [ -z "$(installed "$name")" ] || fail "already_installed:$name"
     done
-    for path in /etc/homegate /etc/config/homegate /usr/libexec/homegate /etc/.homegate-transition \
+    for path in /etc/homegate /etc/config/homegate /etc/.homegate-transition \
         /usr/libexec/homegate-nginx /usr/libexec/homegate-wol; do
         [ ! -e "$path" ] && [ ! -L "$path" ] || fail "existing_homegate_state:$path"
     done
+    path=/usr/libexec/homegate
+    if [ -e "$path" ] || [ -L "$path" ]; then
+        # opkg may leave empty payload directories after removing every file.
+        [ -d "$path" ] && [ ! -L "$path" ] || fail "existing_homegate_state:$path"
+        retained=$(find "$path" ! \( -type d -user 0 -perm 0755 \) -print) || fail "existing_homegate_state:$path"
+        [ -z "$retained" ] || fail "existing_homegate_state:$path"
+    fi
 else
-    if [ "$current" != "$version" ]; then
+    if [ "$(installed "$web")" != "$current" ] || [ "$(installed "$language")" != "$current" ];then
+        resume_mixed=true
+        upgrade_stage=checkpoint
+        verify_mixed_resume
+    elif [ "$current" != "$version" ]; then
         supported_source "$current" || fail unsupported_migration_version
         if check_dns_migration /etc/config/homegate && check_dns_migration "${store%/*}/package-config"; then
             :
@@ -315,22 +390,20 @@ else
         upgrade_from=$current
         write_upgrade_log begin none || :
     fi
-    for name in "$web" "$language"; do
-        [ "$(installed "$name")" = "$current" ] || fail mixed_homegate_versions
-    done
     nginx=$(installed homegate-nginx)
     wol=$(installed homegate-wol)
     case "$nginx:$wol" in
         :|:1-r1|1.30.6-r3:|1.30.7-r1:|1.30.6-r3:1-r1|1.30.7-r1:1-r1) ;;
         *) fail unknown_legacy_component_versions;;
     esac
-    if [ "$current" = "$version" ]; then
+    if [ "$resume_mixed" = true ];then
+        [ -z "$nginx$wol" ] || fail unexpected_legacy_components
+    elif [ "$current" = "$version" ]; then
         upgrade_stage=verify
         find_checkpoint
         finish_migration
         exit 0
-    fi
-    if [ "$current" = '1.3.0-r240' ] || [ "$current" = '1.3.0-r265' ]; then
+    elif [ "$current" = '1.3.0-r240' ] || [ "$current" = '1.3.0-r265' ]; then
         [ -n "$nginx" ] && [ -n "$wol" ] || fail incomplete_legacy_components
         for path in /usr/libexec/homegate/components /usr/share/licenses/homegate-core/nginx \
             /usr/share/licenses/homegate-core/wol; do
@@ -339,19 +412,27 @@ else
     else
         [ -z "$nginx$wol" ] || fail unexpected_legacy_components
     fi
-    checkpoint=/etc/.homegate-r${current##*-r}-before-r$target_release
+    [ "$resume_mixed" = true ] || checkpoint=/etc/.homegate-r${current##*-r}-before-r$target_release
 fi
 
-set -- "$bundle/${core}_${version}_${architecture}.ipk" \
-       "$bundle/${web}_${version}_all.ipk" "$bundle/${language}_${version}_all.ipk"
+set --
+planned=
+for name in "$core" "$web" "$language";do
+    if [ "$resume_mixed" = true ] && [ "$(installed "$name")" = "$version" ];then continue;fi
+    arch=all
+    [ "$name" != "$core" ] || arch=$architecture
+    set -- "$@" "$bundle/${name}_${version}_$arch.ipk"
+    planned="$planned $name"
+done
+[ "$#" -gt 0 ] || fail unexpected_install_plan
 if ! pkg --noaction install "$@" > "$work/plan" 2>&1; then
     cat "$work/plan"; fail install_preflight
 fi
-awk -v mode="$mode" -v from="$current" -v to="$version" '
-    BEGIN {want["homegate-core"]=1; want["luci-app-homegate"]=1; want["luci-i18n-homegate-zh-cn"]=1}
+awk -v mode="$mode" -v from="$upgrade_from" -v to="$version" -v planned="$planned" -v resume="$resume_mixed" '
+    BEGIN {n=split(planned, names, " "); for(i=1;i<=n;i++) want[names[i]]=1}
     /^Installing / {if (mode!="fresh" || !($2 in want) || $3!=("(" to ")") || $4!="to" || $5!="root...") bad=1; seen[$2]=1}
     /^Upgrading / {if (mode!="migrate" || !($2 in want) || $3!="on" || $4!="root" || $5!="from" || $6!=from || $7!="to" || $8!=(to "...")) bad=1; seen[$2]=1}
-    /^Removing package / {if (mode!="migrate" || ($3!="homegate-nginx" && $3!="homegate-wol") || $4!="from" || $5!="root...") bad=1}
+    /^Removing package / {if (mode!="migrate" || resume=="true" || ($3!="homegate-nginx" && $3!="homegate-wol") || $4!="from" || $5!="root...") bad=1}
     /^(Downgrading|Collected errors:)/ {bad=1}
     END {for (item in want) if (!(item in seen)) bad=1; exit bad}
 ' "$work/plan" || { cat "$work/plan"; fail unexpected_install_plan; }
@@ -376,17 +457,21 @@ if [ "$mode" = migrate ]; then
         tar -C / -cpf "$checkpoint/state.tar" etc/config/homegate etc/homegate || fail checkpoint_backup
         sha256sum /etc/config/homegate "$store/current" "$store/gen-$revision/manifest" > "$checkpoint/live.sha256"
         printf '%s\n' "$before" > "$checkpoint/observed"
-        (cd "$checkpoint" && sha256sum state.tar live.sha256 observed > SHA256SUMS)
+        printf '%s\n' "$bundle_digest" > "$checkpoint/bundle.sha256"
+        (cd "$checkpoint" && sha256sum state.tar live.sha256 observed bundle.sha256 > SHA256SUMS)
         fsync "$checkpoint/state.tar" "$checkpoint/live.sha256" "$checkpoint/observed" \
-            "$checkpoint/SHA256SUMS" "$checkpoint" /etc || fail checkpoint_sync
+            "$checkpoint/bundle.sha256" "$checkpoint/SHA256SUMS" "$checkpoint" /etc || fail checkpoint_sync
         checked_checkpoint || fail checkpoint
     fi
     upgrade_stage=stop
     /usr/bin/homegate service-quiescent >/dev/null || fail service_not_quiescent
     printf 'checkpoint_verified=true\n'
+    [ "$resume_mixed" != true ] || printf 'homegate_offline_resuming_mixed=true\n'
 fi
 
 upgrade_stage=install
+read_packages
+[ "$(homegate_versions)" = "$starting_versions" ] || fail package_versions_changed
 pkg install "$@" || fail package_install
 if [ "$mode" = migrate ]; then
     upgrade_stage=verify

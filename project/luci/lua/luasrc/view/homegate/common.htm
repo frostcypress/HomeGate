@@ -35,7 +35,7 @@
   --hg-status-label-wrap: nowrap;
   --hg-modal-width: 500px;
   --hg-modal-wide-width: 760px;
-  --hg-modal-access-width: 1040px;
+  --hg-modal-access-width: 1064px;
   --hg-modal-max-width: 100%;
   --hg-modal-padding: 1.15em 1.25em;
   --hg-modal-radius: 0px;
@@ -431,22 +431,23 @@ html:lang(zh) .hg-log-actions .hg-btn-4, html:lang(zh) .hg-button-row .hg-btn-4 
 .hg-access-table-scroll .hg-access-table thead th { position: sticky; top: 0; z-index: 1; background: var(--hg-surface); }
 .hg-access-table {
   --hg-access-domain-width: 128px;
-  --hg-access-state-width: 120px;
+  --hg-access-state-width: 144px;
   --hg-access-time-width: 150px;
   width: 100%; max-width: 100%; min-width: 0; margin: 0 !important; table-layout: fixed;
 }
-.hg-access-table th, .hg-access-table td { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-weight: 400 !important; }
+.hg-modal .hg-access-table th, .hg-modal .hg-access-table td {
+  white-space: normal; overflow-wrap: anywhere; overflow: visible; text-overflow: clip;
+}
+.hg-access-table td { font-weight: 400 !important; }
 .hg-access-table th:first-child, .hg-access-table td:first-child { padding-left: 0 !important; }
 .hg-modal .hg-access-table th.hg-access-action-head, .hg-modal .hg-access-table td.hg-access-action { padding-left: 0 !important; padding-right: 0 !important; }
 .hg-access-table th { font-weight: 600 !important; }
 .hg-access-table .hg-access-source, .hg-access-table .hg-access-time { font-family: inherit !important; }
-.hg-access-table .hg-access-source { white-space: normal; overflow-wrap: anywhere; text-overflow: clip; }
 .hg-access-ip-edit {
   padding: 0; border: 0; background: transparent; color: inherit; font: inherit;
   text-align: left; white-space: normal; overflow-wrap: anywhere; max-width: 100%;
   text-decoration: underline; cursor: pointer;
 }
-.hg-access-table .hg-access-action { overflow: visible; text-overflow: clip; white-space: nowrap; text-align: left !important; }
 .hg-access-action-group { width: 100%; max-width: 100%; flex-wrap: wrap; }
 .hg-access-domain-col { width: var(--hg-access-domain-width); }
 .hg-access-state-col { width: var(--hg-access-state-width); }
@@ -486,7 +487,7 @@ html.hg-theme-design .hg-wrap, html.hg-theme-design .hg-modal {
   --hg-status-label-wrap: normal;
   --hg-modal-width: 560px;
   --hg-modal-wide-width: min(980px, calc(100vw - 48px));
-  --hg-modal-access-width: min(1040px, calc(100vw - 48px));
+  --hg-modal-access-width: min(1064px, calc(100vw - 48px));
   --hg-modal-max-width: calc(100vw - 48px);
   --hg-modal-padding: 18px 20px 16px;
   --hg-modal-radius: 10px;
@@ -571,7 +572,7 @@ html.hg-theme-design .hg-modal .hg-modal-head h3 {
   .hg-access-table {
     min-width: calc(31em + var(--hg-access-domain-width) + var(--hg-access-state-width) + var(--hg-access-time-width) + var(--hg-access-actions-width));
   }
-  .hg-access-table .hg-access-source, .hg-access-ip-edit { white-space: nowrap; }
+  .hg-modal .hg-access-table td.hg-access-source, .hg-access-ip-edit { white-space: nowrap; }
   html.hg-theme-boot .hg-wrap .hg-section-head { padding-right: 16px; }
   html.hg-theme-boot .hg-wrap .hg-table-scroll-wrap { padding-right: 16px; }
 

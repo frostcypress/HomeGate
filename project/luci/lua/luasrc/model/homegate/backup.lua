@@ -5,7 +5,7 @@ local TYPES = {"homegate", "dns_account", "ddns_rule", "certificate", "web_rule"
 local FIELDS = {
     homegate = {"enabled", "log_level", "log_max_lines", "access_enabled", "access_allow", "access_deny", "access_region", "management_domain", "management_wan", "management_certificate", "wol_interface", "last_wol_host", "ddns_interval", "https_port", "http_port", "proxy_https_port", "proxy_http_port", "auto_firewall", "acme_email", "acme_directory", "renew_days", "version", "block_standard_public_ports"},
     dns_account = {"name", "provider"},
-    ddns_rule = {"enabled", "name", "account", "zone", "host", "type", "source", "interface", "ttl", "retained", "external_dns"},
+    ddns_rule = {"enabled", "name", "account", "zone", "host", "type", "source", "interface", "ttl", "retained", "external_dns", "aliyun_adopt"},
     certificate = {"enabled", "name", "source", "account", "zone", "domains", "email", "renew_days", "ca", "environment", "retained"},
     web_rule = {"enabled", "domain", "https", "certificate", "certificate_mode", "certificate_managed", "external_port", "certificate_ca_lock", "retained", "list_order"},
     wol_host = {"name", "mac"}
@@ -28,8 +28,8 @@ local DEFAULTS = {
     wol_host = {name="", mac=""}
 }
 local KEYS = {}
--- Read the removed r245 option so past generations remain byte-compatible.
-local OPTIONAL = {external_port=true, certificate_ca_lock=true, block_standard_public_ports=true, management_domain=true,management_wan=true,management_certificate=true,retained=true,external_dns=true,list_order=true}
+-- Keep the r245 and r299 fields readable so old generations remain byte-compatible.
+local OPTIONAL = {external_port=true, certificate_ca_lock=true, block_standard_public_ports=true, management_domain=true,management_wan=true,management_certificate=true,retained=true,external_dns=true,list_order=true,aliyun_adopt=true}
 for kind, fields in pairs(FIELDS) do
     KEYS[kind] = {}
     for _, key in ipairs(fields) do KEYS[kind][key] = true end
@@ -162,7 +162,7 @@ local function enum(v, values)
 end
 local function scalar(kind, key, v)
     if type(v)~="string" or #v>4096 or not utf8(v) then return nil end
-    if key=="enabled" or key=="access_enabled" or key=="auto_firewall" or key=="https" or key=="certificate_managed" or key=="block_standard_public_ports" or key=="management_wan" or key=="retained" or key=="external_dns" then return enum(v,{"0","1"}) end
+    if key=="enabled" or key=="access_enabled" or key=="auto_firewall" or key=="https" or key=="certificate_managed" or key=="block_standard_public_ports" or key=="management_wan" or key=="retained" or key=="external_dns" or key=="aliyun_adopt" then return enum(v,{"0","1"}) end
     if key=="management_domain" then return M.management_domain(v) end
     if key=="certificate_mode" then return enum(v,{"auto","local"}) end
     if key=="log_level" then return enum(v,{"debug","info","warn","error"}) end
@@ -526,6 +526,7 @@ local function snapshot(cur)
                 if key=="domains" then v=domains(v) elseif v~=nil then v=scalar(kind,key,v) end
                 if not OPTIONAL[key] or raw[key]~=nil then s.values[key]=v or "[omitted]" end
             end
+            s.values.aliyun_adopt=nil
             doc[#doc+1]=s
         end)
     end
@@ -548,7 +549,10 @@ function M.preview(cur,body)
     if not before then return nil,baseline_error end
     local old,new={},{}
     for _,s in ipairs(before) do old[s.name]=s end
-    for _,s in ipairs(proposed) do new[s.name]=s end
+    for _,s in ipairs(proposed) do
+        s.values.aliyun_adopt=nil
+        new[s.name]=s
+    end
     local changes={}
     local function add(s,key,a,b)
         if type(a)=="table" then a=table.concat(a,", ") end

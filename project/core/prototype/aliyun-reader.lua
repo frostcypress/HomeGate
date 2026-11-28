@@ -104,8 +104,9 @@ if arg[1]=='result' or arg[1]=='reconcile-result' then
     local expected=report(doc.error_kind,doc.retryable,doc.provider_code,names,doc.check_scope)
     if raw~=expected then os.exit(1) end;io.write(expected);return
 end
-if arg[1]~='run' or (not host_zone and mode~='check' and mode~='zones' and mode~='records' and mode~='reconcile' and mode~='records-durable') or type(job)~='string' or #job>9 or not job:match('^[1-9]%d*$') or tonumber(job)<2 or arg[6] then os.exit(1) end
-local durable=mode=='records-durable';if durable then mode='records' end
+local runtime_ddns=mode=='records-durable-runtime'
+if arg[1]~='run' or (not host_zone and mode~='check' and mode~='zones' and mode~='records' and mode~='reconcile' and mode~='records-durable' and not runtime_ddns) or type(job)~='string' or #job>9 or not job:match('^[1-9]%d*$') or tonumber(job)<2 or arg[6] then os.exit(1) end
+local durable=mode=='records-durable' or runtime_ddns;if durable then mode='records' end
 local function output(body)
     local f=io.open('/proc/self/fd/3','wb');if not f or not f:write(body) or not f:close() then os.exit(1) end
 end
@@ -203,6 +204,15 @@ if mode=='records' or mode=='reconcile' then
         local function unavailable() fail('temporary',false,'ownership_unavailable') end
         local function fingerprint(record) return record.id..':'..record.key..'\n' end
         ownership={}
+        function ownership.absent(c)
+            local member=quote(store_path(c))
+            if read_stat(parent) then
+                if not safe_directory() then unavailable() end
+            elseif not run('[ ! -e '..quote(parent)..' ] && [ ! -L '..quote(parent)..' ]') then
+                unavailable()
+            end
+            return run('[ ! -e '..member..' ] && [ ! -L '..member..' ]')
+        end
         function ownership.matches(c,record)
             if not read_stat(parent) then return false end
             if not safe_directory() then unavailable() end
@@ -236,7 +246,7 @@ if mode=='records' or mode=='reconcile' then
             if not run('fsync '..quote(parent)..' '..quote('/etc/homegate/transactions')) then unavailable() end
         end
     end
-    local body=records.run(snapshot,account,revision,{ownership=ownership,parse=shared.parse,context_parse=require('luci.jsonc').parse,encode=backup.json,plan=plan,reconcile=reconcile,reconciling=mode=='reconcile',work=work,read=read,write=write,fetch=fetch,fail=fail,state=operation_state,checkpoint=checkpoint})
+    local body=records.run(snapshot,account,revision,{ownership=ownership,runtime_ddns=runtime_ddns,parse=shared.parse,context_parse=require('luci.jsonc').parse,encode=backup.json,plan=plan,reconcile=reconcile,reconciling=mode=='reconcile',work=work,read=read,write=write,fetch=fetch,fail=fail,state=operation_state,checkpoint=checkpoint})
     output(body);return
 end
 local function integer(n,low,high)return type(n)=='number' and n==math.floor(n) and n>=low and n<=high end

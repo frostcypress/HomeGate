@@ -128,15 +128,15 @@ for tool in ash lua stat sha256sum flock fsync head $session_tool;do''')
     files[network_read] = files[network_read].replace(
         observer, b'lua /usr/libexec/homegate/native-web-session.lua observe-network "$ticket" "$revision" "$job" "$bridge"')
     dns_read = BASE+'project/core/prototype/homegate-cloudflare-read.sh'
-    observer = b'setsid ash "$dir/homegate-service-observer-watchdog.sh" "$watchdog_mode" "$ticket" "$account" "$revision" "$job" "$mode"'
+    observer = b'setsid ash "$dir/homegate-service-observer-watchdog.sh" "$watchdog_mode" "$ticket" "$account" "$revision" "$job" "$worker_mode"'
     assert files[dns_read].count(observer) == 1
-    anchor = b'result=0\n# Only the private frame'
+    anchor = b'\n# Only the private frame'
     assert files[dns_read].count(anchor) == 1
-    files[dns_read] = files[dns_read].replace(observer, b'observe_dns').replace(anchor, b'''result=0
+    files[dns_read] = files[dns_read].replace(observer, b'observe_dns').replace(anchor, b'''
 observe_dns() {
-    case "$mode" in
-        check|zones|hosts:*) exec lua /usr/libexec/homegate/native-web-session.lua observe-dns "$ticket" "$revision" "$job" "$watchdog_mode" "$account" "$mode";;
-        records|reconcile) exec lua /usr/libexec/homegate/native-web-session.lua dns-records "$ticket" "$revision" "$job" "$watchdog_mode" "$account" "$mode";;
+    case "$worker_mode" in
+        check|zones|hosts:*) exec lua /usr/libexec/homegate/native-web-session.lua observe-dns "$ticket" "$revision" "$job" "$watchdog_mode" "$account" "$worker_mode";;
+        records|records-runtime|reconcile) exec lua /usr/libexec/homegate/native-web-session.lua dns-records "$ticket" "$revision" "$job" "$watchdog_mode" "$account" "$worker_mode";;
         *) exit 2;;
     esac
 }
@@ -455,11 +455,12 @@ fi
     end=files[controller].index(b'\nend\n',files[controller].index(marker))
     files[controller]=files[controller][:end]+('\n    '+'\n    '.join(entries)).encode()+files[controller][end:]+''.join(addition).encode()
 
-def stage_sdk(root, sdk, *, bundled=False):
+def stage_sdk(root, sdk, *, bundled=False, update_public_key=None):
     """Stage the native package and component recipes into an existing SDK."""
     import shutil
     package = sdk / 'package'
-    stage_package(root, package / 'homegate-native-candidate', bundled=bundled)
+    stage_package(root, package / 'homegate-native-candidate', bundled=bundled,
+                  update_public_key=update_public_key)
     for component in COMPONENT_PACKAGES:
         shutil.copytree(root / 'packaging/components' / component, package / component)
     shutil.copyfile(root / 'homegate-version.mk', sdk / 'homegate-version.mk')

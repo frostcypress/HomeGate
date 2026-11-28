@@ -11,6 +11,7 @@ import tarfile
 import tempfile
 
 PUBLIC_KEY_PATH = 'usr/libexec/homegate/update-public.pem'
+PUBLISHER_PUBLIC_KEY = 'packaging/production/update-public.pem'
 ARCHIVE_LIMIT = 32 * 1024 * 1024
 PACKAGES = ('homegate-core', 'luci-app-homegate', 'luci-i18n-homegate-zh-cn')
 

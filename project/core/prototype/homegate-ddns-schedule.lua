@@ -20,7 +20,7 @@ if mode=='event' then
     local selected={};for _,n in ipairs(names)do selected[n]=true end
     for _,s in ipairs(doc)do if s.kind=='ddns_rule' and (selection=='*' or selected[s.name]) then
         local v=s.values
-        if (v.source=='auto' and (iface=='wan' or iface=='wan6')) or
+        if (v.source=='auto' and (iface=='wan' or iface=='wan6' or iface=='wan_6')) or
            (v.source=='interface' and v.interface~='' and (v.interface==dev or v.interface==iface)) then io.write('true\n');return end
     end end
     io.write('false\n');return

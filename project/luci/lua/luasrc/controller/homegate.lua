@@ -1819,6 +1819,7 @@ function action_public_apply()
                 else
                     cur:delete("homegate", ddns_id, "external_dns")
                 end
+                cur:delete("homegate", ddns_id, "aliyun_adopt")
                 kept_ddns[ddns_id] = true
                 shared_dns[domain]={id=ddns_id,account=account_id,zone=zone,ttl=ttl}
             end
@@ -2011,7 +2012,10 @@ function action_public_apply()
         return fail("Unable to update access region data")
     end
     for _, id in ipairs(removed_web) do retain_public_rule(cur, id) end
-    for _, id in ipairs(removed_ddns) do retain_public_rule(cur, id) end
+    for _, id in ipairs(removed_ddns) do
+        cur:delete("homegate", id, "aliyun_adopt")
+        retain_public_rule(cur, id)
+    end
     for _, id in pairs(original_web_cert) do retain_unused_certificate(cur, id) end
 
     if main.block_standard_public_ports then cur:delete("homegate","main","block_standard_public_ports") end
@@ -2376,6 +2380,7 @@ local function restore_import_configuration(cur,codec,body)
     for _,kind in ipairs({"homegate","dns_account","ddns_rule","certificate","web_rule","wol_host"})do cur:foreach("homegate",kind,function(s) names[#names+1]=s[".name"] end)end
     for _,name in ipairs(names)do if cur:delete("homegate",name)==false then return nil,"Unable to restore configuration" end end
     for _,s in ipairs(proposed)do
+        s.values.aliyun_adopt=nil
         if cur:section("homegate",s.kind,s.name,s.values)==false then return nil,"Unable to restore configuration" end
     end
     return true

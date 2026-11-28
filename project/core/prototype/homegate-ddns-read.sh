@@ -118,8 +118,11 @@ case "$result" in 0|1)
     lua "$dir/homegate-ddns-plan.lua" result "$revision" "$rule" "$result" < "$work/result" > "$work/public" 2>/dev/null || fail
     if [ "$sync" = true ] && [ "$result" = 0 ]; then
         # Regenerate source proof and intent under the same retained locks.
+        plan_mode=dispatch;cache_target=
+        if [ "$runtime:$deleting" = true:false ] && [ -S /var/dnscache/pdnsd.status ]; then plan_mode=dispatch-cache;fi
         target=$(snapshot 3>&1 4>"$work/intent" 8>&- 9>&- >/dev/null 2>/dev/null |
-            lua "$dir/homegate-ddns-sync.lua" dispatch "$revision" "$rule" 4>"$work/input" 5<"$work/plan" 8<"$work/intent" 9<"$work/result" 2>/dev/null) || fail
+            lua "$dir/homegate-ddns-sync.lua" "$plan_mode" "$revision" "$rule" 4>"$work/input" 5<"$work/plan" 8<"$work/intent" 9<"$work/result" 2>/dev/null) || fail
+        case "$target" in *' '*) cache_target=${target#* };target=${target%% *};; esac
         if [ "$target" != disabled ]; then
         provider=${target%%:*};account=${target#*:}
         case "$provider" in cloudflare|aliyun|dnspod) ;; *) fail;; esac
@@ -143,6 +146,18 @@ case "$result" in 0|1)
         esac
         # Provider canonical failures after an attempt must retain the outer fence.
         if [ "$result" != 0 ] && { [ -e "$store/dns-operation" ] || [ -L "$store/dns-operation" ]; }; then cat "$work/public";exit "$result";fi
+        if [ "$result" = 0 ] && [ -n "$cache_target" ]; then
+            # A local cache failure must not change the verified provider receipt.
+            case "$(cat "$work/public")" in
+                *'"effect":"confirmed"'*) cache_outcome=changed;;
+                *'"result":"unchanged"'*) cache_outcome=unchanged;;
+                *) cache_outcome=;;
+            esac
+            if [ -n "$cache_outcome" ]; then
+                printf '%s %s\n' "$cache_outcome" "$cache_target" |
+                    ash "$dir/homegate-ddns-local-cache.sh" "$rule" 5>&- 6>&- 7>&- 8>&- 9>&- >/dev/null 2>/dev/null || :
+            fi
+        fi
         fi
     fi
     exec 5<"$work/public" || fail

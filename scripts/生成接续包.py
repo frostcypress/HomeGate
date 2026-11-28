@@ -10,6 +10,7 @@ import sys
 import subprocess
 import zipfile
 from project import ROOT, identity, verify_generated
+from online_release import PUBLISHER_PUBLIC_KEY, public_key
 
 DOCS = ('接续.md', '校验.md', '核实查漏修复.md')
 SOURCE_DIRS = ('.github', 'project', 'scripts', 'packaging', 'legal', 'targets', 'docs', 'third_party')
@@ -24,6 +25,15 @@ FORBIDDEN_SUFFIXES = ('.ipk', '.apk', '.exe', '.o', '.pyc', '.zip', '.pem', '.ke
 PUBLIC_GUIDE_IMAGES = {'docs/images/public-services.png', 'docs/images/public-service-editor.png'}
 RETIRED_SOURCE_SUFFIXES = ('.go',)
 RETIRED_SOURCE_NAMES = {'go.mod', 'go.sum', 'go.work', 'go.work.sum'}
+
+
+def snapshot_bytes(root, file):
+    if file.relative_to(root).as_posix() == PUBLISHER_PUBLIC_KEY:
+        canonical = public_key(file)
+        if canonical != file.read_bytes():
+            raise ValueError('Publisher key must be a canonical PEM public key')
+        return canonical
+    return file.read_bytes()
 
 
 def public_files(root):
@@ -47,7 +57,8 @@ def public_files(root):
                 or relative.name in ('.gitkeep', '.env')
                 or relative.name in RETIRED_SOURCE_NAMES
                 or relative.suffix.lower() in RETIRED_SOURCE_SUFFIXES
-                or (relative.suffix.lower() in FORBIDDEN_SUFFIXES and name not in PUBLIC_GUIDE_IMAGES)
+                or (relative.suffix.lower() in FORBIDDEN_SUFFIXES
+                    and name not in PUBLIC_GUIDE_IMAGES and name != PUBLISHER_PUBLIC_KEY)
                 or (relative.parts[0] not in SOURCE_DIRS and name not in SOURCE_FILES + OPTIONAL_SOURCE_FILES)):
             raise ValueError('Forbidden public source: ' + name)
         file = root / name
@@ -55,6 +66,8 @@ def public_files(root):
             raise ValueError('Symlink not allowed in public source: ' + name)
         if not file.is_file():
             raise ValueError('Missing public source: ' + name)
+        if name == PUBLISHER_PUBLIC_KEY:
+            snapshot_bytes(root, file)
         files.append(file)
     return files
 
@@ -65,7 +78,8 @@ def create_public(root, output, target, stage):
     item = identity(root)
     if not all(c.isalnum() or c in '._-' for c in target + stage) or not target or not stage:
         raise ValueError('Invalid target/stage')
-    entries = {'源码/' + file.relative_to(root).as_posix(): file.read_bytes() for file in public_files(root)}
+    entries = {'源码/' + file.relative_to(root).as_posix(): snapshot_bytes(root, file)
+               for file in public_files(root)}
     entries['源码清单.sha256'] = ''.join(
         hashlib.sha256(body).hexdigest() + '  ' + name + '\n'
         for name, body in sorted(entries.items())
@@ -116,7 +130,9 @@ def source_files(root):
                     continue
                 raise ValueError('Retired source cannot be included: ' + str(file))
             if file.suffix.lower() in ('.ipk', '.apk', '.exe', '.o', '.pyc', '.zip', '.pem', '.key'):
-                raise ValueError('Unexpected binary/secret/archive in source: ' + str(file))
+                if file.relative_to(root).as_posix() != PUBLISHER_PUBLIC_KEY:
+                    raise ValueError('Unexpected binary/secret/archive in source: ' + str(file))
+                snapshot_bytes(root, file)
             yield file
 
 
@@ -130,7 +146,8 @@ def create(root, output, target, stage, draft, packages_dir=None, fmt=None, arch
     if draft and packages_dir:
         raise ValueError('草稿不能携带安装包')
     project = json.loads((root / 'project.json').read_text(encoding='utf-8'))
-    entries = {'源码/' + file.relative_to(root).as_posix(): file.read_bytes() for file in source_files(root)}
+    entries = {'源码/' + file.relative_to(root).as_posix(): snapshot_bytes(root, file)
+               for file in source_files(root)}
     for name in DOCS:
         entries[name] = (document_root / name).read_bytes()
     entries['校验.md'] = entries['校验.md'].decode('utf-8').split('\n## 自动快照清单', 1)[0].encode('utf-8')

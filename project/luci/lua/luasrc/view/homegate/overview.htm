@@ -164,9 +164,10 @@
     var appliedOffer = state === 'success' && offer && operation.target === offer.latest;
     var selected = offline ? offlineOffer : offer;
     var canInstall = selected && selected.offer && (offline || !appliedOffer) && state !== 'recovery';
+    var showSuccess = state === 'success' && !checking && (!offer || appliedOffer);
     var message = state === 'idle' ? '' : installMessage(state);
     if (state === 'failed' && operation.reason) message += ' ' + installMessage(operation.reason);
-    if (state === 'success') message += ' ' + operation.target;
+    if (state === 'success') message = showSuccess ? message + ' ' + operation.target : '';
     if (!message && !offline && offer && offer.install_blocked) {
       message = offer.install_blocked === 'version' && offer.minimum_version ?
         installMessage('minimum').replace('%s', offer.minimum_version) : installMessage(offer.install_blocked);
@@ -181,7 +182,8 @@
     checkButton.disabled = busy || uploading || checking;
     offlineStatus.hidden = !offline;
     var showRelease = !offline && !checking && checkState === 'available' && !appliedOffer && !active(state);
-    checkStatus.hidden = offline || showRelease || active(state) || appliedOffer && !checking;
+    var showResultOnly = showSuccess && (appliedOffer || checkState === 'scheduled' || checkState === 'latest');
+    checkStatus.hidden = offline || showRelease || active(state) || showResultOnly;
     checkStatus.textContent = checking ? hgLabel('hg-update-checking') : checkLabel;
     document.getElementById('hg-update-release').hidden = !showRelease;
     var badgeState = ['latest','available','error'].indexOf(checkState) >= 0 ? checkState : 'unknown';
@@ -191,7 +193,7 @@
       badgeLabel = message;
     } else if (appliedOffer) {
       badgeState = 'latest';
-      badgeLabel = message;
+      badgeLabel = message || checkLabel;
     } else if (offer && ['signature','manifest','download','trust','assets'].indexOf(offer.install_blocked) >= 0) {
       badgeState = 'error';
       badgeLabel = message;

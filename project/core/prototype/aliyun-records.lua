@@ -43,6 +43,16 @@ function M.validate(raw,doc,account,revision,rc,marker,kinds,codes)
     local expected=M.report(account,revision,doc.error_kind,doc.retryable,doc.provider_code,doc.result,doc.effect,doc.affected)
     return raw==expected and expected or nil
 end
+local function managed_ddns(snapshot,c)
+    if c.kind~='ddns' or c.type~='AAAA' then return false end
+    for _,rule in ipairs(snapshot.configuration) do
+        if rule.kind=='ddns_rule' and rule.name==c.resource then
+            local values=rule.values
+            return values.retained~='1' and (values.source=='auto' or values.source=='interface')
+        end
+    end
+    return false
+end
 function M.run(snapshot,account,revision,api)
     local function invalid(code)api.fail('temporary',true,code or 'invalid_response') end
     local c
@@ -119,6 +129,18 @@ function M.run(snapshot,account,revision,api)
         for _,r in ipairs(records) do
             if r.match then
                 if r.locked or r.status~='Enable' then api.fail('unsupported',false,'record_unavailable') end
+                -- The runtime dispatch has checked the configured grant and
+                -- bound the provider request to the sampled WAN address.
+                if owners and api.runtime_ddns and r.line=='default' and managed_ddns(snapshot,c) and owners.absent(c) then
+                    local verified=detail(r)
+                    local latest=list()
+                    if #latest~=1 or latest[1].id~=verified.id or latest[1].value~=verified.value or
+                        latest[1].line~=verified.line or latest[1].ttl~=verified.ttl or
+                        latest[1].locked or latest[1].status~='Enable' then
+                        api.fail('record_conflict',false,'record_conflict')
+                    end
+                    owners.remember(c,verified)
+                end
                 return finish('unchanged')
             end
         end

@@ -370,10 +370,14 @@ if [ "$mode" = records ] || [ "$mode" = reconcile ]; then
     fi
 fi
 result=0
+worker_mode=$mode
+if [ "$provider:$mode:$runtime_dispatch:$runtime_delete" = aliyun:records:true:false ]; then
+    worker_mode=records-runtime
+fi
 # Only the private frame uses FD3; engine's public receipt goes to /dev/null.
 # The independent consumer watchdog retains FD6/7, but not the configuration lock.
 ash "$dir/homegate-config-prototype.sh" --persistent "$snapshot_command" 3>&1 8>&- 9>&- >/dev/null 2>/dev/null |
-    setsid ash "$dir/homegate-service-observer-watchdog.sh" "$watchdog_mode" "$ticket" "$account" "$revision" "$job" "$mode" 3>"$work/result" 8>&- 9>&- >/dev/null 2>/dev/null || result=$?
+    setsid ash "$dir/homegate-service-observer-watchdog.sh" "$watchdog_mode" "$ticket" "$account" "$revision" "$job" "$worker_mode" 3>"$work/result" 8>&- 9>&- >/dev/null 2>/dev/null || result=$?
 exec 4>&-
 if [ "$mode" = records ] && [ -s "$work/attempt" ]; then effect=unknown; fi
 # The whole pipeline has ended. Unknown descendants retain the watchdog locks;

@@ -8,7 +8,7 @@
   "target": "ipq807x",
   "subtarget": "generic",
   "architecture": "aarch64_cortex-a53",
-  "abi": null,
+  "abi": "ELF64 little-endian AArch64 with musl; /lib/ld-musl-aarch64.so.1, libc.so and libgcc_s.so.1 validated for the bundled r303 nginx and WOL",
   "package_format": "ipk",
   "luci": {
     "lua": true,
@@ -25,8 +25,8 @@
     "runtime_abi_verified": false
   },
   "resources": {
-    "ram_kib": null,
-    "overlay_available_kib": null
+    "ram_kib": 893852,
+    "overlay_available_kib": 1593376
   },
-  "evidence": "local-only; SDK and ABI pending"
+  "evidence": "local-only; docs/验证/r302-DDNS缓存兼容修复.json provides Chen RAM total and library fingerprints; docs/验证/r303-启动争锁修复.json provides component ABI and the minimum overlay available in 56 observed upgrade samples"
 }

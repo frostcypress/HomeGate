@@ -34,10 +34,14 @@ if arg[1]=='parent' then
     else fail() end
     local raw=read('/proc/'..root..'/cmdline',8192)
     local manual=raw:match('%z%-%-confirm%-rule%z'..rule:gsub('%-','%%-')..'%z$')~=nil
+    local network=raw:match('%z%-%-confirm%-network%-change%z$')~=nil
+    local state_action=manual and 'batch-sync-manual' or network and 'batch-sync-network' or 'batch-sync-internal'
     if role=='read' then
-        command(parent,{dir..'/homegate-ddns-state.sh',manual and 'batch-sync-manual' or 'batch-sync-internal',rule,root,'--confirm'})
+        command(parent,{dir..'/homegate-ddns-state.sh',state_action,rule,root,'--confirm'})
+    elseif role=='state' then
+        command(self,{dir..'/homegate-ddns-state.sh',state_action,rule,root,'--confirm'})
     end
-    local confirmation=manual and '--confirm-rule' or raw:match('%z%-%-confirm%-closeouts%z$') and '--confirm-closeouts' or '--confirm'
+    local confirmation=manual and '--confirm-rule' or network and '--confirm-network-change' or raw:match('%z%-%-confirm%-closeouts%z$') and '--confirm-closeouts' or '--confirm'
     if role=='closeout' and confirmation=='--confirm' then fail() end
     local expected={dir..'/homegate-ddns-batch.sh','sync',confirmation}
     if manual then expected[#expected+1]=rule end
@@ -67,8 +71,11 @@ local identity,generation,grant,boot,parent=arg[first],arg[first+1],arg[first+2]
 if arg[first+5] then fail() end
 for _,v in ipairs({identity,generation,grant}) do if type(v)~='string' or #v~=64 or not v:match('^[0-9a-f]+$') then fail() end end
 if type(boot)~='string' or #boot~=36 or not boot:match('^[0-9a-f-]+$') or type(parent)~='string' or not parent:match('^[1-9]%d*:[1-9]%d*$') or #parent>30 then fail() end
-local snapshot=assert(loadfile(dir..'/private-snapshot.lua'))().read(io.stdin,backup)
-if not snapshot or snapshot.revision~=tonumber(revision) then fail() end
+local snapshot
+if arg[1]~='planned-address' then
+    snapshot=assert(loadfile(dir..'/private-snapshot.lua'))().read(io.stdin,backup)
+    if not snapshot or snapshot.revision~=tonumber(revision) then fail() end
+end
 local envelope,raw
 if arg[1]=='seal' then
     local intent_raw=read('/proc/self/fd/4',65536);local plan_raw=read('/proc/self/fd/8',262144)
@@ -77,13 +84,30 @@ if arg[1]=='seal' then
     local selected;for name,value in pairs(intent.switches or {}) do if value=='1' then selected=name;break end end
     if not selected then fail() end;rule=selected
     envelope={schema='HGDDNSBATCH1',revision=tonumber(revision),identity=identity,generation=generation,grant=grant,boot=boot,parent=parent,intent=intent,plan=plan}
-elseif arg[1]=='slice' then
+elseif arg[1]=='slice' or arg[1]=='planned-address' then
     raw=read('/proc/self/fd/5',524288);envelope=shared.parse(raw)
     if type(envelope)~='table' or backup.json(envelope)..'\n'~=raw then fail() end
 else fail() end
 local count=0;for k in pairs(envelope) do if k~='schema' and k~='revision' and k~='identity' and k~='generation' and k~='grant' and k~='boot' and k~='parent' and k~='intent' and k~='plan' then fail() end;count=count+1 end
 if count~=9 or envelope.schema~='HGDDNSBATCH1' or envelope.revision~=tonumber(revision) or envelope.identity~=identity or envelope.generation~=generation or envelope.grant~=grant or envelope.boot~=boot or envelope.parent~=parent then fail() end
-local plan,intent=batch.slice(snapshot,envelope.intent,envelope.plan,rule,planner,authority,assert(loadfile(dir..'/wan6-plan.lua'))(),assert(loadfile(dir..'/cloudflare-record-plan.lua'))(),backup.json)
+local network=assert(loadfile(dir..'/wan6-plan.lua'))()
+local records=assert(loadfile(dir..'/cloudflare-record-plan.lua'))()
+if arg[1]=='planned-address' then
+    -- The parent sealed this plan using the same configuration and lease.
+    if not planner.id(rule) or envelope.intent.switches[rule]~='1' then fail() end
+    for _,entry in ipairs(envelope.plan.entries) do
+        if entry.rule==rule then
+            if entry.status=='ready' then
+                local address=network.public_ipv6(entry.request.value,records)
+                if not address then fail() end
+                io.write(address..'\n')
+            end
+            return
+        end
+    end
+    fail()
+end
+local plan,intent=batch.slice(snapshot,envelope.intent,envelope.plan,rule,planner,authority,network,records,backup.json)
 if not plan then fail() end
 if arg[1]=='seal' then local body=backup.json(envelope)..'\n';if #body>524288 then fail() end;io.write(body);return end
 local narrow=read('/proc/self/fd/8',65536);if backup.json(intent)..'\n'~=narrow then fail() end

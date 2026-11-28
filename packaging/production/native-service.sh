@@ -38,9 +38,21 @@ service_locks() {
  if ! { bound 6 "$run/frontend.lock" && bound 7 "$store/.supervisor.lock"; };then exec 6>&- 7>&-;return 1;fi
 }
 intent_guard() {
- service_locks || return $?
+ service_locks;result=$?
+ case "$result" in 0) ;;3) return 8;;*) return "$result";;esac
  ash "$dir/homegate-startup-active.sh" check-current 9>&- >/dev/null;result=$?
  exec 6>&- 7>&-;return "$result"
+}
+retry_startup_read() {
+ # Only explicit business-lock contention is retryable. Never retry an
+ # invalid intent, unconfirmed cleanup or any retained operation.
+ local attempt=1 result
+ while :;do
+  "$@";result=$?
+  if [ "$result" != 8 ] || [ "$attempt" -ge 4 ];then return "$result";fi
+  attempt=$((attempt+1))
+  sleep 1 9>&- || return 1
+ done
 }
 if [ "$action" = plan-certificates ];then
  private_file "$run/frontend.lock" 0 && private_file "$store/.supervisor.lock" 0 || fail
@@ -60,7 +72,13 @@ if exists "$lock";then
  exec 8>&-
 fi
 quiet() {
- for item in homegate-access-region.sh homegate-proxy.sh homegate-acme-schedule.sh homegate-ddns-schedule.sh;do component "$item" quiescent >/dev/null || return 1;done
+ local item code
+ for item in homegate-access-region.sh homegate-proxy.sh homegate-acme-schedule.sh;do component "$item" quiescent >/dev/null || return 1;done
+ component homegate-ddns-schedule.sh quiescent "${1:-}" >/dev/null || {
+  code=$?
+  [ "${1:-}" = --startup-read ] && [ "$code" = 8 ] && return 8
+  return 1
+ }
  # The certificate helper's quiescent contract checks persistent ACME jobs too.
  ash "$dir/homegate-firewall.sh" cleanup-if-owned --confirm 9>&- >/dev/null || return 1
 }
@@ -142,8 +160,8 @@ if exists /etc/homegate/package-state;then
  [ "$action" = admission ] && private_file /etc/homegate/package-state 64 &&
  [ "$(head -n 2 /etc/homegate/package-state)" = "$(printf 'HGPKG1\nready')" ] || fail 4
 fi
-stage=intent;ash "$dir/homegate-startup-active.sh" admit >/dev/null || fail 4
-if [ "$action" = admission ];then quiet || fail 4;exit 0;fi
+stage=intent;retry_startup_read ash "$dir/homegate-startup-active.sh" admit >/dev/null || fail 4
+if [ "$action" = admission ];then retry_startup_read quiet --startup-read || fail 4;exit 0;fi
 if [ "$action" = plan-set ];then
  [ "$live" = false ] && quiet || fail 4
  source_binding=$(stamp) || fail
@@ -157,7 +175,7 @@ stage=owner;if ! exists "$lock";then (set -C; : > "$lock") && fsync "$lock" "$ru
 private_file "$lock" 0 || fail
 exec 9>>"$lock";bound 9 "$lock" && flock -n 9 || fail 4
 # A previous owner must be fully quiet before fixed ephemeral records are reused.
-quiet || fail 4
+retry_startup_read quiet --startup-read || fail 4
 # Leave the independent region task's terminal receipt visible until the next
 # refresh, including when Apply restarts HomeGate after downloading data.
 for pair in homegate-proxy.sh:proxy homegate-acme-schedule.sh:acme-schedule homegate-ddns-schedule.sh:ddns-schedule;do
@@ -181,7 +199,7 @@ policy=$(printf '%s\n' "$plan" | lua "$codec" field policy 9>&-) || fail
 auto_firewall=$(printf '%s\n' "$plan" | lua "$codec" field auto_firewall 9>&-) || fail
 info=$(lua "$dir/worker-process.lua" info "$$" none 9>&-) || fail
 oldifs=$IFS;IFS=:;set -- $info;IFS=$oldifs;[ "$#" = 6 ] || fail;birth=$5
-stage=admission;intent_guard && [ "$(stamp && plan_stamp)" = "$binding" ] || fail 4
+stage=admission;retry_startup_read intent_guard && [ "$(stamp && plan_stamp)" = "$binding" ] || fail 4
 receipt=$run/native-service.json;next_receipt=$receipt.next
 published_status=;published_report=;previous_log_state=
 emit() {

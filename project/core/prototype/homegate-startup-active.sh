@@ -25,7 +25,10 @@ for fd in 6 7;do
   [ "$action" != check-current ] || fail lock 4
   case "$fd" in 6) exec 6>>"$lock";; 7) exec 7>>"$lock";; esac
  fi
- flock -n "$fd" || fail busy 4
+ if flock -n "$fd";then :;else
+  [ "$?" = 1 ] && [ "$action" = admit ] && fail busy 8
+  fail busy 4
+ fi
 done
 for pending in "$store/startup-intent" "$store/.startup-intent-next" "$store/.startup-active-next";do ! present "$pending" || fail pending 4;done
 if ! present "$active";then

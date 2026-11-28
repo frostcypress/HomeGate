@@ -231,6 +231,20 @@ def build_offline_bundle(root, packages, destination, architecture, components, 
     return receipt
 
 
+def write_offline_archive(bundle, archive, receipt):
+    """Write the package bytes that the offline signer will validate."""
+    names = {*receipt['sha256'], 'SOURCE.json', 'SHA256SUMS', 'installed-SHA256SUMS',
+             'install.sh', 'upgrade-log.sh'}
+    with tarfile.open(archive, 'x', format=tarfile.USTAR_FORMAT) as stream:
+        for name in sorted(names):
+            mode = 0o755 if name == 'install.sh' else 0o644
+            data = (bundle / name).read_bytes()
+            member = tarfile.TarInfo(f'{archive.stem}/{name}')
+            member.size = len(data)
+            member.mode = mode
+            stream.addfile(member, io.BytesIO(data))
+
+
 if __name__=='__main__':
     parser=argparse.ArgumentParser(description=__doc__);parser.add_argument('--packages',type=Path,required=True);parser.add_argument('--output',type=Path,required=True)
     parser.add_argument('--architecture',default='all');parser.add_argument('--components',type=Path)

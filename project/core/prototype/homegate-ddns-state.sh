@@ -8,13 +8,14 @@ ddns_recovery_publish_enabled=false
 ddns_batch_enabled=false
 fail() { printf '{"api_version":1,"prototype":true,"ok":false,"phase":"ddns-state","effect":"none","write_ready":false,"error":"DDNS state is unavailable"}\n';exit "${1:-7}"; }
 [ "$ddns_state_enabled" = true ] || fail 2
-action=${1:-};rule=${2:-};batch=false;manual=
-if [ "$action" = batch-sync-internal ] || [ "$action" = batch-sync-manual ]; then
+action=${1:-};rule=${2:-};batch=false;manual=;network_check=false;wan_sample=-
+if [ "$action" = batch-sync-internal ] || [ "$action" = batch-sync-manual ] || [ "$action" = batch-sync-network ]; then
     [ "$ddns_batch_enabled" = true ] && [ "$#" -eq 4 ] && [ "$4" = --confirm ] || fail 2
     batch=true;batch_parent=$3
     case "$batch_parent" in ''|0*|*[!0-9]*) fail 2;; esac
     [ "${#batch_parent}" -le 9 ] && [ "$batch_parent" -ge 2 ] || fail 2
     [ "$action" != batch-sync-manual ] || manual=-manual
+    [ "$action" != batch-sync-network ] || network_check=true
     action=sync;set -- sync "$rule" --confirm
 fi
 case "$action" in status) [ "$#" -eq 2 ] || fail 2;; sync|reset) [ "$#" -eq 3 ] && [ "$3" = --confirm ] || fail 2;; *) fail 2;; esac
@@ -33,7 +34,7 @@ dir=$(CDPATH= cd "$(dirname "$0")" && pwd) || fail
 if [ "$batch" = true ]; then
     [ -f /proc/self/fd/5 ] && [ "$(stat -Lc '%u:%a:%h' /proc/self/fd/5)" = 0:600:0 ] && [ "$(stat -Lc %s /proc/self/fd/5)" -le 524288 ] || fail
     [ "$(stat -Lc '%d:%i' /proc/self/fd/5)" = "$(stat -Lc '%d:%i' /proc/$batch_parent/fd/5 2>/dev/null)" ] || fail
-    lua "$dir/homegate-ddns-batch.lua" parent state "$$" "$rule" "$batch_parent" >/dev/null 2>/dev/null || fail
+    batch_context=$(lua "$dir/homegate-ddns-batch.lua" parent state "$$" "$rule" "$batch_parent" 2>/dev/null) || fail
 fi
 private_dir "$run" && private_dir "$store" && private_file "$run/frontend.lock" && private_file "$store/.supervisor.lock" || fail
 for fd in 6 7; do
@@ -51,6 +52,14 @@ old_ifs=$IFS;IFS=:;set -- $scope;IFS=$old_ifs
 [ "$#" -eq 3 ] || fail;provider=$1;account=$2;interval=$3
 hash "$store/identity" || fail;identity=$sum;hash "$store/gen-$revision/manifest" || fail;generation=$sum
 boot=$(cat /proc/sys/kernel/random/boot_id) || fail
+if [ "$batch" = true ]; then
+    hash "$store/ddns-authority" || fail
+    address=$(lua "$dir/homegate-ddns-batch.lua" planned-address "$revision" "$rule" "$identity" "$generation" "$sum" "$boot" "$batch_context" 2>/dev/null) || fail
+    if [ -n "$address" ]; then
+        wan_sample=$(printf '%s\n' "$address" | sha256sum) || fail
+        wan_sample=${wan_sample%% *}
+    fi
+fi
 now=$(lua "$dir/worker-process.lua" now 2>/dev/null) || fail
 blocked=false;authorized=false;incomplete=false
 ash "$dir/homegate-config-prototype.sh" --persistent writer-check >/dev/null 2>/dev/null || blocked=true
@@ -70,7 +79,7 @@ if exists "$cache"; then
 fi
 for p in "$next" "$result"; do ! exists "$p" || incomplete=true;done
 if exists "$file"; then private_file "$file" && [ "$(stat -c %s "$file")" -le 4096 ] || fail;exec 8<"$file" || fail;else exec 8</dev/null;fi
-codec() { lua "$dir/homegate-ddns-state.lua" "$1" "$revision" "$rule" "$provider" "$account" "$identity" "$generation" "$boot" "$now" "$interval" "$blocked" "$authorized" "$incomplete" ${2:+"$2"} 2>/dev/null; }
+codec() { lua "$dir/homegate-ddns-state.lua" "$1" "$revision" "$rule" "$provider" "$account" "$identity" "$generation" "$boot" "$now" "$interval" "$blocked" "$authorized" "$incomplete" "${2:--}" "$wan_sample" "$network_check" 2>/dev/null; }
 publish_recovery() { [ "$ddns_recovery_publish_enabled" != true ] || ash "$dir/homegate-ddns-recovery.sh" publish-internal 3>&- 4>&- 5>&- 8>&- 9>&- >/dev/null 2>/dev/null; }
 if [ "$action" = status ]; then codec status || fail;exit 0;fi
 if [ "$action" = reset ]; then

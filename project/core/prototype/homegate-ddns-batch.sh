@@ -5,12 +5,13 @@ umask 077
 export LC_ALL=C
 ddns_batch_enabled=false
 ddns_batch_closeout_enabled=false
-rows=;effect=none;sampled=false;closeouts=false;selected=
+rows=;effect=none;sampled=false;closeouts=false;network_check=false;selected=
 fail() { printf '{"api_version":1,"prototype":true,"ok":false,"phase":"ddns-batch","effect":"%s","sampled":%s,"write_ready":false,"rules":[%s],"error":"DDNS batch is unavailable"}\n' "$effect" "$sampled" "$rows";exit "${1:-7}"; }
 [ "$ddns_batch_enabled" = true ] && [ "${1:-}" = sync ] || fail 2
 case "${2:-}:$#" in
     --confirm:2) ;;
     --confirm-closeouts:2|--confirm-rule:3) [ "$ddns_batch_closeout_enabled" = true ] || fail 2;closeouts=true;;
+    --confirm-network-change:2) [ "$ddns_batch_closeout_enabled" = true ] || fail 2;closeouts=true;network_check=true;;
     *) fail 2;;
 esac
 if [ "$#" -eq 3 ]; then
@@ -49,7 +50,10 @@ for rule in $names; do
     status=$(ash "$dir/homegate-ddns-state.sh" status "$rule" 2>/dev/null) || fail
     row=$(printf '%s\n' "$status" | lua "$dir/homegate-ddns-batch.lua" row "$revision" "$rule" 0 2>/dev/null) || fail
     case "$row" in *'"status":"ready"'*|*'"status":"stale"'*) due=true;; esac
-    if [ -n "$selected" ]; then case "$row" in *'"status":"waiting"'*) due=true;; esac;fi
+    if [ -n "$selected" ] || [ "$network_check" = true ]; then case "$row" in *'"status":"waiting"'*) due=true;; esac;fi
+    if [ "$network_check" = true ]; then
+        case "$row" in *'"status":"retry_wait","effect":"none","error_kind":"network_unavailable"'*) due=true;; esac
+    fi
     pre_rows=${pre_rows:+$pre_rows,}$row
 done
 report() { ok=false;[ "$1" != 0 ] || ok=true;printf '{"api_version":1,"prototype":true,"ok":%s,"phase":"ddns-batch","configuration_revision":%s,"effect":"%s","sampled":%s,"write_ready":false,"rules":[%s]}\n' "$ok" "$revision" "$effect" "$sampled" "$rows";exit "$1"; }
@@ -100,6 +104,7 @@ sampled=true;result=0
 for rule in $names; do
     rc=0;previous_effect=$effect;effect=unknown
     mode=batch-sync-internal;[ -z "$selected" ] || mode=batch-sync-manual
+    [ "$network_check" = false ] || mode=batch-sync-network
     ash "$dir/homegate-ddns-state.sh" "$mode" "$rule" "$job" --confirm > /proc/self/fd/8 8>&- 9>&- 2>/dev/null || rc=$?
     row=$(lua "$dir/homegate-ddns-batch.lua" row "$revision" "$rule" "$rc" < /proc/self/fd/8 8>&- 9>&- 2>/dev/null) || fail
     effect=$previous_effect

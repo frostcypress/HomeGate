@@ -9,6 +9,11 @@ aliyun_reconcile_enabled=false
 aliyun_receipt_enabled=false
 [ "$aliyun_read_enabled" = true ] && [ "$#" -eq 4 ] || exit 2
 account=$1;revision=$2;job=$3;mode=$4
+runtime_records=false
+if [ "$mode" = records-runtime ]; then
+    [ "$aliyun_receipt_enabled" = true ] || exit 2
+    runtime_records=true;mode=records
+fi
 case "$account" in ''|*[!a-zA-Z0-9_-]*) exit 2;; esac
 [ "${#account}" -le 64 ] || exit 2
 case "$revision:$job" in *[!0-9:]*) exit 2;; esac
@@ -42,4 +47,5 @@ if [ "$mode" = records ] || [ "$mode" = reconcile ]; then
 fi
 exec 4>>"$work/request" 8>>"$work/sign-input" 9>>"$work/sign-output" || exit 1
 [ "$mode:$aliyun_receipt_enabled" != records:true ] || mode=records-durable
+[ "$runtime_records" = false ] || mode=records-durable-runtime
 exec lua "$dir/aliyun-reader.lua" run "$account" "$revision" "$mode" "$job"

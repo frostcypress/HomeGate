@@ -1,5 +1,21 @@
 -- Fixed private descriptors only. No network, shell commands or caller paths.
 local dir=arg[0]:match('^(.*)/[^/]+$');if not dir then os.exit(1) end
+if arg[1]=='cache-address' then
+    if arg[2] then os.exit(1) end
+    local records=assert(loadfile(dir..'/cloudflare-record-plan.lua'))()
+    local address
+    for i=1,16 do
+        local line=io.stdin:read('*l')
+        if not line then
+            if address then io.write(address..'\n');return end
+            break
+        end
+        local key=records.ipv6(line)
+        if not key or (address and key~=address) then break end
+        address=key
+    end
+    os.exit(1)
+end
 local codec=assert(loadfile(dir..'/../../luci/lua/luasrc/model/homegate/backup.lua'))()
 local shared=assert(loadfile(dir..'/cloudflare-codec.lua'))('library')
 local planner=assert(loadfile(dir..'/ddns-plan.lua'))()
@@ -30,13 +46,13 @@ elseif arg[1]=='work-source' or arg[1]=='source' then
     local snapshot=assert(loadfile(dir..'/private-snapshot.lua'))().read(io.stdin,codec)
     if not snapshot or snapshot.revision~=tonumber(revision) then os.exit(1) end
     io.write('HGDDNSSOURCE1\n');return
-elseif arg[1]=='dispatch' or arg[1]=='work-bound' or arg[1]=='work-bound-runtime' then
+elseif arg[1]=='dispatch' or arg[1]=='dispatch-cache' or arg[1]=='work-bound' or arg[1]=='work-bound-runtime' then
     if arg[4] then os.exit(1) end
     local snapshot=assert(loadfile(dir..'/private-snapshot.lua'))().read(io.stdin,codec)
     local raw=read(5,262144);local plan=shared.parse(raw)
     local intent_raw=read(8,65536);local intent=shared.parse(intent_raw)
     if not plan or codec.json(plan)..'\n'~=raw or not intent or codec.json(intent)..'\n'~=intent_raw or not snapshot or snapshot.revision~=tonumber(revision) then os.exit(1) end
-    if arg[1]=='work-bound-runtime' then
+    if arg[1]=='work-bound-runtime' or arg[1]=='dispatch-cache' then
         local expected=assert(loadfile(dir..'/ddns-authority.lua'))().intent(snapshot,rule,planner.id)
         if not expected or codec.json(expected)..'\n'~=intent_raw then os.exit(1) end
     end
@@ -56,7 +72,15 @@ elseif arg[1]=='dispatch' or arg[1]=='work-bound' or arg[1]=='work-bound-runtime
         io.write('HGDDNSBOUND1\n');return
     end
     local f=io.open('/proc/self/fd/4','wb');if not f or not f:write(codec.json(entry.request)..'\n') or not f:close() then os.exit(1) end
-    io.write(entry.provider..':'..entry.account..'\n')
+    io.write(entry.provider..':'..entry.account)
+    if arg[1]=='dispatch-cache' then
+        local records=assert(loadfile(dir..'/cloudflare-record-plan.lua'))()
+        local target=records.bind(snapshot,entry.account,revision,entry.request)
+        if target and target.type=='AAAA' and target.value_key then
+            io.write(string.format(' %s %s %s %d',target.fqdn,entry.device,target.value_key,target.ttl))
+        end
+    end
+    io.write('\n')
 elseif arg[1]=='result' or arg[1]=='delete-result' then
     local provider,account,rc=arg[4],arg[5],arg[6]
     if arg[7] or not planner.id(account) or (provider~='cloudflare' and provider~='aliyun' and provider~='dnspod') then os.exit(1) end

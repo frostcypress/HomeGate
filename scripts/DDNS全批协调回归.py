@@ -163,7 +163,7 @@ class MixedMixin:
         preview=self.auth('preview-rules','ddns_a,ddns_b,ddns_c');self.auth('commit',preview['confirmation']);self.baseline_config=self.config_bytes()
         self.settings['addresses']+='14: odd-uplink inet6 2001:db8:2::9/64 scope global\n15: other-uplink inet6 2001:db8:3::8/64 scope global\n';self.control.write_text(json.dumps(self.settings))
     def seed_mixed(self,name,value,*,managed=False):
-        from DDNS执行回归 import rec,ali_record,dnp_record,hw_record
+        from DDNS执行回归 import rec,ali_record,dnp_record
         from aliyun_test_state import seed_managed_aaaa
         number={'ddns_a':1,'ddns_b':2,'ddns_c':3}[name];host={'ddns_a':'www','ddns_b':'b','ddns_c':'c'}[name]
         record={'cloudflare':lambda:rec(number,name=host+'.example.test',value=value),'aliyun':lambda:ali_record(number,rr=host,value=value),'dnspod':lambda:dnp_record(number,rr=host,value=value)}[self.provider]()

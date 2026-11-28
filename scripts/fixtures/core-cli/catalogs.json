@@ -80,47 +80,6 @@
             "dns01": true,
             "zone_discovery": true
           }
-        },
-        {
-          "name": "huaweicloud",
-          "display_name": "Huawei Cloud DNS",
-          "aliases": [
-            "huawei",
-            "hwcloud"
-          ],
-          "credentials": [
-            {
-              "name": "key_id",
-              "label": "Access Key ID",
-              "secret": false,
-              "required": true
-            },
-            {
-              "name": "secret",
-              "label": "Secret Access Key",
-              "secret": true,
-              "required": true
-            },
-            {
-              "name": "account_id",
-              "label": "Account ID",
-              "secret": false,
-              "required": true
-            },
-            {
-              "name": "endpoint",
-              "label": "DNS API Endpoint",
-              "secret": false,
-              "required": true,
-              "placeholder": "https://dns.<region>.myhuaweicloud.com"
-            }
-          ],
-          "capabilities": {
-            "credentials_validation": true,
-            "ddns": true,
-            "dns01": true,
-            "zone_discovery": true
-          }
         }
       ]
     },

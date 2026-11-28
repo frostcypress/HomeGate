@@ -256,6 +256,7 @@ end
     (state / 'view/themes/fixture').mkdir(parents=True)
     (state / 'view/themes/fixture/header.htm').write_text('<!doctype html><title>LuCI fixture</title>')
     shutil.copyfile(ROOT / 'project/luci/prototype/lua/view/ddns.htm', state / 'view/homegate/ddns.htm')
+    shutil.copyfile(ROOT / 'project/luci/lua/luasrc/view/homegate/common.htm', state / 'view/homegate/common.htm')
     for name, body in {'header': '<!doctype html><title>LuCI fixture</title>', 'footer': '',
                        'sysauth': 'LuCI fixture login required', 'csrftoken': 'LuCI fixture CSRF rejected',
                        'error404': 'LuCI fixture route unavailable'}.items():
